@@ -1,0 +1,9 @@
+Copyright (c) 2026 Robert Martin. All rights reserved.
+
+FLARE is made available for review, evaluation, educational, and non-commercial research use only.
+
+No permission is granted to sell, sublicense, redistribute, incorporate into commercial products, or use FLARE for licensing-basis, regulatory, or safety-significant engineering decisions without prior written permission from the copyright holder.
+
+Use of FLARE must include attribution to Robert P. Martin of Lynchburg, VA, an independent nuclear industry consultant, and the FLARE project.
+
+THE SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND.
