@@ -1,0 +1,1 @@
+FLARE is an educational and exploratory analysis tool. It is not a licensing-basis safety analysis code and should not be used for regulatory, safety-significant, or design-basis decisions without independent verification, validation, and qualification.
