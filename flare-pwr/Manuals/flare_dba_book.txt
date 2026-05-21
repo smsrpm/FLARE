@@ -1551,8 +1551,8 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     For the two-phase code, the one-dimension conservation of mass
     equation can be written as
     time rate of change     advection
-                          source/sink
-    ∂               ∂                 
+                            source/sink
+    ∂               ∂                  
     (αk ρk ) + (αk ρk vkz ) = k ,                      (4.3)
     ∂t              ∂z
     where αk is the volume fraction for phase k, ρk is the density of phase k, vkz is
@@ -1604,21 +1604,21 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     using internal energy, enthalpy or temperature as the independent parameter.
     A common form of the equation is given as
     time rate of change               advection
-                       
+                         
     ∂             ∂
     [(αρh )k ] + [(αρvz h )k ] =
     0               0
     ∂t             ∂z
     pressure work                   wall heat transfer
     gravity        
-                                                
-                ∂αk     ∂                                            
+                                                  
+                 ∂αk     ∂                                            
     Aw qwk                (4.6)
     − (αρvz )k gz − p     + p (αk vkz ) +
     ∂t    ∂z                                          V
     interfacial heat transfer
-                         energy with mass transfer
-    Ai qik                           
+                          energy with mass transfer
+    Ai qik                            
     +                               +           k h 0ki
     V
     In this equation, h 0k is the phasic enthalpy and h 0ki represents the phasic
@@ -1658,18 +1658,18 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     conservative form, the streamwise phasic momentum equation for the z-
     direction is written as
     time rate of change           advection
-                         
+                           
     ∂              ∂
     [(αρvz )k ] + [(αρvz vz )k ] =
     ∂t              ∂z
     Pressure Gradient                                  wall shear
-                        gravity body force       
-    ∂                                         Aw τkw .                   (4.9)
+                         gravity body force        
+    ∂                                          Aw τkw .                   (4.9)
     − ( pαk ) −                 αk ρ k g z       −
     ∂z                                              V
     interfacial shear
-                    momentum transfer by mass transfer
-    Ai τki                             
+                     momentum transfer by mass transfer
+    Ai τki                              
     +                k vki
     V
 
@@ -1701,19 +1701,19 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     the result of this exercise is the non-conservative form of the momentum
     equation:
     time rate of change               advection
-                             
+                               
     ∂                  ∂
     V (αρ)k (vkz ) + V (αρvz )k (vkz ) =
     ∂t                  ∂z
     Pressure Gradient
-              gravity body force
-       .
+               gravity body force
+         .
     wall shear                           (4.13)
     ∂                  
     −z ( pαk Az ) − αk ρk Vg sin θ − τkw Pkw z
     ∂z
     interfacial shear       momentum transfer by mass transfer
-                                      
+                                        
     τki Ai        +          (vki − vkz )k V
     The RELAP5-3D and TRACE analysis codes utilize the non-
     conservative form of the momentum as it has several advantages. First,
@@ -1991,7 +1991,8 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     local and average properties are typically different, the product of averages
     is not the same as the average of a product. For example, the momentum
     flux in a pipe with a velocity profile, but uniform density, is:
-    
+    
+
     ρ v 2 d A = Aρv 2 ,                       (4.18)
 
     which is not the same as:
@@ -2010,7 +2011,8 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     will be relatively close to one. Note, that in these equations the operator
       denotes an average of the parameter over the cross section. That is, for
     parameter X , X  is:
-    
+    
+
     1
     X  =       X d A.                     (4.21)
     A A
@@ -2649,7 +2651,8 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     L acc =        ,                                   (4.73)
     Aacc
     where:
-     t
+    
+ t
     Vliq (t) = Vliq,0 −          Ẇliq dt.                       (4.74)
     0
 
@@ -2995,6 +2998,350 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     void fraction in two-phase flow systems, GEAP 5417, General Electric.
     Zuber, N. and Findlay, J. (1965). Average volumetric concentration in two-phase systems,
     J. Heat Transfer, Vol. 87, pp. 453–468.
+
+ROBERT PAUL MARTIN, PhD, PE 
+
+205 Preserve Dr., Lynchburg, VA 24503 
+
+Phone (434) 907-4866 (C) 
+
+Email address:  rpmartin.consult@gmail.com 
+EDUCATION 
+Ph.D., Nuclear Engineering, Penn State University, December 1996.  GPR:  4.0/4.0 
+
+M.S., Nuclear Engineering, Texas A&M University, May 1989.  GPR:  3.68/4.0 
+
+B.S., Nuclear Engineering, Texas A&M University, May 1987.  GPR:  3.38/4.0 
+Dissertation Title:  "A Best-Estimate Reactor Core Monitor Using State Feedback Strategies to Resolve Uncertainties" 
+
+Doctoral Advisors:  Robert M. Edwards (Chair), Alireza Haghighat, John Mahaffy, Asok Ray (Mech. Eng.), Kwang Lee (Elect. Eng.) 
+WORK & RESEARCH EXPERIENCE 
+Professional Engineer, Idaho #7063, March 1993 - present 
+Independent Industry Consultant and Member, Advisory Committee on Reactor Safeguard, U.S. NRC, June 2023 – present. 
+Provide independent expert review of nuclear reactor safety matters and advise the Commission on licensing and regulatory issues. Participate in committee evaluations of reactor designs, safety analyses, and proposed regulatory actions. Serve as external consultant on nuclear safety research and development projects with specialties in accident phenomenological assessment, analysis, and evaluation model development. 
+Technical Consultant, BWX Technologies, Lynchburg, VA, May 2011 – April 2023 
+Team leader responsible for thermal-hydraulic/safety analysis evaluation methodology development projects supporting both advanced light-water reactors (LWR) and non-LWR designs (e.g., space, Na-cooled and gas). Activities involve defining requirements and acceptance criteria, documenting and implementing best-practices and quality program procedures, software commercial grade dedication and qualification, derivation of analytical techniques, verification and validation, compilation of design/model inputs, quantification of uncertainties and sensitivities, calculation of figures-of-merit, automation, and documentation and defense before regulatory authorities. 
+Nuclear Engineer IV, Idaho National Laboratory, Idaho Falls, ID, July 2010 – April 2011 
+Responsible for assigned code development and maintenance projects for a large multi-physics simulation computer code (RELAP5-3D), supporting the U.S. Department of Energy’s Naval Reactors division (Bettis Lab) and the broader user community.  
+Advisory Engineer, Framatome, Inc., Lynchburg, VA, Jan. 1997 – June 2010 
+Responsible for safety analysis evaluation methodology development, documentation, and licensing support addressing both design-basis and beyond design-basis challenges to an engineered system (i.e., nuclear power plant).  Primary contributor/technical leader for AREVA NP’s Realistic Large Break loss-of-coolant accident (LBLOCA) evaluation model, a first-of-a-kind, statistically-based safety analysis evaluation methodology, which allowed utility customers to uprate plant power; Technical leader for AREVA NP’s Severe Accident Issue Resolution Methodology; Co-technical leader for AREVA NP’s U.S. EPR LBLOCA containment analysis methodology; Co-technical leader for the development of an evaluation methodology for AREVA’s design of a prismatic Very High Temperature Reactor (He-cooled gas reactor). 
+Graduate Research Assistant, Penn State University, August 1993-December 1996 
+
+Student AWU Fellow, Idaho National Engineering Laboratory (INEL), Summer 1995 
+
+Research Assistant, Studsvik of America, Idaho Falls, Idaho, Summer 1994 
+Sr. Engineer, Idaho National Engineering Laboratory, Idaho Falls, Idaho, May 1989 - August 1993 
+Cognizant engineer supporting many projects examining thermal-fluid interactions and transport phenomena in integral and separate effects systems using hand calculations, spread-sheets, and best-estimate systems codes (RELAP5, TRAC-B, and CONTAIN).  Performed analyses of such systems and developed specialized computer codes and subroutines for best-estimate analysis.  This work involved knowledge of nuclear thermal-hydraulics, nuclear reactor dynamics, control systems, computer programming (FORTRAN and C), and parallel processing.  Additional responsibilities included documentation and quality assurance and the training of customers in using the RELAP5 best-estimate thermal-hydraulics systems code. 
+Highlights include: 
+
+•	Developed the original RELAP5/MOD3 code coupling capability (using PVM tools). 
+
+•	Worked in a team assessing a new multi-dimensional hydraulic model for RELAP5. 
+
+•	Built and performed safety analysis for pressurized and boiling water reactor power plants, integral and separate effects test facilities, and advanced reactor designs with passive safety systems (e.g., INL ATR, AP600, PIUS, HWR-NPR, and SBWR). 
+Graduate Research Assistant, Texas A&M University, May 1987 - May 1989. 
+COMPUTER EXPERIENCE 
+Programming experience with XML, XSLT, XSD data structures, translation, and schemas 
+
+Programming proficiency in the symbolic languages BASIC, C, and FORTRAN 
+
+Programming proficiency with MATLAB (also SCILAB or OCTAVE) 
+
+Proficient in the UNIX operating system and with using the X-window environment 
+
+Proficient on a variety of computer platforms including supercomputers, multi-processor workstations and personal computers 
+
+Programming experience with the Parallel Virtual Machine (PVM) Software 
+
+Programming experience with IMSL and Numerical Recipes 
+
+Programming experience with PERL and Hypertext Markup Language (HTML) 
+
+Programming experience in the symbolic languages LISP and JAVA 
+UNIQUE SKILLS 
+Significant experience in preparing and defending evaluation methodologies for assessing the design and safety of nuclear power plants for review by the U.S. Nuclear Regulatory Commission, the Advisory Committee for Reactor Safeguards, and utility customers; 
+
+Significant experience in applying and in developing statistical methods for quantifying computer code uncertainties; 
+
+Significant experience with the development of Phenomena Identification and Ranking Tables (PIRT); participated in PIRTs for various events associated with SFR (Terrapower), SMR (mPower), ALWR (USEPR), VHTR (Antares), and for operating PWRs (W, CE, and B&W). 
+
+Significant experience with nuclear safety analysis codes RELAP5, GOTHIC, MAAP4, CONTEMPT, TRAC-B, and CONTAIN; Developed RELAP5's original code coupling capability using PVM;  
+
+Significant experience with novel applications of software for data processing including monitoring, parametric uncertainty resolution, control, systems diagnosis, and off-normal event mitigation applications; 
+
+Significant experience with the development of automation software for use with nuclear safety codes, including XMGR5 (for AREVA) and RelapManager (for BWXT) 
+
+Significant experience with MATLAB for a variety of applications including control, systems simulation, and advanced analytical algorithms; 
+
+Formal training with the RELAP5 computer code, Idaho National Engineering Laboratory, 1990; 
+
+Formal training with the MAAP4 computer code, Fauske and Associates, Inc, 2006; 
+
+Formal training with the GOTHIC computer code, Numerical Applications, Inc, 2008; 
+
+Formal training with the SCALE (fuel depletion/source term) package, Oak Ridge, 2018; 
+
+Formal training with the MOOSE modeling/simulation framework, Idaho National Lab, 2018; 
+
+Exposure to CASMO and SIMULATE (Studsvik's Core Management System), FIDAP, ACSL, MELCOR, and MMS 
+
+Various soft skills training (e.g., project management, cultural differences, mentoring, etc.) 
+PROFESSIONAL ACTIVITIES 
+Panelist, “’Code Wars’: A RELAP5 User’s Tribute to Vic Ransom,” American Nuclear Society Winter Meeting, Washington, DC, 2025 
+
+Panelist, “Thermal-Hydraulics of Light Water SMRs,” Panel Moderator, The 20th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-20), 2024 
+
+Panelist, “Broadening Role of BEPU U.S. Nuclear Safety Assessment,” Panel Moderator, “Experiments for HTGRs,” Advances in Thermal Hydraulics, ATH 2024, American Nuclear Society Annual Meeting, 2024 
+
+Panelist, Panel Moderator, Banquet Emcee, Best Estimate Plus Uncertainty International Conference, BEPU 2024, Lucca, Italy, 2024 
+
+Panelist, “TH of Microreactors,” American Nuclear Society Annual Meeting, Anaheim, CA, 2022 
+
+Invited Lecture, “Hochreiter Distinguished Speaker Series,” Penn State University (2019) 
+
+Invited Lecturer, “Seminar on Uncertainty and Best Estimate Analysis Methods (SUNBEAM),” (2018-2020) 
+
+Advisor, Consortium for Advanced Simulation of LWRs (CASL), Industry Council (2015-2019) 
+
+Invited Lecturer, “The Quest for Nuclear Safety Closure”, ORNL Summer Seminar Series (2018) 
+
+Invited Lecturer, “The Evolution of Nuclear Safety”, MeV Summer School (2017) 
+
+Invited Lecturer, “Models and Methods for Advanced Reactor Safety”, MMARS (2016-17) 
+
+LinkedIn Group Manager, “Safety Analysis Methods – Nuclear” (current since 2015) 
+
+Invited Lecturer, “Best-Estimate Evaluation Methodologies, Seminar and Training on Scaling, UNcertainty and 3D COuPled Code Calculations in Nuclear Technology (3D-SUNCOP)” (2004-2016) 
+
+Panelist (x2), American Nuclear Society Winter Meeting, Anaheim, CA, November 2014 
+
+Invited Lecturer, “MIT Nuclear Plant Safety Course,” June 2014 
+
+Technical Program Committee Member, many domestic and international conferences, responsibilities include paper reviews/auctions and technical session chair (1995-2019) 
+
+Invited Lecturer, NURETH-15, “V&V Workshop,” May 2013 
+
+Invited Lecturer, NURETH-14, “V&V Workshop,” September 2011 
+
+Invited Lecturer, “Frédéric Joliot/Otto Hahn Summer School on Nuclear Reactors,” Aix-en-Provence, France, September 2010. 
+
+Invited Lecturer, Idaho National Laboratory, “V&V Workshop,” July 2008 
+
+RELAP5-3D Users Group (Chairman, 2006) 
+
+ANS Public Information Committee (1995-1998) 
+
+ANS Membership Committee (1995-1998) 
+
+American Nuclear Society (Lifetime Member) 
+HONORS AND AWARDS 
+American Nuclear Society Fellow (2021) 
+
+Executive Committee (various), ANS Thermal-Hydraulic Division (1997-2010, 2019-2022) 
+
+Distinguish Former Student, Department of Nuclear Engineering, Texas A&M University (2017) 
+
+Elected Executive Committee (Secretary/Treasurer), American Nuclear Society Nuclear Installations Safety Division (2012-15) 
+
+Senior Expert, AREVA College of Experts (2010) 
+
+Expert Panelist, NRC State-of-the-Art Reactor Consequence Analysis Project (SOARCA) (2006) 
+
+Expert, AREVA College of Experts (2005) 
+
+Plenary Speaker at the American Nuclear Society Best-Estimate 2004 Conference 
+
+Elected Chairman, American Nuclear Society Thermal-Hydraulics Division (2004) 
+
+Engineer of the Year, AREVA (2002) 
+
+Recognized by Phi Kappa Phi, Tau Beta Pi and Alpha Nu Sigma Honor Societies 
+
+American Nuclear Society Fellowship (1995) 
+
+Associated Western Universities Fellow (1995) 
+
+National Science Foundation Creativity Award Runner-up (1987) 
+
+Undergraduate Research Fellows Award, Texas A&M University (1986) 
+PATENTs and LARGE PROJECT PUBLICATIONS  
+(principal author, public domain) 
+“Apparatus and Method for Safety Analysis Evaluation with Data-Driven Workflow”, co-inventor with Simone H. Morgan, Patent Publication # US11562114B2, January 2023. 
+“Apparatus for Desuperheating High Temperature, High Velocity Steam,” lead inventor, Patent Publication #US11401891B2, August 2022. 
+“Design-Basis Accident Analysis Methods for Light-Water Nuclear Power Plants,” first author and editor, World Scientific Publishing Corporation, January 2019. 
+“RELAP5-3D© Code Manual,” acknowledged code development team member, Idaho National Laboratory Document INL/MIS-15-36723, October 2015 (most recent revision). 
+“Reactor Containment Pressure Suppression,” co-inventor with M. J. Edwards, Patent Publication #US20150194226 (withdrawn), January 2014. 
+“Position Paper on Radiological Source Term Methodology for B&W mPower™ Reactor,” first author, MPWR-EPP-005010, Revision 001, ADAMS Accession # ML13296A581, October 2013. 
+“Safety Analysis Evaluation Methodology Requirements for the B&W mPower™ Reactor,” author, MPWR-TECR-005013-000(NP), USNRC ADAMS Accession #ML11321A237, November 2011 
+“The Operating Strategies for Severe Accidents Methodology for the U.S. EPR,” author, AREVA NP Document ANP-10314, USNRC ADAMS Accession # ML102720237, September 2010. 
+“Applicability of AREVA NP Containment Response Evaluation Methodology to the U.S. EPRTM for Large Break LOCA,” author, AREVA NP Document ANP-10299, USNRC ADAMS Accession # ML090330231, January 2009. 
+“U.S. EPR Severe Accident Evaluation Topical Report,” author, AREVA NP Document ANP-10268 (NP)(A), USNRC ADAMS Accession # ML063100157, November 2007. 
+“Realistic Large Break LOCA Methodology for Pressurized Water Reactors,” author, Framatome ANP Document EMF-2103(NP)(A), USNRC ADAMS Accession #ML032691424, April 2003. 
+“TRAC-B Thermal-Hydraulic Analysis of the Black Fox Boiling Water Reactor,” NUREG/CR-5882, June 1992. 
+ “RELAP5 Thermal-Hydraulic Analysis of the WNP1 Pressurized Water Reactor,” NUREG/CR-5663, May 1991. 
+FULL PAPER PUBLICATIONS (public domain full papers, peer-reviewed only) 
+"Preferable Applications of Best-Estimate Plus Uncertainty Under a Technology-Inclusive, Risk-Informed Nuclear Plant Safety Case," Nucl. Technol., 211, 12, 2889, December 2025. 
+"Independent Verification of Transient Phenomena in RELAP5-3D Leveraging Reduced-Order Model," Nucl. Technol., September 2025 (https://doi.org/10.1080/00295450.2025.2514992) 
+"A Global Dialogue on Broadening Industrial Applications of BEPU: Outcomes of a Panel Session at the BEPU-2024 Conference," with J. Zhang, M. Adorni, A. Ghione, L. Sargentini, V. Larget, D. G. Kang, And A. Petruzzi, The 21st International Topical Meeting on Nuclear Reactor Thermal Hydraulics (NURETH-21), Busan, Republic of Korea, August 31–September 5, 2025. 
+“Verification of Transient Phenomena in RELAP5-3D: Part 1 Vessel Boiloff,” The 20th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-20), Washington, DC, 2024. 
+“Verification of Transient Phenomena in RELAP5-3D: Part 2 Turbomachinery,” with Michael S. Bradbury (Information Systems Laboratories), The 20th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-20), Washington, DC, 2024. 
+“A Demonstration of the Risk-Informed NEI 18-04 Design Evaluation Model for the Modular High Temperature Gas Reactor,” with Cesare Frepoli (FPoliSolutions), Stephen A. Heagy (FPoliSolutions), Jarrett Valeri (FPoliSolutions), Curtis L. Smith (INL), and Kurt G. Vedros (INL), The 20th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-20), Washington, DC, 2024. 
+“Recent RELAP5-3D Developments for Water and Gas Cooled Reactors” with George L. Mesina (INL), The 20th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-20), Washington, DC, 2024. 
+“Development of an Enterprise Digital Platform for Risk-Informed Design,” with C. Frepoli (1st author) and J. Valeri, 16th Probabilistic Safety Assessment & Management Conference (PSAM 16), Honolulu, Hawaii, July 2022. 
+"Preferable Applications of Best-Estimate Plus Uncertainty under the U.S. Nuclear Industry's Licensing Modernization Project," Proc. Best Estimate Plus Uncertainty Int. Conf. (BEPU 2024), Real Collegio, Lucca, Tuscany, Italy, May 19–24, 2024. 
+“Safety Software Evidence Ranking for Determining Analytical Readiness with a Case Study utilizing RELAP5-3D,” with Jason G. Williams, The 19th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-19), Brussels, Belgium, March 2022. 
+“Datasets for RELAP5-3D HTGR Validation,” with G. Strydom, The 19th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-19), Brussels, Belgium, March 2022. 
+“Progress in International Best Estimate Plus Uncertainty Analysis Methodologies” with A. Petruzzi, Special Issue – 40th Anniversary of NURETH, Nuclear Engineering and Design, 2021. 
+“A best estimate plus uncertainty safety analysis framework based on RELAP5-3D and RAVEN platform for research reactor transient analyses,” with T. Liu, Z. Wua, and C. Lua, Progress in Nuclear Energy, Vol. 132, paper 103610, 2021. 
+“Transient Analysis Methods,” Encyclopedia of Nuclear Energy, Earth Systems and Environmental Sciences, https://doi.org/10.1016/B978-0-12-819725-7.00038-6, Elsevier, 2021. 
+“Investigations on the Thermal-hydraulic Behavior of Accident Tolerant Fuel Cladding Materials,” report edited by G. Su, M. Bucci and P. Sabharwall, INL/EXT-19-56455, January 2020. 
+“Science-based nuclear design and safety in the emerging age of data based analytics,” Nuclear Engineering and Design, Special Issue NTH2019, https://doi.org/10.1016/j.nucengdes.2019.110155, June 2019. 
+“A Best-Estimate-Plus-Uncertainty-Based Method for Design and Design Verification,” The 18th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-18), Portland, OR, USA, August 2019. 
+“Evaluation of a Desuperheating Spray Chamber for a Scaled Nuclear Thermal Propulsion Rocket Exhaust Capture System Test,” The 18th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-18), Portland, OR, USA, August 2019. 
+“Modeling Gamma and Neutron Heating to a Liquid Hydrogen Tank for Nuclear Thermal Propulsion with RELAP5-3D,” The 18th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-18), August 2019. 
+“Data Management, Statistics and Trends in Deploying BEPU Industry Applications: An Overview,” with D. S. Menoher and C. Frepoli, ANS Best Estimate Plus Uncertainty International Conference (BEPU 2018), Real Collegio, Lucca, Italy, May 13-19, 2018. 
+“Resurrection of FLASH for High-Tier Scale Verification of RELAP5-3D” with C. Frepoli, The 17th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-17), Xi'an, China, September 2017. 
+“Best-Estimate-Plus-Uncertainty-Informed Deterministic Safety Evaluation,” American Nuclear Society Winter Meeting, Las Vegas, NV, Nov. 2016. 
+“FLASHback: RELAP at Fifty,” 2016 International RELAP5-3D Users Group Seminar, Idaho Falls, Idaho, October 2016. 
+“Could Chernobyl Happen Here?” Technical Journal of the National Board of Boiler and Pressure Vessel Inspectors (Bulletin), Vol. 71, No. 2, Summer 2016. 
+“A Scaling-based Applicability Assessment of the CAER Integrated Systems Test Facility” with J. K. Miller and J. E. O’Brien, 2016 Advances in Thermal Hydraulics (ATH ’16), New Orleans, LA, June 2016. 
+“Content, Completeness and Consistency of Analytical Models for Regulatory Consideration,” Nuclear Technology, Volume 193, No. 1, pp. 96-112, January 2016. 
+“RelapManager: A Safety Analysis Automation Framework and Software for RELAP5-3D,” with S.  
+H. Morgan and C. A. Cragg, Nuclear Technology, Volume 193, No. 1, pp. 200-212, January 2016. 
+“Heat Transfer Regime Calibration for Phase-change Heat Exchangers in RELAP5-3D,” with W. L. Weaver, The 16th International Topical Meeting on Nuclear Reactor Thermal-Hydraulics (NURETH-16), Chicago, IL, USA, September 2015. 
+“Thermal-Hydraulic and Control Systems R&D at the CAER-IST,” with J. K. Miller, The 16th International Topical Meeting on Nuclear Reactor Thermal-Hydraulics (NURETH-16), Chicago, IL, USA, September 2015. 
+“Physical Systems for Regulatory Investigation: Part I Logical Organization of Observation and Reason,” with J. E. O’Brien, Advances in Thermal-Hydraulics 2014, embedded topical meeting at the ANS Annual Meeting, Reno, NV, June 2014. 
+“Physical Systems for Regulatory Investigation: Part II Evaluation Methodology,” with C. Frepoli, Advances in Thermal-Hydraulics 2014, embedded topical meeting at the ANS Annual Meeting, Reno, NV, June 2014. 
+“Thermal-Hydraulic Design of the B&W mPower SMR,” with E.S. Williams and J. G. Williams, The 15th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-15), Pisa, Italy, May 12-17, 2013, Also, presented at the 2013 ANS SMR Conference, Washington, DC, November 2013. 
+“Thermal-Hydraulic Assessment of the B&W mPower SMR,” with E.S. Williams and J. G. Williams, Advances in Thermal-Hydraulics Topical Meeting, American Nuclear Society, San Diego, CA, November 2012.   
+“An Evaluation Methodology Development and Application Process for Severe Accident Safety Issue Resolution,” Science and Technology of Nuclear Installations, April 2012 
+“Quantifying Phenomenological Importance in Best-Estimate plus Uncertainty Analyses,” Nuclear Technology, Volume 175, No. 3, pp. 652-662, September 2011. 
+“Perspectives on the application of order-statistics in best-estimate plus uncertainty nuclear safety analysis, “ with W. T. Nutt, Nuclear Engineering and Design, Vol. 241, Issue 1, pp. 274-284, Jan. 2011. 
+“Uncertainty Analysis for Containment Response of U.S. EPR Reactor to Large Break Loss-of-Coolant Accidents,” with J. Abdelghany, Proceedings of 2010 International Congress on Advances in Nuclear Power Plants, San Diego, CA, June 14-17, 2010. 
+“The Impact of Early Spray Activation During a Postulated Severe Accident in the AREVA EPR Containment,” with H. Dimmelmeier and J. Eyink, Proceedings of 2010 International Congress on Advances in Nuclear Power Plants, San Diego, CA, June 14-17, 2010. 
+“Validation of CATHARE Code to Predict ECC Mixing in the Core Using CCTF and SCTF Tests” with Kent Abel, Andreas Benkert, Louis-Charles Brintet, Roland Hertlein, C.K. Nithianandan, NURETH-13 Conference, Kanazawa City, Ishikawa Prefecture, Japan, Sept. 2009. 
+“Core Melt Stabilization System Evaluation for the U.S. EPR” with P. D. Duncan-Whiteman, E. S. Williams, M. Nie, M. Fischer, NURETH-13 Conference, Kanazawa City, Ishikawa Prefecture, Japan, Sept. 2009. 
+“Combustible Gas Control System Evaluation for the U.S. EPR” with C. A. Bonilla, E. S. Williams, B. Eckardt, J. Eyink, NURETH-13 Conference, Kanazawa City, Ishikawa Prefecture, Japan, Sept. 2009. 
+“Quantifying Phenomenological Importance in Best-Estimate plus Uncertainty Analyses,” NURETH-13 Conference, Kanazawa City, Ishikawa Prefecture, Japan, Sept. 2009. 
+“Analysis and Justification of MAAP4.0.7 for PRA Level 1 Mission Success Criteria” with J. S. Butler, D. Kapitz, F. Seifaee, and R. K. Sundaram, Nuclear Technology, Vol. 170, Number 1, pp. 244-260, April 2010. 
+“AREVA NP's Severe Accident Safety Issue Resolution Methodology for the U.S. EPR” with M. W. Bingham, C. A. Bonilla, J. S. Butler, P. D. Duncan-Whiteman, P. Gruenewald, A. C. Slaga, E. S. Williams, G. Azarian, M. Nie, Proceedings of 2008 International Congress on Advances in Nuclear Power Plants, Anaheim, CA, USA, June 2008. 
+“Relevant Scenarios and Uncertainty Analysis of Severe Accidents in the U.S. EPR” with M. W. Bingham, E. S. Williams, A. Caillaux, Proceedings of 2008 International Congress on Advances in Nuclear Power Plants, Anaheim, CA, USA, June 2008. 
+“Recent Revisions to MAAP4 for U.S. EPR Severe Accident Applications” with E. S. Williams, P. Gandrille, R. Meireles, R. Prior, C. Henry, and Q. Zhou, Proceedings of 2008 International Congress on Advances in Nuclear Power Plants, Anaheim, CA, USA, June 2008. 
+“MAAP4.0.7 Analysis and Justification for PRA Level 1 Mission Success Criteria” with J. Butler, D. Kapitz, F. Seifaee, R. K. Sundaram, Proceedings of 2008 International Congress on Advances in Nuclear Power Plants, Anaheim, CA, USA, June 2008. 
+“Development Considerations of AREVA NP Inc.’s Realistic LBLOCA Analysis Methodology” with L. D. O’Dell, Science and Technology of Nuclear Installations, October 2007. 
+“Technical Basis Supporting the Severe Accident Analytical Methods Development for the U.S. EPR,” with Manfred Fischer, Eric S. Williams, and Markis Nie, NURETH-12 Conference, Pittsburgh, PA, Sept. 2007. 
+“Severe Accident Analysis of the U.S. EPR with MELCOR 1.8.6,” with M. Leslie, L. Hochreiter, E. Williams, NURETH-12 Conference, Pittsburgh, PA, Sept. 2007. 
+Co-Editor, “Nuclear Reactor Thermal-Hydraulics,” with Herve Lemonnier and Joy Rempe, Special Issue from NURETH-11, Nuclear Technology, May 2007. 
+“Overall simulation of a HTGR plant with the gas adapted MANTA code” with D. Petit and E. Jouet, Proceedings of the Eleventh International Topical Meeting On Reactor Thermal Hydraulics NURETH-11), Avignon, France, Oct. 2005. 
+“Characterization of Downcomer Boiling in Framatome ANP’s Realistic Large Break LOCA Methodology,” Proceedings of the Eleventh International Topical Meeting On Reactor Thermal Hydraulics NURETH-11), Avignon, France, Oct. 2005. 
+“AREVA’s Realistic Large Break LOCA Analysis Methodology”, with L.D. O’Dell, Nuclear Engineering and Design, vol. 235, no. 16, pp. 1713–1725, July 2005. 
+“Industry Approach to BE Applications - Past and Future”, Invited Plenary Speaker, Proceedings of the BE 2004 Conference, Washington, D.C., Nov. 2004. 
+“Application and Licensing Requirements of the Framatome ANP RLBLOCA Methodology” with B. Dunn, Proceedings of the BE 2004 Conference, Washington, D.C., Nov. 2004 
+“Application of Monte Carlo Methods for Thermal Hydraulic Analysis at AREVA”, with S. C. Franz and T. K. Luedeke, Proceedings of the NUTHOS-6 Conference, Nara, Japan, Oct. 2004. 
+“A RELAP5 Reactor Vessel Nodalization Sensitivity Study on Multidimensional Effects in Realistic Large Break LOCA”, Proceedings of the ICONE-8 Conference, Baltimore, MD, April 2000. 
+“A Best-Estimate Reactor Core Monitor Using State Feedback Strategies to Reduce Uncertainties,” with R. M. Edwards, Nuclear Science and Engineering, March 2000. 
+“Resolving Model Uncertainties in Distributed Parameter Systems for Control and Monitoring Applications,” with R. M. Edwards, Proceedings of the 1996 Nuclear Plant Instrumentation and Control/Human-Machine Interface Technology Conference (NPIC/HMIT), Vol.1, pp. 751-759, University Park, PA, May 1996. 
+“Kalman Filter Application for Distributed Parameter Estimation in Reactor Systems,” with R. M. Edwards, Nuclear Science and Engineering, July 1996. 
+“RELAP5/MOD3 Code Coupling Model,” Nuclear Safety Journal, Technical July-December 1995. 
+“A Nonlinear Observer for Estimating Distributed Parameter System States in Reactor Systems,” with R. M. Edwards, Proceedings of the International Conference on Mathematics and Computations, Reactor Physics, and Environmental Analysis, Portland, Oregon, May 1995. 
+“Benchmark Analysis with RELAP5 for USNRC Simulators,” with J. D. Burtt, NUREG/CP-0133, Vol. 1, Twenty-First Water Reactor Safety Information Meeting, Bethesda, MD, October 25-27, 1993. 
+“RELAP5/MOD3 Code Coupling Model,” with G. W. Johnsen, NUREG/CP-0133, Vol. 1, Twenty First Water Reactor Safety Meeting, Bethesda, MD, October 25-27, 1993. 
+“Benchmarking the WNP-1 Simulator,” with J. D. Burtt and L. Bell, Proceedings of the 1992 Simulation Multi-conference, Simulators IX, Simulation Series, Vol. 24, No. 4, Society for Computer Simulation, Orlando, FL, 1992. 
+“Assessment of The Multidimensional Component in RELAP5/MOD 2.5,” with K. E. Carlson, C. Y. Chou, C. B. Davis, R. A. Riemke, R. J. Wagner, R. A. Dimenna, G. A. Taylor, V. H. Ransom, and J. A. Trapp, Proceedings of the Fifth International Topical Meeting On Reactor Thermal Hydraulics (NURETH-5), September 21-24, 1992, Salt Lake City, UT, USA. 
+“Benchmarking Assessment of RELAP5/MOD3 for the Low Flow and Natural Circulation Experiment at WSRC,” Proceedings of the Fifth International Topical Meeting On Reactor Thermal Hydraulics (NURETH-5), Salt Lake City, Utah, September, 1992. 
+“A Best-Estimate Paradigm for Diagnosis of Multiple Failure Transient in Nuclear Power Plants Using Artificial Intelligence,” with B. Nassersharif, Nuclear Technology, Sept. 1990. 
+“Diagnosis and Mitigation of Multi-Failure Transients in Nuclear Power Plants using a Modified ATMS,” with B. Nassersharif, Nuclear Technology, Sept. 1990. 
+“A Diagnostic Expert System for Analyzing Multiple-Failure Transients in Nuclear Power Plants,” with B. Nassersharif, Proceedings of the First International Conference on Industrial & Engineering Applications of Artificial Intelligence & Expert Systems, Volume 1, pg. 75-79, Tullahoma, TN, June 1-3, 1988. 
+“Deep Knowledge Expert System for Diagnosis of Multiple-Failure Severe Transients in Nuclear Power Plants,” with B. Nassersharif, Proceedings of the American Nuclear Society Topical Meeting on Artificial Intelligence and Other Innovative Computer Applications in the Nuclear Industry, Snowbird, UT, Aug 31 – Sept 2, 1987. 
+CONFERENCE ABSTRACTS/PRESENTATIONS/UNIVERSITY SEMINARS 
+Texas A&M University, April 2022 
+“Evaluation Model Content for New Reactor Licensing”, Fission Battery, NCSU, April 2021. 
+“Science-based nuclear design and safety in the emerging age of data based analytics,” University Seminar, North Carolina State University, February 2021; Virginia Tech, Oct. 2020; Virginia Commonwealth University, Jan. 2020. 
+“Novel Thermal Hydraulics Considerations for NASA’s Nuclear Thermal Propulsion Designs,” University Seminar, Oregon State University, Jan. 2019. 
+“Nuclear Safety Closure: The Role of Modeling and Simulation,” University Seminar, Liberty University, April 28, 2018. 
+“Resurrection of FLASH for High-Tier Scale Verification of RELAP5-3D”, University Seminar, Texas A&M University, October 2017. 
+“Severe Accident Analysis Phenomenology and Computational Tools Hands-On Training,” with W. Giannotti, Seminar Models and Methods for Advanced Reactor Safety Analysis, Pisa, Italy, 2017 and 2016. 
+“The Evolution of Nuclear Safety,” with E. Blandford and T. Wellock, MeV Summer School, Idaho Falls, Idaho, 2017. 
+“Historical Evolution of LOCA Regulatory Requirements,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, 2009-2016. 
+
+  
+
+“System Code Models, Capabilities, and Limitations,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, Annual Course 2011-2016, various locations. 
+“BEPU (Best-Estimate Plus Uncertainty) Hands-on Training,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, Annual Course 2009-2016, various locations. 
+“A Paradigm for Realistic Large Break LOCA Methodology,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, Annual Course 2011-2016, various locations. 
+“SAMG Development Considerations for ALWRS and SMRs,” Accident Management: Emerging R&D Needs and Approaches, North Carolina State University, Aug. 2016. 
+“RELAP5-3D Commercial Grade Dedication at BWXT,” Consortium on Advanced Simulation of LWRs (CASL) Science and Industry Council Meeting, Oak Ridge, TN, March 2016. 
+“Design & Software V&V: An Industry Perspective,” Panel on Experimental Support for System Code Development and Validation: IETs and SETs, American Nuclear Society Winter Meeting, Anaheim, CA, Nov. 2014. 
+“State of BEPU Analysis in Industry,” Panel on Current Issues in Computational Methods–Roundtable: Reduced Models: Needs and Challenges, American Nuclear Society Winter Meeting, Anaheim, CA, Nov. 2014. 
+“SMR Safety Case,” Nuclear Plant Safety Course, Massachusetts Institute of Technology, June 2014. 
+“SMR Safety,” University Seminar, North Carolina State University, March 2014. 
+“Thermal-Hydraulic Assessment of the B&W mPower SMR,” University Seminar, Ohio State, Feb. 2014. 
+“Synthesis from NURETH-15 Papers: System Code Development and Applications,” Panel on NURETH-15, American Nuclear Society Winter Meeting, Washington, D.C., Nov. 2013. 
+“Thermal-Hydraulic Project Requirements and Implementation Supporting Licensure of the B&W mPower Plant,” Workshop on “Industry’s view on TH R&D: past present and future,” The 15th International Topical Meeting on Nuclear Reactor Thermal – Hydraulics (NURETH-15), Pisa, Italy, May 12-17, 2013. 
+“NRC Reactor Safety Course: Accident Progression Analysis (P-300),” with J. Rempe, Washington, DC, April 2011. 
+“Probabilistic and deterministic safety analyses,” Frédéric Joliot/Otto Hahn Summer School on Nuclear Reactors, Aix-en-Provence, France, September 2010. 
+“A U.S. EPR-Specific PIRT for Containment Safety Analysis,” with P. Attal, B. Dunn, A. Giri, L. E. Hochreiter, J. Klingenfus, C. Molseed, C. Ritchey, L. Schor, H. Shen, and P. Yguel, Transactions of the American Nuclear Society, November, 2009. 
+“AREVA NP’s Severe Accident Issue Resolution Methodology,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, Royal Institute of Technology, Stockholm, Sweden, Oct 2009, Institute for Energy, Petton, The Netherlands, Oct 2008; McMaster University, Hamilton, Ontario, Canada, Oct 2007. 
+ “AREVA NP’s Realistic Large Break LOCA Methodology,” Seminar and Training on Scaling, Uncertainty and 3D Coupled Code Calculations in Nuclear Technology, Royal Institute of Technology, Stockholm, Sweden, Oct 2009, Institute for Energy, Petton, The Netherlands, Oct 2008; McMaster University, Canada, Oct 2007; Texas A&M University, Jan 2007; Buenos Aires, Argentina, Oct 2006; Barcelona, Spain, Jan 2006; Penn State University, Jun 2004. 
+“Uncertainty Analysis Methodology of US EPR Severe Accident Ex-vessel Safety Issues,” with Michael W. Bingham, Transactions of American Nuclear Society, November, 2007. 
+“MAAP 4.07 Justification for PRA Level 1 Analysis of the U.S. EPR,” with Ramu K. Sundaram, Farrokh Seifaee and Jennifer S. Butler, Transactions of American Nuclear Society, November, 2007. 
+“Technical Basis and Analytical Methods Development supporting the USEPR Severe Accident Mitigation Features,” with M. Fischer, S. M. Mazurkiewicz, E. S. Williams, Transactions of American Nuclear Society, November, 2006 
+“Approach and State of the Art in the USA,” with L. S. Ghan, Technical Session on New Methods in Uncertainty Analysis, Jahrestagung Kerntechnik 2005, Nuremberg, May 12, 2005. 
+“AREVA’s Activities Related to VHTR Thermal-Hydraulic Analysis Using RELAP5-3D” with Jamal Abdelghany and Dominique Petit, Transactions of American Nuclear Society, November, 2005.  Also presented at the 2004 International RELAP5-3D Users Group Meeting, Sun Valley, Idaho, August 2004. 
+“Framatome ANP’s Realistic Large Break LOCA Analysis Methodology”, with L.D. O’Dell, Nuclear Engineering and Design, Transactions of American Nuclear Society, November, 2003.  Also presented at the 2003 International RELAP5-3D Users Group Meeting, West Yellowstone, Montana, August 2003. 
+“Quantifying Code Variability for LBLOCA with RELAP5-3D,” 2001 International RELAP5-3D Users Group Meeting, Sun Valley, Idaho, September 2001. 
+"A Best-Estimate Reactor Core Monitor Using State Feedback Strategies to Reduce Uncertainties", with Robert M. Edwards, presented in Transactions of American Nuclear Society, Vol. 77, 1997. 
+"Coupling MATLAB and RELAP5 for Prototyping Novel Applications with RELAP5," 1998 RELAP5 International Users Seminar, May 1998. 
+"History of Nuclear Power Plant Safety" http://users.owt.com/smsrpm/nksafe, PI project for the ANS, 1998 
+“An Examination of a New 1-D Modal Reactor Model,” Transactions of the American Nuclear Society, Vol. 74, June 1996. 
+"Chernobyl: Ten Years Later", et al., web site http://users.owt.com/smsrpm/Chernobyl, PI project for the ANS, 1996. 
+“Control of Advanced Simulation Codes for Analysis of Reactor Systems,” with R. M. Edwards, Transactions of the American Nuclear Society, Vol. 71, Nov. 1994. 
+“Benchmarking Simulation System Codes with Best Estimate System Codes,” with J. D. Burtt, Proceedings of the RELAP5 International Users Seminar, Boston, Massachusetts, July 1993. 
+“Conversion of RELAP5 Input Data to PC (Personal Computer) Spread Sheet for Steady-State Hydraulic Analysis,” Transactions of the American Nuclear Society, 61, pp. 442-443, June 1990. 
+“An Intelligent Design Methodology For Nuclear Power Systems”, with B. Nassersharif, M. G. Portal and M. J. Gaeta, Transactions of the American Nuclear Society, Vol. 58, June 3-6, 1989. 
+“GUIDE:  A Graphics-Utilizing Input Deck Editor Program for the RELAP5/MOD2 Thermal-Hydraulics Code,” Transactions of the American Nuclear Society, Vol. 57, Washington, D.C., Oct. 31-Nov. 4, 1988. 
+“CATALisp - An Expert System for Real-Time Diagnosis of Multiple-Failure Transients in Nuclear Power Plants,” with B. Nassersharif, Proceedings of the ASME National Heat Transfer Conference, Houston, TX, Aug 1988. 
+“CATALisp - An Expert System for Real-Time Diagnosis of Multiple-Failure Transients in PWRs,” with B. Nassersharif, Transactions of the American Nuclear Society, Vol. 56, San Diego, CA, June 12-16, 1988. 
+"Phobian Cargo Vessel" with Lynn A. Foster, Chris A. Cote, Scott P. Midgett, and Kevin D. Shelton, ANS student conference, College Station, TX, March 1987. This material was also presented at the USRA Space Conference, Washington, D.C., June 15-21, 1987. 
+“Expert system for diagnosis of reactor transients using confidence levels,” with B. Nassersharif, Transactions of the American Nuclear Society, Vol. 56, Dallas, TX, June 1987. 
+SELECTED INTERNAL REPORTS 
+“NTP Core Conceptual Design: Criticality, Controllability, Thermal Hydraulics, Power, and Decay Heat,” BWXT Document NTP1-ES-103655, 2019. [Final report to NASA related to Phase 1 NTP rocket design and development] 
+“Modeling Liquid Hydrogen Tank Heating in NTP Systems with RELAP5-3D,” BWXT Document NASM-ES-102351, September 2018. [Novel application of RELAP5-3D] 
+“Subscale RECS Spray Chamber GOTHIC Model and Design Insights,” BWXT Document RECS-CALC-101864, July 2018. [Rocket Exhaust Capture System – built and tested at Stennis Space Center] 
+
+  
+
+“mPower America: Design, License, & Certification of mPower Small Modular Reactor Project Closeout Report – Final,” BWXT Document T002-RPT-102214, June 2018. 
+“Preliminary Assessment of NTP-GTF Design-Basis Radiological Releases,” BWXT Document NASM-ES-101498, December 2017. 
+“Computer Software Use Procedure,” BWXT Document E-Q-03.04, June 2017. [Quality assurance procedure] 
+“Greenfield Assessment for Pebble Manufacturing Facility,” BWXT Document XE1-ES-101119, March 2017. [Facility sitting report] 
+“CGD Plan for RELAP5-3D Closeout,” Software Commercial Grade Dedication, BWXT Document MPWR-RCSW-000219, March 2016. [Software QA report] 
+“RELAP5-3D Core and Fuel Specification for B&W mPower Safety Analysis,” BWXT Document MPWR-TECR-005163, April 2015. [Evaluation model design inputs from core physics and fuel management requirements] 
+“Development Plan for a RELAP5-based Safety Analysis Evaluation Methodology for TerraPower’s Traveling Wave Reactor,” TerraPower Document TP1-1.4.2-PLAN-Rev-0, December 2014. [Evaluation model requirements] 
+“RELAP5-3D Software Quality Assurance Plan,” BWXT Document EG-Q03-015, February 2014. [Software QA report] 
+“RELAP5-3D Modeling Instructions for Safety Analysis of the B&W mPower Reactor,” BWXT Document EI-Q03-007, August 2013. [Evaluation model requirements] 
+“Safety Analysis Program Practices,” B&W mPower Document EG-Q03-012, January 2013. [Quality assurance document] 
+“Strategic Plan for the RELAP5, RELAP6 and RISMC/RELAP7 Projects: 2011 – 2020,” February 2011. [Technology planning document] 
+“OSSA Methodology Technical Guide,” U.S. EPR Nuclear Island Technical Guide, AREVA NP Document EPR-EN-TG-4210, December 2009. [Severe Accident Management Guideline] 
+
+  
+
+“Severe Accident Analysis,” U.S. EPR Nuclear Island Technical Guide, AREVA NP Document EPR-EN-TG-4310, March 2008. [Quality assurance report] 
+“Preparing and Processing Framatome ANP, Inc. Non-Safety Calculations,” AREVA NP Procedure No. 0402-03, Rev. 00, February 2006. [Quality assurance report] 
+“Severe Accident Program Supplement,” AREVA Document 118-9010607-00 (reissued as EPR-EN-GL-4001), February 2006. [Quality assurance report] 
+“Guidelines for PWR Safety Analysis S-RELAP5 Realistic Large Break LOCA Analysis,” Framatome ANP Document EMF-2062(P), G104,075, June 2005. [Evaluation model requirements] 
+“Guidelines for PWR Safety Analysis Code Input Development for Realistic Large Break LOCA Analysis of a Pressurized Water Reactor,” Framatome ANP Document EMF-2062(P), G104,074, May 2005. 
+“S-RELAP5: Code Verification and Validation (P),” (contributor) Framatome ANP Document EMF-2102, August 2001. [Software QA report] 
+
+“S-RELAP5:  Programmers Guide (P),” Siemens Power Corporation Document EMF-2101, January 1999. [Software QA report] 
+
+“Developmental Assessment of the Multi-Dimensional Component in RELAP5 for Savannah River Site Thermal Hydraulic Analysis,” with K. E. Carlson, et al., EGG-EAST-9803, July 1992. [Software QA report] 
+
+“Functional and Operational Requirements for the HWR-NPR Integral Test Facility,” with V. T. Berta and G. W. Johnsen, Technical Report, EGG-EAST-9132, July 1990. [Thermal-hydraulic test plan] 
+
+“Benchmarking of the Advanced Test Reactor RELAP5 Input Model,” Informal Technical Report, PG-T-89-026, September 1989. [Evaluation model simulation module] 
+
+“Benchmarking Assessment of RELAP5/MOD3 for the Low Flow and Natural Circulation Experiment at WSRC,” NPR-Dev-91-0357, Sept. 30, 1991. [Software QA report] 
 
 === Chapter 7 — Deterministic and Best-Estimate Analysis Methods (R.P. Martin, A. Petruzzi, C. Frepoli) ===
 7.1 Evaluation Model Reprise
@@ -5995,3 +6342,6 @@ December 17, 2018   18:5   Design-Basis Accident Analysis Methods. . .   9in x 6
     operating transients and non-postulated accident scenarios. The remaining
     multi-physics coupling mechanisms and feedback effects in an LWR core
     are shown in Figure
+
+
+
