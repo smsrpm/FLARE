@@ -1,0 +1,1279 @@
+FLARE User's Manual
+
+**FLARE**
+
+Fast Licensing Accident Response Engine
+
+**User's Manual**
+
+*Revision 2 — 2026*
+
+**Robert P. Martin**
+
+*PWR / SMR Safety Analysis*
+
+# **Preface**
+
+This manual describes the installation, configuration, and operation of FLARE (Fast Licensing Accident Response Engine), a nuclear reactor safety analysis suite for pressurized water reactors (PWRs) and small modular reactors (SMRs). FLARE provides five integrated tools accessible from a unified web-based launcher: a PWR Simulator, an Uncertainty Analysis module, a Model Editor, a Plant Analyzer, and a Risk Assessment tool. All tools run in a local Streamlit web server and are accessed through a standard browser.
+
+This manual is organized as follows. Chapters 1 through 3 cover installation, the FLARE home screen, and the input file format. Chapters 4 through 8 provide step-by-step operating instructions for each of the five tools. Appendix A is a Programmer's Guide containing flowcharts, function dependencies, and variable definitions for software developers.
+
+# **Chapter 1 — Installation and Startup**
+
+## **1.1  System Requirements**
+
+| **Component** | **Minimum** | **Recommended** |
+| --- | --- | --- |
+| Operating System | Windows 10 64-bit | Windows 11 64-bit |
+| Python | 3.9 | 3.11 or 3.12 |
+| RAM | 8 GB | 16 GB |
+| Disk space | 2 GB | 5 GB |
+| Browser | Chrome 110+, Edge 110+ | Chrome (latest) |
+| Network | Required for ngrok remote access | Broadband |
+
+*NOTE: iOS Safari is not supported for the Plant Analyzer due to WebKit iframe restrictions. Use Chrome or Edge on iPhone/iPad.*
+
+## **1.2  File Layout**
+
+All FLARE files reside in a single folder (referred to throughout this manual as the FLARE folder). The recommended path structure is:
+
+FLARE/
+
+  flare_home.py  <- launcher
+
+  flare_ui.py  <- PWR Simulator UI
+
+  flare_ua.py  <- Uncertainty Analysis UI
+
+  flare_model_editor.py  <- Model Editor UI
+
+  flare_analyzer.py  <- Plant Analyzer UI
+
+  flare_sim.py  <- simulation engine
+
+  launch_flare.bat  <- Windows launcher
+
+  start_streamlit.ps1  <- PowerShell startup script
+
+  start_ngrok.ps1  <- ngrok tunnel script
+
+  icon_sim.jpg  <- home screen icons
+
+  icon_ua.jpg
+
+  icon_editor.png
+
+  icon_analyzer.png
+
+  flare_risk.py  <- Risk Assessment UI
+
+  flare_config.txt  <- API key and model configuration (optional)
+
+  bdown_env/  <- Python virtual environment (auto-created)
+
+  Case*_in.xlsx  <- input case files
+
+## **1.3  First-Time Setup**
+
+FLARE uses an isolated Python virtual environment (bdown_env) containing all required packages. The startup script creates and populates this environment automatically on first launch.
+
+- Copy all FLARE files into your chosen FLARE folder.
+
+- Double-click launch_flare.bat. On first run it will:
+
+- Search for a system Python 3 installation on PATH
+
+- Create the bdown_env virtual environment in the FLARE folder
+
+- Install all required packages (streamlit, pandas, numpy, openpyxl, matplotlib, XSteamPython, plotly, reportlab)
+
+- After package installation completes, the Streamlit server starts automatically and Chrome should open to http://localhost:8501.
+
+- A second PowerShell window opens and starts the ngrok tunnel, providing a public HTTPS URL for remote access.
+
+*⚠  First-time setup requires internet access to download Python packages. Subsequent launches are instant.*
+
+## **1.4  Routine Startup**
+
+After the first-time setup, launching FLARE is a single double-click on launch_flare.bat. Two PowerShell windows open: one running the Streamlit server, one running ngrok. Both windows must remain open while FLARE is in use. Closing either window terminates the corresponding service.
+
+## **1.5  Remote Access via ngrok**
+
+The ngrok window displays a Forwarding URL in the form https://xxxx-xx-xx-xxx.ngrok-free.app. Any user with this URL and a compatible browser can access FLARE remotely. The URL changes each time ngrok is restarted. Share the current URL with remote users after each launch.
+
+*⚠  The ngrok URL is public. Do not share sensitive input files through FLARE if the URL is distributed broadly.*
+
+# **Chapter 2 — FLARE Home Screen**
+
+The FLARE home screen is displayed at http://localhost:8501 when the server starts. It presents five icon buttons, one for each tool. Clicking an icon navigates to the corresponding tool. The animated orange grid background and glowing FLARE title are purely cosmetic.
+
+## **2.1  Navigation**
+
+| **Icon** | **Tool** | **Description** |
+| --- | --- | --- |
+| PWR SIMULATOR | PWR Simulator | Run single transient simulations; view time-series plots and scalar metrics |
+| UNCERTAINTY ANALYSIS | Uncertainty Analysis | Run Monte Carlo batch simulations; compute statistical output distributions |
+| MODEL EDITOR | Model Editor | View and edit input case files; manage parameters and time-series tables |
+| PLANT ANALYZER | Plant Analyzer | Replay simulation results as an animated plant schematic |
+| RISK ASSESSMENT | Risk Assessment | Plot cases on NEI 18-04 Frequency-Consequence chart; evaluate dose against AOO/DBE/BDBE limits |
+
+Each tool has a FLARE Home button (orange, top of left sidebar) that returns to the home screen from any tool.
+
+## **2.2  Input Case Files**
+
+All FLARE tools share a common set of input case files named CaseName_in.xlsx, located in the FLARE folder. These files contain both a parameter command block and a time-series data table. Creating, editing, and validating these files is done through the Model Editor (Chapter 5). Running them through the simulator produces output files named CaseName_out.xlsx and CaseName_out.csv.
+
+# **Chapter 3 — Input File Format**
+
+Each FLARE case is defined by an Excel workbook named CaseName_in.xlsx. The workbook must contain a worksheet named CaseName_in (i.e., the same name as the file without the _in.xlsx suffix). The worksheet contains two sections: a command block in column A, and a time-series table beginning below the command block.
+
+## **3.1  Command Block**
+
+The command block occupies rows 1 through approximately 55 of column A. It is organized as follows:
+
+### **3.1.1  Banner**
+
+The first several rows are comment lines beginning with the # character. These form the case documentation header and can contain any descriptive text. Example:
+
+#  FLARE Input File
+
+#  Case: CaseBlowdown
+
+#  Description: Double-ended cold leg LOCA, 575 MWt PWR
+
+#  Author: R.P. Martin  Date: 2026-01-15
+
+### **3.1.2  Section Headers**
+
+Sections within the command block are separated by blank rows and introduced by a # comment line. Example:
+
+ 
+
+# Job Control
+
+endtime = 1000
+
+ 
+
+# Break Model
+
+diameter_break = 0.1159
+
+*⚠  A blank row must precede every # section header. The validator (Model Editor, Validator mode) checks for this.*
+
+### **3.1.3  Parameter Assignments**
+
+Each parameter is assigned on its own row as key = value. Values must be numeric. Inline comments (# ...) after the value are permitted but are stripped by the parser.
+
+## **3.2  Time-Series Table**
+
+Immediately below the last parameter row, a table header row signals the start of the time-series boundary conditions. The header is identified by the word 'Time' in column A. Data rows follow immediately.
+
+| **Column** | **Header** | **Units** | **Purpose** | **Activated by** |
+| --- | --- | --- | --- | --- |
+| A | Time (s) | s | Simulation time axis | Always required |
+| B | Structure Q (MW) | MW | Heat added from passive structures to coolant | cond_flag = 1 |
+| C | Decay Heat (MW) | MW | Supplemental decay heat added to ANS curve | Always applied |
+| D | Steam Generator (MW) | MW | Prescribed SG heat removal (positive = removes heat) | sg_table_flag = 1 |
+| E | SI Flow (kg/s) | kg/s | Safety injection mass flow rate | Always applied (0 = inactive) |
+| F | rho_ext (pcm) | pcm | External reactivity insertion vs time | ria_flag = 1 |
+
+*NOTE: Column E replaces the formerly deprecated IPIT column. Existing input files with all zeros in column E are fully backward-compatible.*
+
+## **3.3  Complete Parameter Reference**
+
+Table 3-2 lists all recognized input parameters, their defaults, units, and the model flag required to activate them where applicable.
+
+| **Parameter** | **Default** | **Units** | **Description** | **Required flag** |
+| --- | --- | --- | --- | --- |
+| endtime | 36000 | s | Simulation end time |  |
+| total_power | 575 | MW | Rated thermal power |  |
+| pressure_kPa | 14820 | kPa | Initial RCS pressure |  |
+| temp_core_exit | 312.8 | °C | Initial core exit coolant temperature |  |
+| Tinf | 20 | °C | Ambient temperature |  |
+| t_break | 0 | s | Time at which break opens |  |
+| diameter_break | 0.1159 | m | Break equivalent diameter |  |
+| Cd | 0.9 | — | Default break discharge coefficient |  |
+| Cd_sub | 0.9 | — | Discharge coeff. subcooled flow |  |
+| Cd_sat | 0.9 | — | Discharge coeff. two-phase flow |  |
+| choked | 1 | — | 1=use critical flow model, 0=incompressible |  |
+| Total_Mass_init_kg | 0 | kg | Override initial RCS mass (0=auto-calculate) |  |
+| pressure_containment | 101.3 | kPa | Containment back-pressure |  |
+| transition_mixture_mass | 0.41 | — | Normalized mass at which steam venting begins |  |
+| loop_vol_m3 | 0 | m³ | Additional loop piping volume |  |
+| PORV_setpoint_kPa | 17237 | kPa | PORV opening setpoint |  |
+| PORV_area_m2 | 0.00127 | m² | PORV throat area |  |
+| PORV_Cd | 0.84 | — | PORV discharge coefficient |  |
+| P_relax | 0.5 | — | Pressure update under-relaxation factor |  |
+| scram_on_PORV | 0 | — | Scram when PORV first opens |  |
+| pzr_level_hi | 11.0 | m | Pressurizer full level |  |
+| P_operating_kPa | 15513 | kPa | Pressurizer operating pressure |  |
+| trip_delay | 1.5 | s | RPS signal processing delay |  |
+| trip_power_frac | 1.10 | — | High-flux scram setpoint (fraction of rated) |  |
+| trip_P_lo_kPa | 0 | kPa | Low-pressure scram setpoint (0=90% of P0) |  |
+| trip_P_hi_kPa | 0 | kPa | High-pressure scram setpoint (0=disabled) |  |
+| trip_flow_frac | 0 | — | Low-flow scram setpoint (0=disabled) |  |
+| trip_time_s | 1e6 | s | Timed manual trip (1e6=never) |  |
+| full_power_flag | 0 | — | Hold power at rated; inhibit all trips |  |
+| pump_flag | 1 | — | Enable RCP coastdown model |  |
+| pump_tau | 30 | s | RCP coastdown time constant | pump_flag=1 |
+| pump_speed_rpm | 3550 | rpm | Rated pump speed | pump_flag=1 |
+| pump_scram_trip | 0 | — | Hold RCP at rated until scram, then coast | pump_flag=1 |
+| sg_flag | 1 | — | Enable steam generator heat removal |  |
+| sg_table_flag | 0 | — | Use table column D for Q_SG | sg_flag=1 |
+| core_flag | 0 | — | Enable cladding heat conduction and hot-channel |  |
+| N_pins | 18200 | — | Number of fuel pins | core_flag=1 |
+| SurfArea | 0 | m² | Override core heat transfer area (0=auto) | core_flag=1 |
+| F_r | 1.0 | — | Radial hot-pin peaking factor | core_flag=1 |
+| F_z | 1.0 | — | Axial peaking factor | core_flag=1 |
+| h_gap | 6000 | W/m²K | Fuel-clad gap conductance | core_flag=1 |
+| r_fuel_m | 0.00418 | m | Fuel pellet radius | core_flag=1 |
+| cp_fuel | 330 | J/kgK | Fuel specific heat | core_flag=1 |
+| rho_fuel | 10400 | kg/m³ | Fuel density | core_flag=1 |
+| delta_clad | 0.00057 | m | Cladding wall thickness | core_flag=1 |
+| lambda_clad | 13 | W/mK | Cladding thermal conductivity | core_flag=1 |
+| dnbr_flag | 0 | — | Enable DNBR calculation | core_flag=1 |
+| htc_post_chf | 1e6 | W/m²K | Post-CHF (Bromley) HTC cap [W/m²K]. Default 1e6 (effectively uncapped) for bromley and hot_leg models. Automatically set to 50 W/m²K when post_chf_model = cold_leg. | core_flag=1 |
+| post_chf_model | bromley | — | Post-CHF model: bromley/cold_leg/hot_leg | core_flag=1 |
+| rewet_dT_K | 200 | K | Leidenfrost superheat for rewetting | core_flag=1 |
+| htc_core_mult | 1.0 | — | Multiplicative factor on forced-convection core HTC (Dittus-Boelter / Churchill-Chu). Values < 1 reduce pre-CHF cooling. Default 1.0 = no adjustment. | core_flag=1 |
+| htc_fb_mult | 1.0 | — | Multiplicative factor on film boiling HTC (Bromley and steam Dittus-Boelter). Applied before htc_post_chf cap. Values < 1 worsen post-CHF cooling. Default 1.0 = no adjustment. | core_flag=1 |
+| k_sigma | 3.0 | — | Sigma multiplier for rod failure distribution | core_flag=1 |
+| T_gap_release_C | 800 | °C | Gap release cladding failure temperature | core_flag=1 |
+| T_early_iv_C | 1204 | °C | Early in-vessel failure temperature | core_flag=1 |
+| ria_flag | 0 | — | Enable RIA mode with point kinetics |  |
+| pja_flag | 1 | — | Enable Prompt Jump Approximation | ria_flag=1 |
+| alpha_D_pcm | -3 | pcm/°C | Doppler reactivity coefficient | ria_flag=1 |
+| alpha_M_pcm | -35 | pcm/°C | Moderator temperature coefficient | ria_flag=1 |
+| cond_flag | 0 | — | Enable structure heat input from table column B |  |
+| minimum_output | 0 | — | Write CSV only; skip Excel and plots |  |
+| R5_plot | 1 | — | Include RELAP5-style vessel level plot |  |
+| trip_rod_worth_pcm | −15000 | pcm | Total scram rod worth (negative). Drives post-scram fission decay curve. | core_flag=1 |
+| alpha_M_void | −150 | pcm/% | Void reactivity coefficient (per % mass steam quality x_eq) | core_flag=1 |
+| acc_boron_ppm | 2300 | ppm | Accumulator water boron concentration |  |
+| si_boron_ppm | 2300 | ppm | HPSI/LPSI water boron concentration (set 0 for dilution scenario) |  |
+| alpha_boron_pcm_ppm | −10 | pcm/ppm | Differential boron reactivity worth | core_flag=1 |
+| rcs_boron_ppm_init | 0 | ppm | Initial RCS boron concentration (0=EOC, no boron) |  |
+| si_fill_threshold | 0.5 | — | SI pump degradation onset fill fraction. Set 1.0 to disable for intact-RCS / dilution cases. |  |
+| cvcs_kgs | 0.0 | kg/s | CVCS balanced makeup/letdown flow rate. Zero net mass effect on RCS. |  |
+| cvcs_boron_ppm | 0 | ppm | CVCS makeup water boron concentration. 0 = unborated (worst-case dilution). |  |
+| cvcs_start_time_s | 0.0 | s | Time at which CVCS activates. Set > 0 for delayed dilution onset. |  |
+
+# **Chapter 4 — PWR Simulator**
+
+The PWR Simulator (flare_ui.py) provides an interactive interface for running individual FLARE transient simulations, reviewing results, and downloading output files. It is accessed from the FLARE home screen by clicking the PWR SIMULATOR icon.
+
+## **4.1  Sidebar Controls**
+
+All simulation controls are located in the left sidebar.
+
+### **4.1.1  Case Selector**
+
+The Case dropdown lists all *_in.xlsx files found in the FLARE folder. Select the desired case before running. Changing the case clears any previous run output and console log.
+
+*►  Use the Model Editor to create new cases or edit existing ones before running.*
+
+### **4.1.2  Parameter Overrides**
+
+The Edit parameters expander below the Case selector displays the 13 most commonly varied parameters. Changing any value here creates a temporary override input file (CaseName_override_*.xlsx) for that run only. The original input file is never modified. The override file is deleted after the run.
+
+| **Override Parameter** | **Tooltip Description** |
+| --- | --- |
+| End time [s] | Simulation end time. Runtime scales linearly. |
+| Radial peaking F_r | Ratio of peak-to-average pin power. Drives hot-pin temperature and DNBR. |
+| Axial peaking F_z | Axial peaking factor (chopped cosine). Combined with F_r for hot-pin heat flux. |
+| Gap conductance [W/m²K] | Fuel-clad gap conductance. Largest contributor to fuel temperature uncertainty. |
+| Trip delay [s] | RPS signal processing delay. Typical PWR: 1.5 s. |
+| High-power trip frac | High-flux scram setpoint as fraction of rated (e.g. 1.10 = 110%). |
+| Low-P trip [kPa] | Low-pressure scram setpoint. Set 0 to use default (90% of initial P). |
+| Rated power [MW] | Rated thermal power. Scales all heat sources. |
+| Initial pressure [kPa] | Initial RCS pressure at t=0. |
+| Core-exit temp [°C] | Initial bulk coolant temperature at core exit. |
+| Doppler coeff [pcm/°C] | Fuel temperature reactivity coefficient. Must be negative. |
+| MTC [pcm/°C] | Moderator temperature coefficient. Must be negative at power. |
+| k_sigma | Standard deviations between average and hot pin for rod failure counting. |
+
+*NOTE: Leave any field at its current value to use the base input file setting.*
+
+### **4.1.3  Run Simulation Button**
+
+Clicking Run Simulation starts the simulation. The status badge in the Run tab updates in real time:
+
+| **Badge** | **Color** | **Meaning** |
+| --- | --- | --- |
+| IDLE | Amber | No simulation has been run yet for this case |
+| RUNNING  t = X s | Blue | Simulation is running; X updates every 10 simulation seconds |
+| COMPLETE | Green | Simulation finished successfully |
+| FAILED | Red | An error occurred; check the console output |
+
+## **4.2  Run Tab**
+
+The Run tab is active while the simulation is in progress and after completion.
+
+### **4.2.1  Status Badge**
+
+The status badge (top left of the Run tab) shows the current simulation state. During an active run it updates approximately every 10 simulation-seconds with the current time, giving a real-time progress indication for long runs.
+
+### **4.2.2  Console Output**
+
+Below the status badge, the console log shows the complete stdout output of flare_sim.py. This includes initialization messages, any warnings (e.g., DNBR disabled when core_flag=0), and a DNBR summary line at the end of a successful run. If the simulation fails, the Python traceback appears here.
+
+## **4.3  Results Tab**
+
+The Results tab populates automatically when a simulation completes. It contains three sections.
+
+### **4.3.1  Unit System**
+
+A radio button at the top of the Results tab selects SI (default) or English (US customary) units. Switching units converts all displayed values and axis labels simultaneously.
+
+### **4.3.2  Interactive Plots**
+
+Up to 16 Plotly figures are displayed, organized by physical domain:
+
+| **Figure** | **Variables Shown** |
+| --- | --- |
+| RCS Pressure | Pressure [kPa or psia] vs time |
+| RCS Temperature | Bulk coolant temperature [K or °F] vs time |
+| Break Flow | Break mass flow rate [kg/s or lb/s] vs time |
+| Accumulator | Accumulator pressure, liquid volume, injection flow |
+| Vessel Level | Normalized vessel liquid level vs time |
+| Power | Total power (fission + decay) [MW] and components vs time |
+| Pump | Pump speed [rpm], mass flow, velocity, head vs time |
+| ECCS Injection | Accumulator injection + SI table flow vs time |
+| Steam Generator | Q_SG [MW] vs time |
+| Cladding Temperature | Average and hot-pin clad surface temperature vs time |
+| Fuel Temperature | Average fuel temperature vs time |
+| DNBR | DNBR and critical heat flux vs time (dnbr_flag=1 only) |
+| Reactivity | Doppler, moderator, external, and net reactivity vs time (ria_flag=1) |
+| Rod Failures | Cumulative rod failure counts by failure mode vs time |
+| Pressurizer | Pressurizer level and surge flow vs time |
+| Source Term | RG 1.183 release fractions by nuclide group |
+
+*►  All Plotly figures support pan, zoom, and hover. Double-click a figure to reset the view.*
+
+### **4.3.3  Scalar Summary**
+
+Below the plots, a grid of metric tiles shows the key scalar figures of merit for the run:
+
+| **Metric** | **Description** |
+| --- | --- |
+| Peak Cladding Temp | Maximum hot-pin cladding surface temperature [K or °F] |
+| Peak Fuel Temp | Maximum average fuel temperature [K or °F] |
+| Min DNBR | Minimum departure from nucleate boiling ratio (dnbr_flag=1 only) |
+| Peak Pressure | Maximum RCS pressure [kPa or psia] |
+| Min Pressure | Minimum RCS pressure [kPa or psia] |
+| Peak Power | Maximum total power [MW or % of rated] |
+| Rod Failures (DNB) | Estimated number of pins experiencing DNB |
+| Rod Failures (PCT) | Estimated number of pins exceeding 1204°C |
+
+### **4.3.4  Source Term**
+
+The RG 1.183 Source Term expander shows the gap and early in-vessel release fractions for noble gases, halogens, alkali metals, tellurium group, and barium/strontium as computed from the statistical rod failure model.
+
+### **4.3.5  Download Buttons**
+
+Two download buttons appear at the bottom of the Results tab:
+
+- Download results CSV — downloads the full time-series output as a comma-separated values file (CaseName_out.csv). This file is also used by the Plant Analyzer.
+
+- Download figures PDF — downloads a multi-page PDF containing all generated plots.
+
+### **4.3.6  AI Event Narrative**
+
+A collapsible AI Event Narrative expander appears below the download buttons. Clicking Generate narrative sends a structured data summary to the Anthropic Claude API and displays a 3–5 paragraph technical narrative of the transient event sequence, safety system performance, and regulatory significance. The narrative is cached for the session and is regenerated only when the button is clicked again.
+
+This feature requires an Anthropic API key. Add the following line to flare_config.txt in the FLARE folder: ANTHROPIC_API_KEY = sk-ant-... Optionally add ANTHROPIC_MODEL = model-name to override the default model. If the API key is absent the expander shows a configuration message instead of the button.
+
+## **4.4  Parameters Tab**
+
+The Parameters tab shows the full parsed command block for the selected case, organized by section. This is a read-only view; use the Model Editor to make changes.
+
+# **Chapter 5 — Model Editor**
+
+The Model Editor (flare_model_editor.py) provides a structured interface for creating, viewing, editing, and validating FLARE input case files. It is accessed from the FLARE home screen by clicking the MODEL EDITOR icon.
+
+## **5.1  Sidebar Controls**
+
+### **5.1.1  Case Selector**
+
+Lists all *_in.xlsx files in the FLARE folder. The selected case is the working case for all four tools (Editor, Table Editor, Validator, New Model).
+
+### **5.1.2  Tool Selector**
+
+A radio button selects one of four operating modes:
+
+| **Mode** | **Purpose** |
+| --- | --- |
+| Editor | Edit scalar parameters section by section |
+| Table Editor | Edit the time-series input table (columns B–F) |
+| Validator | Check the command block for formatting errors |
+| New Model | Copy the selected case to a new name |
+
+## **5.2  Editor Mode**
+
+Editor mode displays the command block organized by section. A navigation panel in the sidebar lists the Banner Header and each # section found in the file.
+
+### **5.2.1  Banner Header**
+
+Selecting Banner Header displays a text area containing the free-text documentation lines at the top of the input file. Edit these lines and click Save to Excel to write changes.
+
+### **5.2.2  Parameter Sections**
+
+Selecting any section name displays the key=value parameters in that section as a two-column grid: parameter name on the left, editable text field on the right. Modify any field and click Save to Excel.
+
+### **5.2.3  Saving**
+
+Clicking Save to Excel writes changes to CaseName_edited.xlsx in the FLARE folder. The original CaseName_in.xlsx is never modified. To use the edited file in simulations, rename CaseName_edited.xlsx to CaseName_in.xlsx (or give it a new case name).
+
+*⚠  If a _edited.xlsx file already exists from a previous session, saving overwrites it. The Table Editor and parameter Editor both write to the same _edited.xlsx file, preserving both sets of changes.*
+
+## **5.3  Table Editor Mode**
+
+Table Editor mode provides a visual interface for the six-column time-series table (columns A–F of the input worksheet).
+
+### **5.3.1  Column Selector**
+
+A multiselect control at the top of the main panel chooses which data columns (B–F) to display and edit. Columns not selected remain at their stored values. The default selection highlights any columns that already contain non-zero values.
+
+### **5.3.2  Live Preview Chart**
+
+A Plotly chart below the column selector shows the full interpolated table for all selected columns versus time. This chart represents exactly what the simulation engine will see via numpy linear interpolation. It refreshes automatically after every edit.
+
+- MW columns (Structure Q, Decay Heat, Steam Generator) are plotted on the left axis.
+
+- Reactivity (rho_ext) is plotted on the right axis with a dashed line.
+
+### **5.3.3  Non-Zero Rows Editor**
+
+The sparse editor (st.data_editor) shows only rows where at least one selected column contains a non-zero value. This keeps the display compact for the common case where most of the table is zeros. Rows can be edited, added, or deleted directly in the grid.
+
+### **5.3.4  Adding a Row**
+
+Enter a simulation time in the Insert row at time [s] field and click Add row. The new row is initialized by linear interpolation from the surrounding table rows. Only the values you want to change need to be modified.
+
+### **5.3.5  Import, Resample, and Full Table**
+
+The collapsible Import, Resample & Full Table panel contains three tabs:
+
+- CSV Import — upload a CSV file with headers matching any of the column names. Values are interpolated onto the existing time grid. Useful for importing reference curves from other tools.
+
+- Resample — regenerate the time axis with a uniform step size over a specified range. All column values are re-interpolated from the current table.
+
+- Full Table — a read-only scrollable view of all rows. Includes a Download as CSV button.
+
+### **5.3.6  Save and Reset**
+
+Save to Excel writes the table to CaseName_edited.xlsx, merging with any parameter edits if a _edited.xlsx already exists. Reset discards all unsaved changes and reloads the table from the original file.
+
+## **5.4  Validator Mode**
+
+Validator mode checks the command block for formatting violations that would prevent the parser from reading parameters correctly. The primary rule checked is that every # section header must be preceded by a blank row.
+
+- A green PASS badge indicates the file is correctly formatted.
+
+- A red FAIL badge lists each violation with the row number in the worksheet.
+
+The raw command block (all column A text) is displayed below the validation result for inspection.
+
+## **5.5  New Model Mode**
+
+New Model mode creates a new input case by copying the currently selected case.
+
+- Enter a new model name in the text field (no spaces; do not include _in.xlsx).
+
+- Click Create Model. The file CaseName_in.xlsx is copied to NewName_in.xlsx.
+
+- All worksheet tabs are automatically renamed from the source case name to the new case name, ensuring the simulation engine can find the correct sheet.
+
+- Select the new case from the Case dropdown and use Editor or Table Editor to make changes.
+
+# **Chapter 6 — Uncertainty Analysis**
+
+The Uncertainty Analysis module (flare_ua.py) implements a Monte Carlo sampling framework for Best-Estimate Plus Uncertainty (BEPU) analysis consistent with the statistical approach of 10 CFR 50.46(b). It runs N independent simulations, each with a different random realization of selected input parameters, and computes statistical distributions over the outputs.
+
+## **6.1  Sidebar Controls**
+
+### **6.1.1  Number of Samples**
+
+Sets the total number of Monte Carlo simulation runs. The Wilks formula requires at least 59 samples for a one-sided 95/95 tolerance limit (95th percentile with 95% confidence), where the maximum over all N samples is taken as the 95th percentile estimate. For two-sided 95/95, at least 93 samples are required. Allow approximately one simulation runtime per sample.
+
+### **6.1.2  Base Case**
+
+Selects the nominal input case from which all samples are perturbed. Parameters not selected for uncertainty are held at their base-case values for every sample run.
+
+### **6.1.3  Edit Variable Distributions**
+
+The variable distribution expander lists 17 uncertain parameters. Each parameter has a checkbox to enable it and, when enabled, controls for the distribution type and parameters:
+
+| **Variable** | **Default Distribution** | **Default Range** | **Physical Basis** |
+| --- | --- | --- | --- |
+| Radial peaking F_r | Uniform | [1.20, 1.45] | Manufacturing and burnup variation in pin power distribution |
+| Axial peaking F_z | Uniform | [1.45, 1.65] | Core loading and burnup axial profile uncertainty |
+| Rated power [MW] | Normal | μ=575, σ=10 | Calorimetric power measurement uncertainty (~1-2%) |
+| Core-exit temp [°C] | Normal | μ=312.8, σ=3 | Thermocouple calibration and flow mixing uncertainty |
+| Break diameter [m] | Uniform | [0.15, 0.25] | Break spectrum uncertainty (LBLOCA) |
+| Break Cd (subcooled) | Uniform | [0.85, 1.00] | Vena contracta and non-equilibrium discharge coefficient |
+| Fuel conductivity [W/mK] | Uniform | [2.5, 3.5] | UO2 conductivity degradation with burnup and temperature |
+| Gap conductance [W/m²K] | Uniform | [3000, 9000] | As-fabricated gap size, fill gas, contact pressure |
+| Fuel radius [m] | Uniform | [0.00390, 0.00440] | Manufacturing tolerance (±0.025 mm) |
+| Fuel density [kg/m³] | Uniform | [10000, 10800] | Pellet theoretical density variation |
+| Fuel Cp [J/kgK] | Uniform | [300, 360] | UO2 heat capacity uncertainty with temperature |
+| Clad thickness [m] | Uniform | [0.00050, 0.00065] | Manufacturing tolerance (±0.05 mm) |
+| Clad conductivity [W/mK] | Uniform | [11, 15] | Zircaloy conductivity uncertainty (±15%) |
+| Post-CHF HTC [W/m²K] | Uniform | [300, 600] | Bromley film boiling HTC at high pressure |
+| Leidenfrost ΔT [K] | Uniform | [150, 300] | Rewetting temperature uncertainty |
+| Core HTC multiplier [—] | Uniform | [0.8, 1.2] | Forced-convection HTC bias; conservative direction < 1 (less pre-CHF cooling) |
+| Film boiling HTC multiplier [—] | Uniform | [0.5, 2.0] | Film boiling HTC scatter (~factor of 2); conservative direction < 1 (higher PCT) |
+
+### **6.1.4  Distribution Types**
+
+| **Type** | **Parameters** | **Use case** |
+| --- | --- | --- |
+| uniform | Lower bound, Upper bound | Equal probability between bounds; no knowledge of internal distribution |
+| normal | Mean (μ), Std deviation (σ) | Measurement uncertainty; calorimetric power |
+| lognormal | Log-space mean, Log-space σ | Strictly positive quantities with multiplicative uncertainty |
+| triangular | Lower bound, Upper bound | Peaked at base-case value; bounded uncertainty |
+
+### **6.1.5  Run UA Button**
+
+Clicking Run UA starts the Monte Carlo batch. A progress bar and sample counter update as each run completes. Each sample run produces a _ua_N_out.csv file which is read back immediately. Temporary per-sample input files are cleaned up automatically after each run.
+
+## **6.2  Run Tab**
+
+The Run tab shows a progress bar during the batch and a completion summary after. The summary includes the elapsed wall-clock time, the number of successful runs (failed runs are flagged but do not stop the batch), and the path to the output folder.
+
+## **6.3  Results Tab**
+
+The Results tab displays statistical outputs after a completed UA run. A Load previous run selector at the top of the tab lists all completed UA run folders (named ua_{case}_{YYYYMMDD_HHMMSS}) found in the FLARE folder. Selecting a folder and clicking Load this run reloads the results, samples, and per-sample time-series files from disk, restoring the full Results and Samples tab content without re-running the analysis.
+
+### **6.3.1  Unit System**
+
+SI or English units, same as the PWR Simulator.
+
+### **6.3.2  Envelope Plots**
+
+For each time-series output variable, an envelope plot shows the minimum, mean, maximum, and 95th percentile across all N samples versus time. These envelopes represent the statistical spread of the output due to the sampled input uncertainties. The variable selector dropdown at the top of this section chooses which output column to display.
+
+### **6.3.3  Scalar Statistics Table**
+
+A table below the envelope plot shows the following statistics for the selected time-series variable's peak (or minimum for DNBR) over all samples:
+
+| **Statistic** | **Description** |
+| --- | --- |
+| Mean | Arithmetic mean of the peak value across all N samples |
+| Std Dev | Standard deviation |
+| 5th percentile | Lower bound estimate |
+| 50th percentile (Median) | Best-estimate central value |
+| 95th percentile | Upper bound estimate; the Wilks 95/95 one-sided tolerance limit for N≥59 |
+| Maximum | Bounding value over all samples |
+
+### **6.3.4  CDF Plot**
+
+A cumulative distribution function plot for the selected scalar variable. The x-axis shows the variable value and the y-axis shows the fraction of samples below that value. The 95th percentile is marked with a vertical dashed line.
+
+## **6.4  Samples Tab**
+
+The Samples tab shows the raw sample table: one row per run, columns for all sampled input parameters and key output scalars. The table can be sorted by any column and downloaded as a CSV for external post-processing.
+
+# **Chapter 7 — Plant Analyzer**
+
+The Plant Analyzer (flare_analyzer.py) replays simulation results as an animated plant schematic. Fluid levels in each component rise and fall with the simulation data, and colors shift from blue (cold/low-pressure) to red (hot/high-pressure) as temperatures and pressures change. A live data panel in the sidebar shows all output variables at the current timestep.
+
+*NOTE: The Plant Analyzer requires Chrome or Edge. iOS Safari is not supported due to Apple WebKit iframe restrictions. iOS Chrome and iOS Edge work correctly.*
+
+## **7.1  Sidebar Controls**
+
+### **7.1.1  Case Selector**
+
+Lists all *_out.csv files found in the FLARE folder. These are produced by the PWR Simulator (Download results CSV button) or by running flare_sim.py with minimum_output=1. Select the case to replay.
+
+### **7.1.2  Playback Speed**
+
+The Speed slider (50–2000 ms/step) controls the delay between frames during playback. Lower values produce faster animation; 300 ms is the default.
+
+### **7.1.3  Diagram Zoom**
+
+The Diagram zoom slider (0.4–1.4) scales the plant schematic. The iframe height adjusts automatically to match. Use the horizontal scrollbar inside the diagram area if the schematic extends beyond the panel width.
+
+### **7.1.4  Playback Controls**
+
+Three buttons control playback:
+
+| **Button** | **Action** |
+| --- | --- |
+| ⏮  (Skip to start) | Jump to timestep 0 and pause |
+| ► / ⏸  (Play/Pause) | Toggle automatic frame advance |
+| ⏭  (Skip to end) | Jump to the last timestep and pause |
+
+### **7.1.5  Timestep Slider**
+
+Drag the Timestep slider to scrub manually through the simulation. When Play is active, the slider updates automatically.
+
+### **7.1.6  Variables Table**
+
+Below the playback controls, a scrollable table shows every column from the output CSV at the current timestep value. This updates on every frame advance and provides a live numerical read of all simulation outputs.
+
+## **7.2  Plant Schematic**
+
+The plant schematic is a pixel-accurate SVG diagram laid out to match the NPA reference design. Components and their color mappings are:
+
+| **Component** | **Color / Fill Basis** |
+| --- | --- |
+| Pressurizer | Fluid fill level from RCS vessel level; color from RCS temperature and pressure |
+| Steam Generator | Fluid fill from RCS level; color from cold-leg temperature |
+| Reactor Vessel | Fluid fill from Vessel Level (m); color from RCS temperature |
+| Core (inside RV) | Solid fill color from Clad Surface Temp normalized over its own column range |
+| Accumulator | Fluid fill from Accumulator Liquid Volume; color from cooled injection temperature |
+| Pump | Dome fill color: green=full flow, yellow=coasting, red=stopped (from pump flow column) |
+| Hot Leg pipe | Color from RCS temperature (hot side) |
+| Cold Leg / Surge | Color from cold-leg temperature |
+| ACC injection pipe | Color from accumulator fluid temperature |
+| Pressure label | Displayed on hot leg at its midpoint; updates every frame |
+
+*►  The color scale for each component is normalized over that component's full range across the entire simulation, not a fixed physical range. A component at its initial temperature shows as blue (relative minimum) and at its peak temperature shows as red (relative maximum).*
+
+# **Chapter 8 — Worked Examples**
+
+## **8.1  Running a Large-Break LOCA Case**
+
+- Launch FLARE and navigate to the PWR Simulator.
+
+- Select CaseLBLOCA_cold from the Case dropdown.
+
+- Open Edit parameters and verify: endtime = 1000 s, F_r = 1.52, F_z = 1.55, core_flag = 1, dnbr_flag = 1.
+
+- Click Run Simulation. The status badge shows RUNNING t = X s as the simulation progresses.
+
+- After completion (COMPLETE badge), click the Results tab.
+
+- Review the RCS Pressure plot: pressure should drop from ~15 MPa to containment pressure within ~10 s.
+
+- Review the Cladding Temperature plot: peak hot-pin temperature should occur between 50–200 s depending on ECCS injection timing.
+
+- Check the Scalar Summary: verify Peak Cladding Temp < 1204°C for a case that passes 10 CFR 50.46.
+
+- Download the results CSV and load it in the Plant Analyzer to replay the transient visually.
+
+## **8.2  Creating a New Case with the Model Editor**
+
+- Navigate to the Model Editor.
+
+- Select CaseLBLOCA_cold as the base case.
+
+- Set Tool to New Model, enter the name CaseMyLOCA, and click Create Model.
+
+- Select CaseMyLOCA from the Case dropdown.
+
+- Set Tool to Editor. Navigate to the Break Model section and change diameter_break to 0.20.
+
+- Click Save to Excel. The file CaseMyLOCA_edited.xlsx is created.
+
+- Rename CaseMyLOCA_edited.xlsx to CaseMyLOCA_in.xlsx in the FLARE folder (outside of FLARE).
+
+- Return to the PWR Simulator, select CaseMyLOCA, and run.
+
+## **8.3  Running a Monte Carlo Uncertainty Analysis**
+
+- Navigate to Uncertainty Analysis.
+
+- Set Number of samples to 59 (minimum for one-sided 95/95).
+
+- Select CaseLBLOCA_cold as the base case.
+
+- In Edit variable distributions, enable: F_r (Uniform [1.20, 1.45]), F_z (Uniform [1.45, 1.65]), h_gap (Uniform [3000, 9000]).
+
+- Click Run UA. A progress bar advances as each of the 59 runs completes.
+
+- In the Results tab, select Clad Surface Temp (K) from the variable dropdown.
+
+- The 95th percentile envelope represents the Wilks 95/95 upper bound on peak cladding temperature.
+
+- Compare the 95th percentile PCT against the 1204°C (1477 K) limit to assess margin.
+
+# **Appendix A — Programmer's Guide**
+
+This appendix describes the software architecture of FLARE for developers who need to extend, debug, or integrate the code. It covers the module structure, function call hierarchy, data flow, and the principal input and output variables for each function.
+
+## **A.1  Module Overview**
+
+| **File** | **Role** | **Entry point** |
+| --- | --- | --- |
+| flare_home.py | Streamlit launcher and router | streamlit run flare_home.py |
+| flare_ui.py | PWR Simulator user interface | Routed from flare_home.py |
+| flare_ua.py | Uncertainty Analysis user interface | Routed from flare_home.py |
+| flare_model_editor.py | Model Editor user interface | Routed from flare_home.py |
+| flare_analyzer.py | Plant Analyzer user interface | Routed from flare_home.py |
+| flare_sim.py | Simulation engine | python flare_sim.py CaseName_in.xlsx |
+
+## **A.2  flare_home.py — Launcher**
+
+### **A.2.1  Function: (top level)**
+
+No functions defined. Top-level script only.
+
+Logic: reads st.session_state.page and st.query_params["page"] to determine routing. If page != "home", the target .py file is exec()'d in the current process with set_page_config monkey-patched to a no-op.
+
+Principal session state variables:
+
+| **Variable** | **Type** | **Description** |
+| --- | --- | --- |
+| st.session_state.page | str | Current page: 'home', 'simulator', 'ua', 'editor', 'analyzer' |
+
+Flowchart:
+
+START
+
+  |
+
+  +-- read st.query_params['page']
+
+  |
+
+  +-- page == 'home'? --> render 4 icon buttons --> END
+
+  |
+
+  +-- page == 'simulator' --> exec(flare_ui.py) --> st.stop()
+
+  +-- page == 'ua'  --> exec(flare_ua.py) --> st.stop()
+
+  +-- page == 'editor'  --> exec(flare_model_editor.py) --> st.stop()
+
+  +-- page == 'analyzer'  --> exec(flare_analyzer.py) --> st.stop()
+
+## **A.3  flare_ui.py — PWR Simulator UI**
+
+### **A.3.1  Function: find_cases()**
+
+Returns a sorted list of all *_in.xlsx filenames in WORK_DIR.
+
+Inputs: (none)  |  Returns: List[str]
+
+### **A.3.2  Function: load_command_block(case_name)**
+
+Reads column A of the CaseName_in sheet from the input workbook.
+
+Inputs: case_name: str  |  Returns: List[Tuple[int, Any]] — (row_number, cell_value) pairs
+
+### **A.3.3  Function: parse_params(rows)**
+
+Parses key=value rows from the command block into a dictionary.
+
+Inputs: rows: List[Tuple]  |  Returns: Dict[str, float]
+
+### **A.3.4  Function: build_override_xlsx(case_name, overrides)**
+
+Creates a temporary override input file with the specified parameter values substituted.
+
+Inputs: case_name: str, overrides: Dict[str, float]  |  Returns: str (new case name)  |  Side effect: writes CaseName_override_HHMMSS_in.xlsx
+
+### **A.3.5  Function: smart_step(v)**
+
+Computes an appropriate number_input step size from the magnitude of v.
+
+Inputs: v: float  |  Returns: float
+
+### **A.3.6  Function: load_results(case_name, run_dir)**
+
+Loads the output CSV for the given case from run_dir (or WORK_DIR if run_dir is None).
+
+Inputs: case_name: str, run_dir: Path|None  |  Returns: pd.DataFrame | None
+
+### **A.3.7  Function: load_source_term(case_name, run_dir)**
+
+Loads the RG 1.183 source term summary CSV.
+
+Inputs: case_name: str, run_dir: Path|None  |  Returns: Dict | None
+
+### **A.3.8  Function: make_plots(df, case_name, use_english)**
+
+Generates up to 16 Plotly figures from the output DataFrame.
+
+Inputs: df: pd.DataFrame, case_name: str, use_english: bool
+
+Returns: Dict[str, go.Figure] — keyed by figure title
+
+Dependencies: plotly.graph_objects, plotly.subplots
+
+### **A.3.9  Function: scalar_summary(df, use_english, init_power_mw)**
+
+Extracts peak/minimum scalar values from the output DataFrame.
+
+Inputs: df: pd.DataFrame, use_english: bool, init_power_mw: float|None
+
+Returns: Dict[str, Any] — keyed metric names to (value, unit, status) tuples
+
+Flowchart (Run Simulation):
+
+run_btn clicked
+
+  |
+
+  +-- build_override_xlsx() if overrides present
+
+  |
+
+  +-- mkdir sim_<case>_<timestamp>/
+
+  |
+
+  +-- Popen([python, flare_sim.py, case_name])
+
+  |
+
+  +-- for line in proc.stdout:
+
+  |  +-- if line starts 'SIMTIME': update badge with t
+
+  |  +-- append to _lines
+
+  |
+
+  +-- proc.wait()
+
+  |
+
+  +-- check for 'Traceback'/'Error' --> set run_status
+
+  |
+
+  +-- move output files to run_dir
+
+  |
+
+  +-- st.rerun()
+
+## **A.4  flare_ua.py — Uncertainty Analysis UI**
+
+### **A.3.10  Function: load_api_key()**
+
+Reads the ANTHROPIC_API_KEY entry from flare_config.txt in WORK_DIR.
+
+Inputs: (none)  |  Returns: str | None
+
+### **A.3.11  Function: load_model()**
+
+Reads the ANTHROPIC_MODEL entry from flare_config.txt; returns ’claude-sonnet-4-5’ if absent.
+
+Inputs: (none)  |  Returns: str (model identifier)
+
+### **A.3.12  Function: _build_narrative_prompt(df, case_name)**
+
+Constructs a plain-text data summary from the output DataFrame for use as the AI Event Narrative API prompt. Extracts initial, peak, minimum, and final values with times for: RCS pressure and temperature, core power, vessel level, pump flow, ECCS injection, DNBR, clad and fuel temperatures, core HTC, SG heat removal, equilibrium quality, and rod failure counts.
+
+Inputs: df: pd.DataFrame, case_name: str  |  Returns: str (multi-line summary)
+
+## **A.4  flare_ua.py — Uncertainty Analysis UI**
+
+### **A.4.1  Data structure: UA_VARIABLES**
+
+Dict mapping parameter name to (label, default_dist, base, p1, p2, help_text). 17 entries. Used to populate the checkbox/distribution UI and to generate samples.
+
+### **A.4.2  Function: sample_values(dist, p1, p2, base, n, rng)**
+
+Draws n samples from the specified distribution.
+
+Inputs: dist: str ('uniform'|'normal'|'lognormal'|'triangular'), p1/p2: float (distribution params), base: float (base-case value), n: int, rng: np.random.Generator
+
+Returns: np.ndarray shape (n,)
+
+### **A.4.3  Function: build_ua_input(base_case, overrides, sample_id, run_dir)**
+
+Builds a per-sample input xlsx with the sampled parameter values substituted.
+
+Inputs: base_case: str, overrides: Dict[str,float], sample_id: int, run_dir: Path
+
+Returns: str (sample case name)  |  Side effect: writes CaseName_ua_N_in.xlsx
+
+### **A.4.4  Function: extract_scalars(base_case, sample_id, run_dir)**
+
+Reads the sample output CSV and extracts peak/minimum scalar figures of merit.
+
+Inputs: base_case: str, sample_id: int, run_dir: Path
+
+Returns: Dict[str, float]
+
+### **A.4.5  Function: cleanup_sample(base_case, sample_id)**
+
+Deletes the temporary per-sample input xlsx after the run.
+
+Flowchart (Run UA):
+
+run_btn clicked
+
+  |
+
+  +-- for i in range(N_samples):
+
+  |  +-- draw samples from active_vars distributions
+
+  |  +-- build_ua_input(base_case, samples[i], i)
+
+  |  +-- subprocess.run(flare_sim.py, sample_case)
+
+  |  +-- extract_scalars(base_case, i) --> append to results
+
+  |  +-- cleanup_sample(base_case, i)
+
+  |  +-- update progress bar
+
+  |
+
+  +-- compute statistics (mean, std, percentiles)
+
+  |
+
+  +-- store in st.session_state
+
+  |
+
+  +-- st.rerun()
+
+## **A.5  flare_model_editor.py — Model Editor**
+
+### **A.5.1  Function: find_cases()**
+
+Returns sorted list of *_in.xlsx filenames. Excludes temp files starting with .~
+
+### **A.5.2  Function: load_rows(path)**
+
+Reads column A of the active sheet. Returns List[Tuple[int, Any]].
+
+### **A.5.3  Function: build_sections(rows)**
+
+Parses the command block into a banner string and a list of section dicts. Each section dict: {name: str, vars: List[{row, key, value}]}.
+
+Returns: Tuple[str, List[Dict]]
+
+### **A.5.4  Function: validate(rows)**
+
+Checks that every # section header is preceded by a blank row.
+
+Returns: List[str] (list of issue descriptions, empty if valid)
+
+### **A.5.5  Function: apply_param_updates(path, updates, banner_text)**
+
+Writes updated parameter values back to the workbook using regex substitution on the key=value strings.
+
+Inputs: path: Path, updates: List[Tuple[row, key, new_val]], banner_text: str
+
+Side effect: writes <stem>_edited.xlsx
+
+### **A.5.6  Function: load_table(path, case_name)**
+
+Reads the time-series table (columns A–E) from the _in sheet.
+
+Returns: Tuple[int, pd.DataFrame] — (header_row_number, DataFrame with 5 columns)
+
+### **A.5.7  Function: save_table(path, case_name, header_row, df)**
+
+Writes the edited DataFrame back to the workbook. If _edited.xlsx already exists, writes into it (preserving param edits). Clears up to 2000 rows before writing.
+
+### **A.5.8  Function: resample_df(df, n_points, t_start, t_end)**
+
+Re-interpolates all data columns onto a new uniform time grid using numpy.interp.
+
+Returns: pd.DataFrame
+
+### **A.5.9  Function: make_table_chart(df, active_cols)**
+
+Builds a Plotly figure for the time-series table preview with dual y-axes.
+
+Returns: go.Figure
+
+## **A.6  flare_analyzer.py — Plant Analyzer**
+
+### **A.6.1  Principal variables**
+
+| **Variable** | **Type** | **Description** |
+| --- | --- | --- |
+| df | pd.DataFrame | Full output CSV loaded at startup; re-read on case change |
+| row | pd.Series | Current timestep row of df; indexed by st.session_state.step |
+| lvl_rv | float [0,1] | Normalized RCS vessel level (Vessel Level / max over run) |
+| lvl_acc | float [0,1] | Normalized accumulator liquid volume |
+| col_hot | str | HSLA color string for hot-side fluid (RCS temperature / pressure) |
+| col_cold | str | HSLA color string for cold-side fluid |
+| col_core | str | HSLA color string for core (clad temp normalized over clad range) |
+| col_pump | str | HSLA color string for pump (green/yellow/red from pump flow fraction) |
+| col_acc_fluid | str | HSLA color string for accumulator fluid (cool injection water) |
+| svg | str | Complete SVG markup string; regenerated every Streamlit rerun |
+| b64 | str | Base64-encoded HTML page containing the SVG; set as iframe src |
+| is_ios_safari | bool | True if User-Agent indicates iOS Safari; shows warning, skips iframe |
+
+### **A.6.2  Function: fluid_color(T_C, P_MPa, alpha, t_min, t_max)**
+
+Maps temperature and pressure to an HSLA color string. Hue: 240 (blue) at T_min to 0 (red) at T_max. Lightness: 70% at P_min to 40% at P_max. t_min/t_max override the global Tmin/Tmax for clad temperature.
+
+Returns: str (e.g. 'hsla(180,85%,55%,0.82)')
+
+### **A.6.3  SVG Component Geometry**
+
+| **Component** | **SVG x (left)** | **SVG y (top)** | **Width** | **Height** | **Notes** |
+| --- | --- | --- | --- | --- | --- |
+| Pressurizer | PRZ_CX - PRZ_W/2 | 105 | 100 | 245 | Centered on hot leg midpoint |
+| Steam Generator | 50 | 440 | 105 | 195 | Far left |
+| Reactor Vessel | 360 | 320 | 210 | 400 | Large center rectangle |
+| Accumulator | 620 | 340 | 181 | 175 | Right side (30% narrower than original) |
+| Core | 390 | 580 | 100 | 130 | Inside RV, bottom center |
+| Pump | (RV_LEFT+SG_CX)/2 | RV_BOT | PUMP_RX=42 | PUMP_RY=28 | On horizontal cold leg, dome upward |
+
+## **A.7  flare_sim.py — Simulation Engine**
+
+### **A.7.1  Top-level Functions**
+
+| **Function** | **Inputs** | **Returns** | **Description** |
+| --- | --- | --- | --- |
+| pwr_sim(wkstbase) | str: case name base | None | Main simulation entry point |
+| post_processing(...) | 40+ arrays | None | Generates Excel output and matplotlib/Plotly figures |
+| get_variable(ns,name,default) | dict, str, Any | Any | Safe variable lookup from exec'd namespace |
+| compute_mixture_properties(P,h) | float,float | tuple | Two-phase properties at (P,h) from XSteam |
+| compute_property_partials(...) | P,h,phase props | dict | Numerical partial derivatives for 2x2 solver |
+| break_flow(P,h,A,Cd_sub,Cd_sat) | floats | float | Critical mass flow rate at break |
+| pump_module(state,dt) | dict,float | dict | RCP coastdown one step forward |
+| fission_scram(t_rel,P0,beta_eff) | floats | float | Post-scram power fraction from 6-group delayed neutrons |
+| dhp_act(t_rel,Q0) | floats | float | Actinide decay heat (U-239, Np-239) |
+
+### **A.7.2  pwr_sim() Internal Flow**
+
+pwr_sim(wkstbase)
+
+  |
+
+  +-- Read input file (CaseName_in.xlsx)
+
+  |  parse command block --> local_namespace
+
+  |  read table columns A-F
+
+  |
+
+  +-- Initialize state variables
+
+  |  Total_Mass, Pressure[0], enthalpy_mix[0]
+
+  |  accumulator: acc_pres, acc_tgas, acc_liqvol
+
+  |  pump: omega_rpm, mdot, velocity
+
+  |  cladding: TTwall[0] from rated-power HTC
+
+  |
+
+  +-- Time loop: for t in range(number_timesteps-1):
+
+  |  |
+
+  |  +-- print 'SIMTIME t' every 10 sim-s (for UI badge)
+
+  |  |
+
+  |  +-- compute_mixture_properties(P[t], h[t])
+
+  |  |
+
+  |  +-- compute_property_partials(...)
+
+  |  |
+
+  |  +-- Accumulator model --> acc_wdot[t]
+
+  |  +-- massflow_in[t] = acc_wdot * rho_water
+
+  |  +-- si_mdot[t] = interp(time[t], si_flow_table)
+
+  |  |
+
+  |  +-- Break flow: break_flow() --> massflow_break[t]
+
+  |  |
+
+  |  +-- PORV predictor-corrector --> massflow_PORV[t]
+
+  |  |
+
+  |  +-- Update Total_Mass
+
+  |  |
+
+  |  +-- Pump model: pump_module() --> omega, mdot, velocity
+
+  |  |
+
+  |  +-- Steam generator: UA model or table lookup --> Q_sg[t]
+
+  |  |
+
+  |  +-- Core heat transfer (core_flag=1):
+
+  |  |  +-- Cladding slab solve (implicit FD)
+
+  |  |  +-- Dittus-Boelter or Churchill-Chu HTC
+
+  |  |  +-- Bromley post-CHF if DNBR < 1
+
+  |  |  +-- Biasi/Zuber CHF --> DNBR
+
+  |  |  +-- Fuel temperature (thermal resistance chain + lag)
+
+  |  |  +-- Baker-Just oxidation
+
+  |  |  +-- Rod failure counting (Gaussian distribution)
+
+  |  |
+
+  |  +-- Kinetics (ria_flag=1 or scram active):
+
+  |  |  +-- Doppler + MTC feedback --> rho_net
+
+  |  |  +-- Prompt Jump Approximation
+
+  |  |  +-- Nordheim-Fuchs if rho > beta_eff
+
+  |  |  +-- Euler step on point kinetics ODEs
+
+  |  |
+
+  |  +-- Decay heat: ANS-1979 sum --> Q_decay[t]
+
+  |  |
+
+  |  +-- net_heat_total[t] = Q_fission + Q_decay + Q_structure
+
+  |  |
+
+  |  +-- Build b-vector (energy + volume sources)
+
+  |  +-- Solve A * [dP, dh] = b --> P[t+1], h[t+1]
+
+  |  |
+
+  |  +-- RPS trip check --> scram if setpoint exceeded
+
+  |
+
+  +-- post_processing(all output arrays)
+
+  |  +-- Build output DataFrame
+
+  |  +-- Write _out.xlsx (or _out.csv if minimum_output=1)
+
+  |  +-- Generate 16 matplotlib/Plotly figures
+
+  |  +-- Bundle figures into PDF
+
+  |
+
+  +-- END
+
+### **A.7.3  Principal Input Variables**
+
+The following are the most consequential internal variables in pwr_sim(). Full parameter table is in Chapter 3.
+
+| **Variable** | **Type** | **Units** | **Description** |
+| --- | --- | --- | --- |
+| Pressure[t] | np.ndarray | Pa | RCS bulk pressure at each timestep |
+| enthalpy_mix[t] | np.ndarray | J/kg | RCS bulk specific enthalpy |
+| Total_Mass | float | kg | Current total RCS fluid mass |
+| time[t] | np.ndarray | s | Simulation time grid |
+| massflow_break[t] | np.ndarray | kg/s | Break mass flow rate |
+| massflow_in[t] | np.ndarray | kg/s | Accumulator injection mass flow |
+| si_mdot[t] | np.ndarray | kg/s | SI table injection mass flow (column E) |
+| massflow_PORV[t] | np.ndarray | kg/s | PORV relief mass flow |
+| TTwall[t] | np.ndarray | K | Average cladding outer surface temperature |
+| alpha[t] | np.ndarray | W/m²K | Coolant-side HTC |
+| DNBR[t] | np.ndarray | — | Departure from nucleate boiling ratio |
+| net_heat_total[t] | np.ndarray | W | Total thermal power to coolant |
+| rho_net_arr[t] | np.ndarray | pcm | Net reactivity (kinetics cases) |
+| pump_omega[t] | np.ndarray | rpm | Pump speed |
+| acc_liqvol[t] | np.ndarray | m³ | Accumulator liquid volume |
+| ves_ll[t] | np.ndarray | m | Vessel liquid level |
+
+### **A.7.4  Principal Output Variables (CSV / Excel)**
+
+| **Column Name** | **Units** | **Description** |
+| --- | --- | --- |
+| Time (s) | s | Simulation time |
+| RCS Pressure (kPa) | kPa | Bulk RCS pressure |
+| RCS Temperature (K) | K | Bulk RCS temperature |
+| Break Flow (kg/s) | kg/s | Break mass flow rate |
+| Accumulator Pressure (kPa) | kPa | Accumulator gas pressure |
+| Accumulator Temperature (K) | K | Accumulator gas temperature |
+| Accumulator Flow (kg/s) | kg/s | Accumulator injection flow |
+| CVCS Flow (kg/s) | kg/s | Safety injection from table (column E) |
+| Accumulator Liquid Volume (m3) | m³ | Accumulator liquid remaining |
+| Vessel Level (m) | m | RCS vessel liquid level |
+| Equilibrium Quality (—) | — | Bulk coolant equilibrium quality x_eq; < 0 subcooled, 0–1 two-phase, > 1 superheated |
+| Total Mass Scaled (—) | — | M(t)/M(0) normalized mass fraction |
+| Pump Speed (rpm) | rpm | RCP speed |
+| Pump Mass Flow (kg/s) | kg/s | Primary coolant mass flow rate |
+| Pump Velocity (m/s) | m/s | Core coolant velocity |
+| Pump Head (Pa) | Pa | Pump hydraulic head |
+| Clad Surface Temp (K) | K | Average cladding surface temperature |
+| Clad HTC (W/m2-K) | W/m²K | Coolant-side heat transfer coefficient |
+| DNBR | — | Min departure from nucleate boiling ratio |
+| PORV Mass Flow (kg/s) | kg/s | PORV relief flow |
+| Pressurizer Level (m) | m | Pressurizer liquid level |
+| Pressurizer Level (norm) | — | Normalized pressurizer level |
+| Pressurizer Surge (kg/s) | kg/s | Surge line mass flow (into/out of RCS) |
+| Fuel Avg Temp (K) | K | Average fuel temperature |
+| Clad Surface Temp Hot Pin (K) | K | Hot-pin cladding surface temperature |
+| Fuel Hot Pin Temp (K) | K | Hot-pin fuel temperature |
+| Reactivity scram (pcm) | pcm | Post-scram rod worth reactivity [pcm] |
+| Reactivity Doppler (pcm) | pcm | Doppler feedback reactivity |
+| Reactivity Moderator (pcm) | pcm | Moderator temperature feedback reactivity |
+| Reactivity net (pcm) | pcm | Net reactivity |
+| Rod Failures DNB (est.) | — | Estimated pins experiencing DNB |
+| Rod Failures PCT (est.) | — | Estimated pins exceeding PCT limit |
+| Rod Failures Gap (est.) | — | Estimated pins with gap release |
+| Rod Failures EarlyIV (est.) | — | Estimated pins with early in-vessel release |
+| Void Fraction (-) | — | Volumetric void fraction α = xρ_L/(xρ_L+(1-x)ρ_V); 0 when subcooled |
+| Break Enthalpy (kJ/kg) | kJ/kg | Stagnation enthalpy at the break plane used in critical flow calculation |
+| RCS Boron (ppm) | ppm | Instantaneous RCS boron concentration from ECCS injection mass balance |
+| Reactivity Boron (pcm) | pcm | Boron reactivity contribution (SLCS + ECCS injection) |
+| HPSI Flow (kg/s) | kg/s | High-pressure safety injection mass flow rate |
+| LPSI Flow (kg/s) | kg/s | Low-pressure safety injection mass flow rate |
+| CVCS Makeup (kg/s) | kg/s | CVCS makeup flow = cvcs_kgs + positive column E imbalance |
+| CVCS Letdown (kg/s) | kg/s | CVCS letdown flow = cvcs_kgs + magnitude of negative column E imbalance |
+| Accumulator Level (m) | m | Accumulator liquid level = Accumulator Volume / acc_area |
+
+## **A.8  Extending FLARE**
+
+### **A.8.1  Adding a New Input Parameter**
+
+- Add a get_variable() call in pwr_sim() after the existing parameter block for the relevant physical section.
+
+- Use the new variable in the physics calculation.
+
+- Add a row to the KEY_PARAMS list in flare_ui.py to expose it in the Parameter Overrides expander.
+
+- Add a row to UA_VARIABLES in flare_ua.py if it should be available for uncertainty sampling.
+
+- Add a row to the tooltip help text in flare_model_editor.py if it appears in the input file.
+
+### **A.8.2  Adding a New Output Variable**
+
+- Initialise the array with np.zeros(number_timesteps) before the time loop.
+
+- Compute and store the value at each timestep t within the loop.
+
+- Pass the array as a named parameter to post_processing().
+
+- Add it to the data dict in post_processing() for both the Excel and CSV output paths.
+
+- Add a plot if needed in the make_plots() function in flare_ui.py.
+
+### **A.8.3  Adding a New Tool to the Home Screen**
+
+- Create the new tool as a standalone Streamlit script (e.g. flare_newtool.py) with a FLARE Home button and matching dark sidebar style.
+
+- Add a new routing branch in flare_home.py: elif page == 'newtool': target = 'flare_newtool.py'.
+
+- Prepare an icon image (PNG or JPG, square aspect ratio, ~1000x1000 px).
+
+- Add load_image(WORK_DIR / 'icon_newtool.png', fmt='png') to the image loading block.
+
+- Add a new column and image_link() call to the home screen layout (expand st.columns to include the new tool).
+
+- Update max-width in the CSS block if needed to accommodate the additional column.
+
+FLARE · R.P. Martin — Proprietary

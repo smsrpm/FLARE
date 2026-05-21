@@ -1,0 +1,138 @@
+{
+  "F_r": {
+    "label": "Radial peaking F_r",
+    "distribution": "uniform",
+    "base": 1.3,
+    "p1": 1.2,
+    "p2": 1.45,
+    "help": "Radial hot-channel factor: ratio of peak-to-average pin power. Drives hot-pin clad temperature and DNBR. Typical range 1.2–1.45."
+  },
+  "F_z": {
+    "label": "Axial peaking F_z",
+    "distribution": "uniform",
+    "base": 1.55,
+    "p1": 1.45,
+    "p2": 1.65,
+    "help": "Axial peaking factor (chopped cosine). Combined with F_r for hot-pin heat flux. Typical fresh-core range 1.45–1.65."
+  },
+  "total_power": {
+    "label": "Rated power [MW]",
+    "distribution": "normal",
+    "base": 575.0,
+    "p1": 575.0,
+    "p2": 10.0,
+    "help": "Rated thermal power. Uncertainty reflects calorimetric measurement error (~1–2% of rated). Modelled as normal."
+  },
+  "temp_core_exit": {
+    "label": "Core-exit temp [°C]",
+    "distribution": "normal",
+    "base": 312.8,
+    "p1": 312.8,
+    "p2": 3.0,
+    "help": "Initial bulk coolant temperature at core exit. Affects initial enthalpy and moderator reactivity feedback. Uncertainty reflects thermocouple calibration and flow mixing (~±3°C)."
+  },
+  "diameter_break": {
+    "label": "Break diameter [m]",
+    "distribution": "uniform",
+    "base": 0.2,
+    "p1": 0.15,
+    "p2": 0.25,
+    "help": "Equivalent break diameter. Drives blowdown rate and peak clad temperature. Use a uniform distribution to represent break spectrum uncertainty."
+  },
+  "Cd_sub": {
+    "label": "Break Cd (subcooled)",
+    "distribution": "uniform",
+    "base": 0.93,
+    "p1": 0.85,
+    "p2": 1.0,
+    "help": "Discharge coefficient for subcooled critical flow at the break. Accounts for vena contracta and non-equilibrium effects. Range 0.85–1.0 per NUREG validation studies."
+  },
+  "k_fuel": {
+    "label": "Fuel conductivity [W/m·K]",
+    "distribution": "uniform",
+    "base": 3.0,
+    "p1": 2.5,
+    "p2": 3.5,
+    "help": "UO₂ thermal conductivity. Decreases with burnup and temperature. Controls fuel centreline temperature and stored energy. Typical BOL ~3 W/m·K; EOL ~2.5 W/m·K."
+  },
+  "h_gap": {
+    "label": "Gap conductance [W/m²·K]",
+    "distribution": "uniform",
+    "base": 6000.0,
+    "p1": 3000.0,
+    "p2": 9000.0,
+    "help": "Fuel-clad gap conductance — the largest single contributor to fuel temperature uncertainty. Depends on gap size, fill gas, and contact pressure. Wide uniform range reflects as-fabricated variation."
+  },
+  "r_fuel_m": {
+    "label": "Fuel radius [m]",
+    "distribution": "uniform",
+    "base": 0.00418,
+    "p1": 0.0039,
+    "p2": 0.0044,
+    "help": "Fuel pellet outer radius. Manufacturing tolerance ~±0.025 mm. Affects fuel heat capacity, stored energy, and gap conductance area."
+  },
+  "rho_fuel": {
+    "label": "Fuel density [kg/m³]",
+    "distribution": "uniform",
+    "base": 10400.0,
+    "p1": 10000.0,
+    "p2": 10800.0,
+    "help": "UO₂ pellet density (theoretical ~10 960 kg/m³). Affects fuel heat capacity and total stored energy in the core."
+  },
+  "cp_fuel": {
+    "label": "Fuel Cp [J/kg·K]",
+    "distribution": "uniform",
+    "base": 330.0,
+    "p1": 300.0,
+    "p2": 360.0,
+    "help": "UO₂ specific heat capacity. Increases with temperature. Controls the rate of fuel temperature rise during a transient."
+  },
+  "delta_clad": {
+    "label": "Clad thickness [m]",
+    "distribution": "uniform",
+    "base": 0.00057,
+    "p1": 0.0005,
+    "p2": 0.00065,
+    "help": "Zircaloy cladding wall thickness. Manufacturing tolerance ~±0.05 mm. Affects conduction resistance between fuel and coolant."
+  },
+  "lambda_clad": {
+    "label": "Clad conductivity [W/m·K]",
+    "distribution": "uniform",
+    "base": 13.0,
+    "p1": 11.0,
+    "p2": 15.0,
+    "help": "Zircaloy-4 thermal conductivity. Relatively insensitive to temperature in the operating range. Uncertainty ~±15%."
+  },
+  "htc_post_chf": {
+    "label": "Bromley HTC cap [W/m²·K]",
+    "distribution": "uniform",
+    "base": 450.0,
+    "p1": 300.0,
+    "p2": 600.0,
+    "help": "Upper limit on the Bromley film-boiling HTC after CHF. Represents uncertainty in the inverted-annular flow regime at high pressure. Lower values give more conservative PCT."
+  },
+  "htc_core_mult": {
+    "label": "Core HTC multiplier",
+    "distribution": "uniform",
+    "base": 1.0,
+    "p1": 0.8,
+    "p2": 1.2,
+    "help": "Multiplicative factor on the forced-convection (Dittus-Boelter / Churchill-Chu) core HTC during normal pre-CHF operation. Values < 1 reduce cladding-to-coolant heat transfer, raising clad temperature and advancing DNB onset. Conservative direction: < 1. Typical UA range ±20% (0.8–1.2)."
+  },
+  "htc_fb_mult": {
+    "label": "Film boiling HTC multiplier",
+    "distribution": "uniform",
+    "base": 1.0,
+    "p1": 0.5,
+    "p2": 2.0,
+    "help": "Multiplicative factor on the post-CHF film boiling HTC — applied to both the Bromley (inverted-annular) result and the steam Dittus-Boelter (reflood / uncovery) result before the htc_post_chf cap is enforced. Values < 1 worsen post-CHF cooling and raise PCT. Conservative direction: < 1. Wide range reflects factor-of-2 scatter in film boiling data."
+  },
+  "rewet_dT_K": {
+    "label": "Leidenfrost ΔT [K]",
+    "distribution": "uniform",
+    "base": 200.0,
+    "p1": 150.0,
+    "p2": 300.0,
+    "help": "Maximum cladding superheat above T_sat at which rewetting (return to nucleate boiling) is permitted. Higher values delay rewetting and produce higher PCT."
+  }
+}
