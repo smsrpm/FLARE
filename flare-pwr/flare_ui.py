@@ -2017,12 +2017,17 @@ with st.sidebar:
     for _d in WORK_DIR.iterdir():
         if not (_d.is_dir() and _d.name.startswith("sim_")):
             continue
-        _out_files = sorted(set(_d.glob("*_out.csv")) | set(_d.glob("*_out.xlsx")))
-        for _out in _out_files:
-            _case_name = _out.stem.replace("_out", "")
-            # Ignore hidden/temp artifacts if any slipped into a run folder.
+        # Prefer *_out.csv; fall back to *_out.xlsx if the csv is missing.
+        # Deduplicate by case name so a run with both files appears only once.
+        _seen_cases = set()
+        _csv_cases = {f.stem.replace("_out", "") for f in _d.glob("*_out.csv")}
+        _xlsx_cases = {f.stem.replace("_out", "") for f in _d.glob("*_out.xlsx")}
+        for _case_name in sorted(_csv_cases | _xlsx_cases):
             if not _case_name or _case_name.startswith(".~"):
                 continue
+            if _case_name in _seen_cases:
+                continue
+            _seen_cases.add(_case_name)
             _label = f"{_case_name}  /  {_d.name}"
             _prev_run_entries.append((_label, _d, _case_name, _d.stat().st_mtime))
 
