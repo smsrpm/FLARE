@@ -163,6 +163,23 @@ def _write_config_value(key, value):
     cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
+def _delete_config_key(key):
+    """Remove a key=value entry from flare_config.txt if present."""
+    cfg = _runtime_file("flare_config.txt")
+    if not cfg.exists():
+        return
+    try:
+        lines = cfg.read_text(encoding="utf-8").splitlines()
+        out = [l for l in lines if not (
+            "=" in l
+            and not l.lstrip().startswith("#")
+            and l.split("=", 1)[0].strip().lower() == key.lower()
+        )]
+        cfg.write_text("\n".join(out) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
 def load_api_key():
     """Read ANTHROPIC_API_KEY from runtime/flare_config.txt or the environment."""
     return _read_config("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
@@ -228,6 +245,16 @@ if st.session_state.page != "home":
             try:
                 _os.chdir(str(WORK_DIR))
                 exec(open(_target_path, encoding="utf-8").read(), _globals)
+            except SystemExit:
+                pass  # st.stop() raises SystemExit — normal, not an error
+            except Exception as _exc:
+                st.error(
+                    f"**{target}** encountered an error:\n\n"
+                    f"```\n{type(_exc).__name__}: {_exc}\n```"
+                )
+                if st.button("← Back to Home", key="back_home_error"):
+                    st.session_state.page = "home"
+                    st.rerun()
             finally:
                 _os.chdir(_prev_cwd)
     st.stop()
@@ -1017,7 +1044,8 @@ for msg in st.session_state.chat_history:
 
 # ── API key state ────────────────────────────────────────────────────────────
 if "user_api_key" not in st.session_state:
-    st.session_state.user_api_key = ""
+    # Seed from config if a key was saved in a prior interaction this session.
+    st.session_state.user_api_key = load_api_key() or ""
 
 # api_key_input_counter is used to reset the password widget on "Forget key".
 if "api_key_input_counter" not in st.session_state:
@@ -1352,9 +1380,15 @@ except Exception:
 
 def _sync_api_key_from_input():
     current_key = f"api_key_input_{st.session_state.api_key_input_counter}"
-    st.session_state.user_api_key = str(
-        st.session_state.get(current_key, "") or ""
-    ).strip()
+    key = str(st.session_state.get(current_key, "") or "").strip()
+    st.session_state.user_api_key = key
+    if key:
+        try:
+            _write_config_value("ANTHROPIC_API_KEY", key)
+        except Exception:
+            pass
+    else:
+        _delete_config_key("ANTHROPIC_API_KEY")
 
 if "api_key_input_counter" not in st.session_state:
     st.session_state.api_key_input_counter = 0
@@ -1384,10 +1418,8 @@ with _clear_col:
         width="stretch",
         help="Clear the Anthropic API key from this Streamlit session.",
     ):
+        _delete_config_key("ANTHROPIC_API_KEY")
         st.session_state.user_api_key = ""
-        # Force Streamlit to create a fresh password widget with an empty value.
-        # Directly assigning to an already-instantiated widget key is unreliable
-        # across Streamlit versions, so use a new widget key on the rerun.
         st.session_state.api_key_input_counter += 1
         st.rerun()
 
