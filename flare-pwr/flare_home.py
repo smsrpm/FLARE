@@ -82,6 +82,7 @@ def _install_flare_log_filter():
 
 _install_flare_log_filter()
 
+import os
 import streamlit as st
 from pathlib import Path
 import sys
@@ -163,9 +164,8 @@ def _write_config_value(key, value):
 
 
 def load_api_key():
-    """Load Anthropic API key from flare_config.txt or the environment."""
-    import os as _os
-    return _read_config("ANTHROPIC_API_KEY") or _os.environ.get("ANTHROPIC_API_KEY")
+    """Read ANTHROPIC_API_KEY from runtime/flare_config.txt or the environment."""
+    return _read_config("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 def load_model():
@@ -653,8 +653,8 @@ _SYSTEM_PROMPT = _build_system_prompt()
 def call_claude(history, api_key="", file_context=""):
     """Call the Anthropic API with the full conversation history."""
     if not api_key:
-        return ("⚠️  No API key. Enter one above or add `ANTHROPIC_API_KEY = sk-ant-...` "
-                "to runtime/flare_config.txt (or Runtime/flare_config.txt) in the FLARE folder.")
+        return ("⚠️  No API key. Enter an Anthropic API key in the session-only "
+                "password field on the FLARE home page.")
     try:
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -1015,16 +1015,20 @@ for msg in st.session_state.chat_history:
             unsafe_allow_html=True,
         )
 
-# ── API key state — rendered at bottom of page ────────────────────────────────
-_cfg_key = load_api_key()   # from runtime/flare_config.txt or environment
+# ── API key state ────────────────────────────────────────────────────────────
 if "user_api_key" not in st.session_state:
-    # Populate from saved config/environment when available. The visible input
-    # field is rendered at the bottom of the page.
-    st.session_state.user_api_key = _cfg_key or ""
+    st.session_state.user_api_key = ""
 
-# Resolve active key for FAQ/send controls. The bottom API input updates this
-# session state for subsequent reruns.
-_active_key = st.session_state.user_api_key or _cfg_key or ""
+# api_key_input_counter is used to reset the password widget on "Forget key".
+if "api_key_input_counter" not in st.session_state:
+    st.session_state.api_key_input_counter = 0
+
+# Do NOT read back from the password widget here.  Streamlit password widgets
+# return "" on reruns where the user hasn't typed, which would clobber the key
+# loaded from flare_config.txt.  Synchronisation from the widget is handled
+# exclusively by the on_change callback (_sync_api_key_from_input) below.
+
+_active_key = st.session_state.user_api_key.strip()
 
 # ── FAQ dropdown ──────────────────────────────────────────────────────────────
 _FAQS = [
@@ -1145,6 +1149,14 @@ with st.expander("Optional FLARE file context", expanded=False):
 # Use a counter as the input key so we can reset it after submission
 if "chat_input_counter" not in st.session_state:
     st.session_state.chat_input_counter = 0
+if "chat_enter_pressed" not in st.session_state:
+    st.session_state.chat_enter_pressed = False
+
+def _on_chat_enter():
+    """Called when the user presses Enter in the question field."""
+    _key = f"chat_input_{st.session_state.chat_input_counter}"
+    if st.session_state.get(_key, "").strip():
+        st.session_state.chat_enter_pressed = True
 
 # Input row
 _qcol, _bcol = st.columns([10, 1])
@@ -1154,6 +1166,7 @@ with _qcol:
         label_visibility="collapsed",
         placeholder="e.g., What is FLARE?",
         key=f"chat_input_{st.session_state.chat_input_counter}",
+        on_change=_on_chat_enter,
     )
 with _bcol:
     send_btn = st.button("Ask", type="primary", key="chat_send",
@@ -1173,7 +1186,8 @@ st.markdown("</div>", unsafe_allow_html=True)
 if "chat_pending" not in st.session_state:
     st.session_state.chat_pending = False
 
-if send_btn and user_input.strip() and not st.session_state.chat_pending:
+if (send_btn or st.session_state.chat_enter_pressed) and user_input.strip() and not st.session_state.chat_pending:
+    st.session_state.chat_enter_pressed = False
     st.session_state.chat_pending = True
     q = user_input.strip()
     st.session_state.chat_history.append({"role": "user", "content": q})
@@ -1191,63 +1205,174 @@ st.markdown(
     "Anthropic API Key</p>",
     unsafe_allow_html=True,
 )
-_key_col, _save_col, _hint_col = st.columns([3, 1.2, 2])
+
+# Best-effort browser-side hardening for the password input.  This hides the
+# key, discourages copying/cutting/context-menu access, and disables browser
+# autocomplete hints.  It cannot make a browser field impossible to inspect by a
+# determined user with developer tools, so the main protection is that the key is
+# never written to disk, never logged, never previewed, and never exposed in the UI.
+st.markdown(
+    """
+    <style>
+    input[type="password"] {
+        -webkit-text-security: disc !important;
+        user-select: none !important;
+        -webkit-user-select: none !important;
+    }
+
+    /* Hide browser/Streamlit password reveal controls where supported. */
+    input[type="password"]::-ms-reveal,
+    input[type="password"]::-ms-clear {
+        display: none !important;
+    }
+
+    /* Streamlit's password reveal control is rendered as a button adjacent
+       to the password input. Scope this narrowly to the API-key row. */
+    div[data-testid="stTextInput"] button,
+    div[data-testid="stTextInput"] button[title*="password" i],
+    div[data-testid="stTextInput"] button[aria-label*="password" i],
+    div[data-testid="stTextInput"] button[title*="show" i],
+    div[data-testid="stTextInput"] button[aria-label*="show" i] {
+        display: none !important;
+        visibility: hidden !important;
+        pointer-events: none !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+try:
+    import streamlit.components.v1 as components
+    components.html(
+        """
+        <script>
+        function hardenPasswordInputs() {
+            try {
+                const doc = window.parent.document;
+                doc.querySelectorAll('input[type="password"]').forEach(function(inp) {
+                    inp.setAttribute('autocomplete', 'new-password');
+                    inp.setAttribute('autocorrect', 'off');
+                    inp.setAttribute('autocapitalize', 'off');
+                    inp.setAttribute('spellcheck', 'false');
+
+                    ['copy', 'cut', 'contextmenu', 'dragstart'].forEach(function(evt) {
+                        inp.addEventListener(evt, function(e) { e.preventDefault(); }, true);
+                    });
+
+                    // Best-effort removal of Streamlit's password reveal button.
+                    // Streamlit may change DOM details across versions, so walk
+                    // upward a few containers and hide nearby buttons.
+                    let node = inp;
+                    for (let i = 0; i < 6 && node; i++) {
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('button').forEach(function(btn) {
+                                const label = (
+                                    (btn.getAttribute('aria-label') || '') + ' ' +
+                                    (btn.getAttribute('title') || '') + ' ' +
+                                    (btn.innerText || '')
+                                ).toLowerCase();
+                                if (label.includes('show') || label.includes('hide') ||
+                                    label.includes('password') || btn.querySelector('svg')) {
+                                    btn.style.display = 'none';
+                                    btn.style.visibility = 'hidden';
+                                    btn.style.pointerEvents = 'none';
+                                    btn.setAttribute('tabindex', '-1');
+                                    btn.setAttribute('aria-hidden', 'true');
+                                }
+                            });
+                        }
+                        node = node.parentElement;
+                    }
+                });
+            } catch (e) {}
+        }
+        function injectDecoyFields() {
+            try {
+                const doc = window.parent.document;
+                // Insert hidden decoy username+password fields before the real
+                // password input.  Many password managers fill the first pair
+                // they find and leave subsequent fields alone.
+                doc.querySelectorAll('input[type="password"]').forEach(function(inp) {
+                    if (inp.getAttribute('data-decoy-injected')) return;
+                    inp.setAttribute('data-decoy-injected', '1');
+                    const decoyUser = doc.createElement('input');
+                    decoyUser.type = 'text';
+                    decoyUser.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+                    decoyUser.setAttribute('autocomplete', 'username');
+                    decoyUser.setAttribute('tabindex', '-1');
+                    decoyUser.setAttribute('aria-hidden', 'true');
+                    const decoyPass = doc.createElement('input');
+                    decoyPass.type = 'password';
+                    decoyPass.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;';
+                    decoyPass.setAttribute('autocomplete', 'current-password');
+                    decoyPass.setAttribute('tabindex', '-1');
+                    decoyPass.setAttribute('aria-hidden', 'true');
+                    inp.parentElement.insertBefore(decoyUser, inp);
+                    inp.parentElement.insertBefore(decoyPass, inp);
+                });
+            } catch (e) {}
+        }
+        hardenPasswordInputs();
+        injectDecoyFields();
+        setTimeout(function(){ hardenPasswordInputs(); injectDecoyFields(); }, 250);
+        setTimeout(function(){ hardenPasswordInputs(); injectDecoyFields(); }, 1000);
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+except Exception:
+    pass
+
+def _sync_api_key_from_input():
+    current_key = f"api_key_input_{st.session_state.api_key_input_counter}"
+    st.session_state.user_api_key = str(
+        st.session_state.get(current_key, "") or ""
+    ).strip()
+
+if "api_key_input_counter" not in st.session_state:
+    st.session_state.api_key_input_counter = 0
+
+_current_api_key_widget = f"api_key_input_{st.session_state.api_key_input_counter}"
+
+_key_col, _clear_col, _hint_col = st.columns([3, 1.2, 2])
 with _key_col:
-    _typed_key = st.text_input(
+    st.text_input(
         "Anthropic API key",
-        value=st.session_state.user_api_key,
         label_visibility="collapsed",
         type="password",
-        placeholder="sk-ant-...  (leave blank to use runtime/flare_config.txt)",
-        key="api_key_input",
+        placeholder="sk-ant-...  (session only; not saved)",
+        key=_current_api_key_widget,
+        on_change=_sync_api_key_from_input,
         help=(
-            "Enter your Anthropic API key for this session. Use Save to write it "
-            "to runtime/flare_config.txt so the Simulator narrative can also use it."
+            "Enter your Anthropic API key for this active browser session only. "
+            "FLARE does not save this key to flare_config.txt, disk, GitHub, or "
+            "Streamlit secrets."
         ),
     )
-    if _typed_key:
-        st.session_state.user_api_key = _typed_key
-        # Make the key visible to routed pages in the same Streamlit process.
-        import os as _os
-        _os.environ["ANTHROPIC_API_KEY"] = _typed_key
 
-with _save_col:
-    _key_to_save = st.session_state.user_api_key.strip()
-    if st.button("💾 Save", key="save_api_key_btn", width="stretch",
-                 help="Save the entered key to runtime/flare_config.txt for all FLARE tools."):
-        if not _key_to_save:
-            st.warning("Enter an API key before saving.")
-        else:
-            try:
-                _write_config_value("ANTHROPIC_API_KEY", _key_to_save)
-                _cfg_key = _key_to_save
-                import os as _os
-                _os.environ["ANTHROPIC_API_KEY"] = _key_to_save
-                st.markdown(
-                    '<div style="background:#d1e7dd;color:#0f5132;border:1px solid #badbcc;'
-                    'border-radius:0.375rem;padding:0.35rem 0.6rem;font-size:0.78rem;'
-                    'line-height:1.25;margin-top:0.25rem;">'
-                    'Saved API key to runtime/flare_config.txt</div>',
-                    unsafe_allow_html=True,
-                )
-            except Exception as _se:
-                st.error(f"Could not save API key: {_se}")
+with _clear_col:
+    if st.button(
+        "Forget key",
+        key="clear_api_key_btn",
+        width="stretch",
+        help="Clear the Anthropic API key from this Streamlit session.",
+    ):
+        st.session_state.user_api_key = ""
+        # Force Streamlit to create a fresh password widget with an empty value.
+        # Directly assigning to an already-instantiated widget key is unreliable
+        # across Streamlit versions, so use a new widget key on the rerun.
+        st.session_state.api_key_input_counter += 1
+        st.rerun()
 
 with _hint_col:
-    _active_key_for_hint = st.session_state.user_api_key or _cfg_key or ""
-    if _active_key_for_hint:
-        # Show first 10 and last 4 chars so user can confirm it's the right key
-        _k = _active_key_for_hint
-        _preview = f"{_k[:10]}...{_k[-4:]}" if len(_k) > 14 else _k[:6] + "..."
-        _src = "entered above"
-        if _cfg_key and not st.session_state.user_api_key:
-            _src = "runtime/flare_config.txt / environment"
-        elif _cfg_key and st.session_state.user_api_key == _cfg_key:
-            _src = "runtime/flare_config.txt"
+    if st.session_state.user_api_key.strip():
         st.markdown(
-            f"<p style='color:#7ddd8a;font-size:0.85rem;margin-top:8px;'>"
-            f"✅ &nbsp;{_preview}<br>"
-            f"<span style='color:#8ab4cc;font-size:0.78rem;'>from {_src}</span></p>",
+            "<p style='color:#7ddd8a;font-size:0.85rem;margin-top:8px;'>"
+            "✅ &nbsp;API key active for this session only<br>"
+            "<span style='color:#8ab4cc;font-size:0.78rem;'>"
+            "The key is hidden, not previewed, and not saved to disk.</span></p>",
             unsafe_allow_html=True,
         )
     else:
@@ -1257,4 +1382,3 @@ with _hint_col:
             "<span style='color:#8ab4cc;font-size:0.78rem;'>Ask button disabled</span></p>",
             unsafe_allow_html=True,
         )
-

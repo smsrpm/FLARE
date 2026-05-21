@@ -95,6 +95,36 @@ section[data-testid="stSidebar"] button:hover {
     box-shadow: 0 0 6px rgba(100,150,255,0.6);
 }
 section[data-testid="stSidebar"] * { color: #e6edf3 !important; }
+/* Exclude selectbox internals from the wildcard so Streamlit renders its own default colors */
+section[data-testid="stSidebar"] [data-baseweb="select"] *,
+section[data-testid="stSidebar"] [data-baseweb="select"] input {
+    color: unset !important;
+}
+
+/* Force dark text inside selectbox controls */
+section[data-testid="stSidebar"] [data-baseweb="select"] span,
+section[data-testid="stSidebar"] [data-baseweb="select"] div,
+section[data-testid="stSidebar"] [data-baseweb="select"] input,
+section[data-testid="stSidebar"] [data-baseweb="select"] * {
+    color: #111111 !important;
+    -webkit-text-fill-color: #111111 !important;
+}
+
+/* Selected value background */
+section[data-testid="stSidebar"] [data-baseweb="select"] > div {
+    background: #ffffff !important;
+}
+
+/* Dropdown menu items */
+div[role="listbox"] *,
+ul[role="listbox"] * {
+    color: #111111 !important;
+    -webkit-text-fill-color: #111111 !important;
+}
+/* Caption code blocks: transparent bg so path doesn't appear as a dark block */
+section[data-testid="stSidebar"] code {
+    background: transparent !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -220,6 +250,30 @@ def apply_updates(path, updates, banner_text):
     return out
 
 
+# ── FLARE Home button ────────────────────────────────────────────────────────
+st.sidebar.markdown("""
+    <style>
+    [data-testid="stSidebar"] button[kind="secondary"] {
+        background: transparent !important;
+        border: 1px solid #e8530a !important;
+        border-radius: 4px !important;
+        color: #f97316 !important;
+        font-size: 0.82rem !important;
+        letter-spacing: 0.08em !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stSidebar"] button[kind="secondary"]:hover {
+        background: rgba(232,83,10,0.18) !important;
+        box-shadow: 0 0 14px rgba(232,83,10,0.45) !important;
+        color: #ffffff !important;
+    }
+    </style>""", unsafe_allow_html=True)
+if st.sidebar.button("\U0001f525  FLARE Home", key="home_btn", width="stretch"):
+    st.session_state.page = "home"
+    st.query_params.clear()
+    st.rerun()
+st.sidebar.divider()
+
 # ── UI Modes ─────────────────────────────────────────────────────────────────
 mode = st.sidebar.radio("Mode", ["Model Editor", "Validator", "New Model"])
 
@@ -241,6 +295,15 @@ rows = load_rows(file_path)
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Selected file:\n`{file_path.relative_to(WORK_DIR)}`")
+
+with open(file_path, "rb") as _fh:
+    st.sidebar.download_button(
+        label="⬇ Download Model",
+        data=_fh,
+        file_name=file_path.name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
 
 # ── NEW MODEL MODE ───────────────────────────────────────────────────────────
 if mode == "New Model":
