@@ -1,0 +1,100 @@
+[
+  {
+    "key": "endtime",
+    "label": "End time [s]",
+    "help": "Simulation end time in seconds. The engine uses a fine grid (0.01 s steps) near t=0 and 1 s steps thereafter, so runtime scales roughly linearly."
+  },
+  {
+    "key": "F_r",
+    "label": "Radial peaking F_r",
+    "help": "Radial hot-channel factor: ratio of peak-to-average pin power across the core. Multiplied by F_z to give the combined hot-pin heat flux used in DNBR and PCT."
+  },
+  {
+    "key": "F_z",
+    "label": "Axial peaking F_z",
+    "help": "Axial peaking factor: ratio of peak-to-average axial heat flux (chopped cosine). Typical fresh-core value ~1.55. Combined with F_r for hot-pin calculations."
+  },
+  {
+    "key": "h_gap",
+    "label": "Gap conductance [W/m²K]",
+    "help": "Fuel-clad gap conductance. Controls the temperature drop across the as-fabricated He-filled gap. Lower values raise fuel centreline temperature; typical BOL range 3000–9000 W/m²K."
+  },
+  {
+    "key": "trip_delay",
+    "label": "Trip delay [s]",
+    "help": "Signal processing and relay delay applied to every reactor protection system trip. The scram fires this many seconds after the setpoint is first exceeded. Typical hard-wired PWR RPS: 1.5 s."
+  },
+  {
+    "key": "trip_power_frac",
+    "label": "High-power trip frac",
+    "help": "High-flux scram setpoint as a fraction of rated power (e.g. 1.10 = trip at 110%). Applies to both the RPS evaluation and the point-kinetics high-power check in RIA cases."
+  },
+  {
+    "key": "trip_P_lo_kPa",
+    "label": "Low-P trip [kPa]",
+    "help": "Low-pressure scram setpoint [kPa]. The reactor trips when RCS pressure falls below this value. Set to 0 to disable. Default is 90% of the initial RCS pressure."
+  },
+  {
+    "key": "total_power",
+    "label": "Rated power [MW]",
+    "help": "Rated thermal power of the reactor [MW]. Used to normalise decay heat, set the initial heat flux for core temperatures, and scale rod-failure counts."
+  },
+  {
+    "key": "pressure_kPa",
+    "label": "Initial pressure [kPa]",
+    "help": "Initial RCS pressure at t=0 [kPa]. Standard PWR full-power operating pressure ~15 500 kPa (2250 psia)."
+  },
+  {
+    "key": "temp_core_exit",
+    "label": "Core-exit temp [°C]",
+    "help": "Initial bulk coolant temperature at the core exit [°C]. Sets the initial enthalpy and the starting point for moderator reactivity feedback in RIA cases."
+  },
+  {
+    "key": "alpha_D_pcm",
+    "label": "Doppler coeff [pcm/°C]",
+    "help": "Doppler (fuel temperature) reactivity coefficient [pcm/°C]. Negative value provides prompt negative feedback during power excursions. Typical PWR value: −2 to −4 pcm/°C."
+  },
+  {
+    "key": "alpha_M_pcm",
+    "label": "MTC [pcm/°C]",
+    "help": "Moderator temperature coefficient [pcm/°C]. Must be negative at power for inherent stability. Typical PWR full-power value: −20 to −40 pcm/°C."
+  },
+  {
+    "key": "k_sigma",
+    "label": "k_sigma (failure dist.)",
+    "help": "Number of standard deviations between the core-average pin power (f=1) and the hot pin (f=F_r) in the Gaussian radial power distribution used to estimate failed-rod counts. Default 3.0 places F_r at the 99.87th percentile."
+  },
+  {
+    "_note": "─── FLARECON containment parameters (only shown when FLARECON sheet exists) ───"
+  },
+  {
+    "key": "condensation_multiplier",
+    "label": "Condensation model multiplier",
+    "sheet": "FLARECON",
+    "help": "Multiplier on the wall condensation heat flux — applies to whichever model is selected (Uchida or DLM-FM). Range 0.5–1.5 per GRS/AREVA study. Values < 1 are conservative (reduce heat removal, raise peak pressure)."
+  },
+  {
+    "key": "conc_k",
+    "label": "Concrete conductivity [W/m·K]",
+    "sheet": "FLARECON",
+    "help": "Thermal conductivity of the concrete biological shield. Controls long-term heat absorption and pressure decay rate. Typical range 1.0–2.5 W/(m·K). Lower values are conservative (slower pressure decay)."
+  },
+  {
+    "key": "gap_thick_m",
+    "label": "Liner–concrete gap [m]",
+    "sheet": "FLARECON",
+    "help": "Air gap thickness between the steel liner and concrete wall. Largest single uncertainty in the liner-to-concrete thermal path. Range 0–3 mm. Larger gaps reduce heat conduction and raise peak pressure."
+  },
+  {
+    "key": "pcc_fraction",
+    "label": "PCC/outer cooling fraction",
+    "sheet": "FLARECON",
+    "help": "Fraction of wall area with active outer-surface cooling. Set to 0 for conventional dry containments with no credited outer cooling. For AP1000-type PCC, typical range 0.3–1.0."
+  },
+  {
+    "key": "T_outer_C",
+    "label": "Outer wall temperature [°C]",
+    "sheet": "FLARECON",
+    "help": "Outer surface temperature boundary condition, active when pcc_fraction > 0. For mPower PCCT: nominal 40.6°C (105°F), range ~20–65°C per MPWR-TECR-005062."
+  }
+]
