@@ -64,6 +64,6 @@ REM ── Brief pause so Streamlit can bind to port 8501 first ─────�
 timeout /t 4 /nobreak > nul
 
 REM ── Window 2: ngrok ─────────────────────────────────────────────
-start "FLARE - ngrok" powershell.exe -NoExit -ExecutionPolicy Bypass -File "%INSTALL_DIR%start_ngrok.ps1"
+REM ── start "FLARE - ngrok" powershell.exe -NoExit -ExecutionPolicy Bypass -File "%INSTALL_DIR%start_ngrok.ps1"
 
 exit /b 0

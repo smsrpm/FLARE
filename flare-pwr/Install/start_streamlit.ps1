@@ -22,6 +22,7 @@ $Packages = @(
     "matplotlib",
     "XSteamPython",
     "plotly",
+    "python-dox",
     "reportlab"
 )
 
