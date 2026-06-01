@@ -471,6 +471,10 @@ def main() -> int:
             if fast_mode:
                 cmd.append("--no-figures")
 
+            # The Risk workflow is dose-consequence focused and intentionally
+            # bypasses the optional FLARECON containment-response calculation.
+            env["FLARE_SKIP_FLARECON"] = "1"
+
             returncode, special, console_log = run_case_with_abort(
                 cmd, run_dir, timeout_s, env, run_dir, case, update_status
             )

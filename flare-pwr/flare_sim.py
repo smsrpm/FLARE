@@ -907,6 +907,7 @@ def post_processing(time, Pressure, Temperature, massflow_break,
                     # PATCH 5b / 8c — optional pump + SG diagnostic arrays
                     pump_omega=None, pump_mdot=None,
                     pump_velocity=None, pump_head=None,
+                    steam_vel_arr=None,
                     Q_sg=None,
                     alpha_void_out=None,
                     TTwall_out=None, alpha_out=None,
@@ -1118,9 +1119,18 @@ def post_processing(time, Pressure, Temperature, massflow_break,
         "Vessel Level (m)":            ves_ll,
         "Core Power (MW)":             net_heat_total / 1e6,
         # PATCH 5b/8c additions
+        # Steam Cooling Velocity: upward steam velocity in the core channel
+        # driven by decay-heat boil-off.  v = (Q_decay/h_fg) / (rhoV * A_flow_core).
+        # Computed in the time loop only while film boiling is active; zero otherwise.
+        # This is the velocity actually used in core_htc_db_steam post-CHF.
+
         "Pump Speed (rpm)":            pump_omega    if pump_omega    is not None else _zeros,
         "Pump Mass Flow (kg/s)":       pump_mdot     if pump_mdot     is not None else _zeros,
+        "Core Coolant Velocity (m/s)": pump_velocity if pump_velocity is not None else _zeros,
         "Pump Velocity (m/s)":         pump_velocity if pump_velocity is not None else _zeros,
+        "Steam Cooling Velocity (m/s)": (
+            steam_vel_arr if steam_vel_arr is not None else _zeros
+        ),
         "Pump Head (Pa)":              pump_head     if pump_head     is not None else _zeros,
         "SG Heat Removal (MW)":        (Q_sg         if Q_sg         is not None else _zeros) / 1e6,
         "Equilibrium Quality (-)":     x_eq                if x_eq             is not None else _zeros,
@@ -1158,6 +1168,16 @@ def post_processing(time, Pressure, Temperature, massflow_break,
         "H2 Full Core Cladding Reaction (kg)": _zirc_h2_full_core_kg,
     }
     df = pd.DataFrame(data)
+
+    # Write the time-series CSV immediately — before Excel writing and all
+    # matplotlib work — so a crash in either of those paths still leaves a
+    # readable output CSV on disk.
+    csv_filename = filename.replace("_out.xlsx", "_out.csv")
+    try:
+        df.to_csv(csv_filename, index=False)
+        print(f"Output CSV written: {csv_filename}", flush=True)
+    except Exception as _csv_err:
+        print(f"WARNING: could not write output CSV: {_csv_err}", flush=True)
 
     correl_df = pd.DataFrame([], columns=["Correlation", "TS 95% Coverage"])
     with pd.ExcelWriter(filename, engine="openpyxl") as writer:
@@ -1297,10 +1317,6 @@ def post_processing(time, Pressure, Temperature, massflow_break,
                                          row.get("lpz_integration_tede_rem", row.get("tede_rem", 0.0))])
 
     plt.close('all')
-
-    # Write time-series CSV alongside the Excel output
-    csv_filename = filename.replace("_out.xlsx", "_out.csv")
-    df.to_csv(csv_filename, index=False)
 
     # ── Input Echo sheet ──────────────────────────────────────────────────────
     # Write all simulation parameters — user-supplied and defaults — to a
@@ -2510,6 +2526,50 @@ def pwr_sim(wkstbase, minimum_output=0):
     R5_lowCV_height  = get_variable(local_namespace, "R5_lowCV_height",  70*0.3048)
     R5_highCV_height = get_variable(local_namespace, "R5_highCV_height",  7*0.3048)
     R5_area          = get_variable(local_namespace, "R5_area",          33.0*0.3048**2)
+
+    # ── break location / elevation model ─────────────────────────────────────
+    # break_location is a user-facing descriptor used to set the elevation at
+    # which the break has access to liquid inventory.  The default remains the
+    # top of the reactor vessel, preserving prior behavior.  If a user needs a
+    # plant-specific elevation, break_elevation_m overrides the named location.
+    break_location = str(get_variable(local_namespace,
+                                      "break_location",
+                                      "top_of_vessel")).strip("'\"").lower()
+    break_location = break_location.replace(" ", "_").replace("-", "_")
+    break_elevation_m_user = get_variable(local_namespace,
+                                          "break_elevation_m",
+                                          None)
+
+    def _resolve_break_elevation_m(_location, _user_elev=None):
+        _vessel_top = R5_lowCV_height + R5_highCV_height
+        if _user_elev is not None:
+            try:
+                _elev = float(_user_elev)
+                return float(np.clip(_elev, 0.0, _vessel_top))
+            except Exception:
+                print(f"Warning: invalid break_elevation_m '{_user_elev}'; using break_location.")
+
+        _aliases = {
+            "top_of_vessel": _vessel_top,
+            "vessel_top":    _vessel_top,
+            "rpv_top":       _vessel_top,
+            "rv_top":        _vessel_top,
+            "upper_vessel":  _vessel_top,
+            "upper_head":    _vessel_top,
+            "top":           _vessel_top,
+            "core_exit":     R5_lowCV_height,
+            "upper_plenum":  R5_lowCV_height,
+            "vessel_bottom": 0.0,
+            "bottom_of_vessel": 0.0,
+            "bottom":        0.0,
+        }
+        if _location not in _aliases:
+            print(f"Warning: unrecognised break_location '{_location}'; using top_of_vessel. "
+                  f"Use break_elevation_m for plant-specific break elevations.")
+        return float(_aliases.get(_location, _vessel_top))
+
+    break_elevation_m = _resolve_break_elevation_m(break_location,
+                                                   break_elevation_m_user)
     # loop_vol_m3: total primary loop volume OUTSIDE the RPV (hot/cold legs,
     # pump bowl, pressurizer, SG primary side).  Added to ves_vol so that
     # Total_Mass and the 2x2 pressure-rise equation use the full RCS inventory.
@@ -2568,6 +2628,7 @@ def pwr_sim(wkstbase, minimum_output=0):
     critical_pressure_ratio_guess = get_variable(local_namespace, "crticial_pressure_ratio_guess", 0.55)
     flag_vent_vapor               = get_variable(local_namespace, "flag_vent_vapor",  0)
     initial_flag_stagnation_break = 'mixture'
+    flag_stagnation_break         = initial_flag_stagnation_break
     transition_mixture_mass       = get_variable(local_namespace, "transition_mixture_mass", 0.41)
     slip_type   = get_variable(local_namespace, "Slip_model",   "Fauske")
     if slip_type not in ("HEM", "Moody", "Fauske"):
@@ -3314,6 +3375,7 @@ def pwr_sim(wkstbase, minimum_output=0):
     pump_mdot     = np.zeros(number_timesteps)
     pump_velocity = np.zeros(number_timesteps)
     pump_head     = np.zeros(number_timesteps)
+    steam_vel_arr = np.zeros(number_timesteps)  # boil-off steam velocity in core [m/s]
 
     if pump_flag:
         _pump_state = init(pump_orifice_area, pump_speed_rpm,
@@ -4318,55 +4380,64 @@ def pwr_sim(wkstbase, minimum_output=0):
             _active_area = effective_total_area
 
         # ── break flow ───────────────────────────────────────────────────────
-        # Reset vapor latch when system has refilled with liquid — prevents
-        # historically-latched steam enthalpy from persisting into reflood.
-        if (Total_Mass_scaled[t] > transition_mixture_mass_use
-                and not np.isnan(x_eq[t]) and x_eq[t] < 0.01
-                and flag_vent_vapor > 0):
+        # Reset vapor latch when the RCS transitions to subcooled (x_eq < 0),
+        # indicating the vessel has genuinely refilled with liquid and the
+        # vapor-venting phase is over.  ves_ll is an all-liquid equivalent
+        # level (not the actual two-phase interface) and is not a reliable
+        # indicator of submergence at the break plane, so it is not used here.
+        if (x_eq[t] < 0 and flag_vent_vapor > 0):
             flag_vent_vapor       = 0
             flag_stagnation_break = initial_flag_stagnation_break
 
-        if x_eq[t] < 0:
-            if Total_Mass_scaled[t] > 1.0:
-                # RCS overfilled — break submerged in cold liquid
+        if x_eq[t] < 0.005:
+            # Subcooled bulk mixture — the RCS is liquid-filled.
+            # Use vessel level to distinguish submerged break from a deeply
+            # depressurised but still partially voided vessel.
+            _ves_ll_now = ves_ll[t-1] if t > 0 and np.isfinite(ves_ll[t-1]) else 0.0
+            _break_elevation = break_elevation_m
+            if _ves_ll_now >= 0.95 * _break_elevation:
+                # Vessel full enough that break is submerged
                 stagnation_enthalpy_break = sat_liquid["enthalpy"]
                 massflux_break = Cd_sub*critical_flow_ERM(Pressure[t],
                                                            stagnation_enthalpy_break,
                                                            sat_liquid, sat_vapor)
-            elif Total_Mass_scaled[t] > transition_mixture_mass_use:
+            else:
+                # Subcooled but level not yet at break — mixture enthalpy
                 massflux_break = Cd_sub*critical_flow_ERM(Pressure[t],enthalpy_mix[t],
                                                            sat_liquid,sat_vapor)
                 stagnation_enthalpy_break = enthalpy_mix[t]
-            else:
-                flag_stagnation_break     = "vapor"
-                flag_vent_vapor           = 10
-                stagnation_enthalpy_break = sat_vapor["enthalpy"]
-                massflux_break            = 0
         else:
-            if Total_Mass_scaled[t] > 1.0:
-                # RCS overfilled — break submerged in cold liquid regardless of x_eq
-                stagnation_enthalpy_break = sat_liquid["enthalpy"]
-            elif not np.isnan(x_eq[t]) and x_eq[t] < 0.01:
-                # Trace quality — core essentially liquid-filled; use liquid enthalpy
-                stagnation_enthalpy_break = sat_liquid["enthalpy"]
-            else:
-                if flag_vent_vapor < 1:
-                    flag_stagnation_break = (initial_flag_stagnation_break
-                                             if Total_Mass_scaled[t] > transition_mixture_mass_use
-                                             else "vapor")
-                    if flag_stagnation_break == "vapor": flag_vent_vapor = 10
-                if flag_stagnation_break == "vapor":
-                    stagnation_enthalpy_break = sat_vapor["enthalpy"]
-                elif flag_stagnation_break == "mixture":
-                    af   = (Total_Mass_scaled[t]-transition_mixture_mass_use)/(1-transition_mixture_mass_use)
-                    ag   = 1 - af
-                    rhof = 1/XSteam.vL_p(Pressure[t]/1e3)
-                    rhog = 1/XSteam.vV_p(Pressure[t]/1e3)
-                    # Use current void fraction — not cumulative max — so stagnation
-                    # enthalpy correctly decreases as system refills with liquid.
-                    tmp2[t] = ag*rhog/(ag*rhog+af*rhof)
-                    stagnation_enthalpy_break = (tmp2[t]*(sat_vapor["enthalpy"]-sat_liquid["enthalpy"])
-                                                  + sat_liquid["enthalpy"])
+            # Two-phase or superheated bulk — break plane is not submerged.
+            # Select stagnation enthalpy based on vapor latch state.
+            #
+            # The transition from "mixture" to "vapor" is driven by the
+            # blowdown-phase transition_mixture_mass threshold — a one-way
+            # latch.  Once the latch fires (flag_vent_vapor > 0) it must NOT
+            # be re-evaluated using Total_Mass_scaled: that threshold was
+            # derived from blowdown experiments and has no meaning during
+            # reflood, where mass is being added back from ECCS rather than
+            # draining from the RCS.  The only release is when the bulk
+            # mixture becomes genuinely subcooled (x_eq < 0), handled above,
+            # which indicates the vessel has refilled to the break elevation.
+            if flag_vent_vapor < 1:
+                # Latch not yet set — evaluate blowdown transition
+                if Total_Mass_scaled[t] <= transition_mixture_mass_use:
+                    flag_stagnation_break = "vapor"
+                    flag_vent_vapor       = 10
+                # else: stay on initial_flag_stagnation_break ("mixture")
+            # Once flag_vent_vapor > 0 the latch is permanent until x_eq < 0
+            if flag_stagnation_break == "vapor":
+                stagnation_enthalpy_break = sat_vapor["enthalpy"]
+            elif flag_stagnation_break == "mixture":
+                af   = (Total_Mass_scaled[t]-transition_mixture_mass_use)/(1-transition_mixture_mass_use)
+                ag   = 1 - af
+                rhof = 1/XSteam.vL_p(Pressure[t]/1e3)
+                rhog = 1/XSteam.vV_p(Pressure[t]/1e3)
+                # Use current void fraction — not cumulative max — so stagnation
+                # enthalpy correctly decreases as system refills with liquid.
+                tmp2[t] = ag*rhog/(ag*rhog+af*rhof)
+                stagnation_enthalpy_break = (tmp2[t]*(sat_vapor["enthalpy"]-sat_liquid["enthalpy"])
+                                              + sat_liquid["enthalpy"])
 
             # ── Dynamic choking check ─────────────────────────────────────────
             # Critical pressure ratio for steam ≈ 0.55 (Fauske/Moody).
@@ -4450,8 +4521,12 @@ def pwr_sim(wkstbase, minimum_output=0):
                     +0.4*timestep*dq/acc_pres[t]/v2)
                 acc_pres[t] = acc_pres[t-1]*(acc_tgas[t]/acc_tgas[t-1])
             if Pressure[t] < acc_pres[t]+rho_acc*9.8*acc_delz and acc_liqvol[t] > 0:
-                acc_wdot[t] = acc_narea*np.sqrt(
+                _acc_wdot_new = acc_narea*np.sqrt(
                     2*(acc_pres[t]+rho_acc*9.8*acc_delz-Pressure[t])/rho_acc)
+                # Under-relax with previous timestep to eliminate the 2-step
+                # on/off chatter caused by the one-timestep lag in the
+                # accumulator pressure update.
+                acc_wdot[t] = 0.7*acc_wdot[t-1] + 0.3*_acc_wdot_new
 
         # ── Pumped Safety Injection (HPSI / LPSI) ────────────────────────────
         # Abbreviated HPSI/LPSI model per FLARE SI specification.
@@ -4551,6 +4626,24 @@ def pwr_sim(wkstbase, minimum_output=0):
         pump_mdot[t+1]     = _pump_state.get("mass_flow_kgs", 0.0)
         pump_velocity[t+1] = _pump_state.get("velocity_ms",   0.0)
         pump_head[t+1]     = _pump_state.get("head_Pa",       0.0)
+
+        # ── Steam boil-off velocity in core channel ───────────────────────────
+        # Upward steam velocity driven by decay-heat boil-off.
+        # mdot_steam = Q_decay / h_fg  ;  v_steam = mdot_steam / (rhoV * A_flow_core)
+        # Used as the physically-based steam velocity for post-CHF D-B and
+        # written to the output for transparency.  Guarded to zero outside
+        # film-boiling conditions (no meaningful steam upflow when core is liquid-filled).
+        if _film_boiling_active and A_flow_core is not None and A_flow_core > 0:
+            try:
+                _hfg_sv  = max((XSteam.hV_p(Pressure[t] * 1e-3)
+                                - XSteam.hL_p(Pressure[t] * 1e-3)) * 1e3, 1.0)  # J/kg
+                _rhoV_sv = max(XSteam.rhoV_p(Pressure[t] * 1e-3), 0.1)           # kg/m3
+                _mdot_steam = max(rkpower_total[t], 0.0) / _hfg_sv                # kg/s
+                steam_vel_arr[t+1] = _mdot_steam / (_rhoV_sv * A_flow_core)
+            except Exception:
+                steam_vel_arr[t+1] = steam_vel_arr[t]
+        else:
+            steam_vel_arr[t+1] = 0.0
 
         # ── PATCH 8a: SG heat removal ─────────────────────────────────────────
         # SG isolation: the forced-flow SG heat sink can be isolated on normal
@@ -5174,18 +5267,46 @@ def pwr_sim(wkstbase, minimum_output=0):
                 _v_reflood = max((ves_ll[t] - ves_ll[t-1]) / max(_dt_ll, 1e-9),
                                   0.01)
             else:
-                _v_reflood = steam_velocity  # fallback when not yet reflood
+                # Use boil-off steam velocity when computed; fall back to the
+                # user-supplied steam_velocity input only if not yet available
+                # (t=0) or outside film-boiling conditions.
+                _v_reflood = (steam_vel_arr[t] if steam_vel_arr[t] > 0.0
+                              else steam_velocity)
 
             if _film_boiling_active and not np.isnan(Pressure[t+1]):
                 _P_kPa_fb = Pressure[t+1] * 1e-3
 
+                # Average core heat flux [W/m²] used for correlation selection.
+                # Bromley is a pool-boiling correlation validated only above
+                # ~10 000 W/m².  Below that threshold the core is in the
+                # low-flux steam-cooling regime and single-phase steam
+                # Dittus-Boelter is the more appropriate model.
+                _q_avg_W = max(rkpower_total[t] / SurfArea, 1.0)
+                _bromley_flux_threshold = 1.0e4   # W/m²
+                _blend = None   # set only in hot_leg transition band
+
                 if post_chf_model == "hot_leg":
-                    # Hot-leg: Bromley on DNBR<1; steam DB on reflood
-                    if _reflood_started:
+                    # Hot-leg post-CHF model - four sub-cases in priority order:
+                    #   1. Reflood detected              -> steam Dittus-Boelter
+                    #   2. q_avg < 10 000 W/m2           -> steam Dittus-Boelter
+                    #   3. 10 000 <= q_avg < 11 000 W/m2 -> linear blend
+                    #      (smooth transition; avoids step discontinuity at threshold)
+                    #   4. q_avg >= 11 000 W/m2          -> Bromley IAFB
+                    _bromley_flux_upper = 1.1e4   # W/m2 - top of blend band
+                    if _reflood_started or _q_avg_W < _bromley_flux_threshold:
                         _htc_fb = core_htc_db_steam(
                                       Pressure[t+1], _v_reflood, D_h_core) * htc_fb_mult
+                    elif _q_avg_W < _bromley_flux_upper:
+                        # Blend fraction: 0 at lower edge (pure steam D-B),
+                        #                 1 at upper edge (pure Bromley)
+                        _blend = (_q_avg_W - _bromley_flux_threshold) / (
+                                   _bromley_flux_upper - _bromley_flux_threshold)
+                        _htc_db_blend = core_htc_db_steam(
+                                      Pressure[t+1], _v_reflood, D_h_core) * htc_fb_mult
+                        _use_bromley = True   # compute Bromley below, then blend
+                        _htc_fb = _htc_db_blend   # stash DB value; overwritten after blend
                     else:
-                        _use_bromley = True   # fall through to Bromley below
+                        _use_bromley = True   # fall through to pure Bromley below
                         _htc_fb = None
 
                 elif post_chf_model == "cold_leg":
@@ -5203,8 +5324,10 @@ def pwr_sim(wkstbase, minimum_output=0):
                     _use_bromley = True
                     _htc_fb = None
 
-                # Bromley inverted-annular film boiling
-                if _htc_fb is None:
+                # Bromley inverted-annular film boiling.
+                # Entered for pure Bromley (_htc_fb is None) and for the
+                # transition blend band (_htc_fb holds the D-B value, _blend set).
+                if _htc_fb is None or _blend is not None:
                     try:
                         _rhoV_fb = XSteam.rhoV_p(_P_kPa_fb)
                         _rhoL_fb = XSteam.rhoL_p(_P_kPa_fb)
@@ -5219,16 +5342,30 @@ def pwr_sim(wkstbase, minimum_output=0):
                                     * 9.81 * _hfg_fb)
                         _denom   = _muV_fb * D_h_core
                         if _numer > 0 and _denom > 0:
-                            _C_B     = 0.62 * (_numer / _denom)**0.25
-                            _q_avg_W = max(rkpower_total[t] / SurfArea, 1.0)
-                            _htc_fb  = min(max(htc_fb_mult
-                                                  * _C_B**(4/3) / _q_avg_W**(1/3),
-                                                  50.0),
-                                           htc_post_chf)
+                            _C_B        = 0.62 * (_numer / _denom)**0.25
+                            # _q_avg_W already computed above for flux-based selector.
+                            # hot_leg: htc_post_chf cap removed — Bromley result used
+                            # directly (cap was suppressing physically valid high HTCs).
+                            # cold_leg / bromley: cap retained — htc_post_chf=50 W/m2K
+                            # for cold_leg is the design-basis blowdown model and is
+                            # required for numerical stability of the slab solve.
+                            _htc_bromley_raw = htc_fb_mult * _C_B**(4/3) / _q_avg_W**(1/3)
+                            if post_chf_model == "hot_leg":
+                                _htc_bromley = max(_htc_bromley_raw, 50.0)
+                            else:
+                                _htc_bromley = min(max(_htc_bromley_raw, 50.0),
+                                                   htc_post_chf)
                         else:
-                            _htc_fb = 50.0
+                            _htc_bromley = 50.0
+                        if _blend is not None:
+                            # Transition band: linear blend between D-B and Bromley
+                            _htc_fb = (1.0 - _blend) * _htc_fb + _blend * _htc_bromley
+                        else:
+                            _htc_fb = _htc_bromley
                     except Exception:
-                        _htc_fb = 50.0
+                        if _htc_fb is None:
+                            _htc_fb = 50.0
+                        # else: keep the D-B value already in _htc_fb
 
                 # Cold-leg: under-relax the transition to 50 W/m²K for a
                 # physically reasonable ad-hoc film boiling result.
@@ -5270,6 +5407,15 @@ def pwr_sim(wkstbase, minimum_output=0):
                           f"vessel level {ves_ll[t]:.3f} m <= trigger "
                           f"{dry_core_trigger_level_m:.3f} m; accumulator flow "
                           f"{massflow_in[t]:.3f} kg/s.")
+                elif (_dry_core_ht_latched and np.isfinite(ves_ll[t])
+                        and ves_ll[t] >= dry_core_trigger_level_m + film_boiling_level_margin_m):
+                    # Level has recovered above trigger + margin — liquid has
+                    # returned to the core region; release dry-core override and
+                    # return to the film-boiling / steam D-B heat transfer path.
+                    _dry_core_ht_latched = False
+                    print(f"Dry-core heat-transfer mode cleared at t={time[t]:.2f} s: "
+                          f"vessel level {ves_ll[t]:.3f} m >= "
+                          f"{dry_core_trigger_level_m + film_boiling_level_margin_m:.3f} m.")
             except Exception:
                 pass
 
@@ -6462,6 +6608,7 @@ def pwr_sim(wkstbase, minimum_output=0):
             massflow_break, h_break_arr, acc_pres, acc_tgas, massflow_in,
             acc_liqvol, Total_Mass_scaled, ves_ll, net_heat_total,
             x_eq, alpha_void, pump_omega, pump_mdot, pump_velocity, pump_head,
+            steam_vel_arr,
             Q_sg, sg_UA_used, sg_UA_dynamic, sg_dT_primary_sec, sg_v_ratio,
             sg_UA_eff, sg_C_primary, sg_flow_frac, sg_open_frac,
             sg_Q_forced_raw, sg_Q_forced, sg_Q_nat,
@@ -6546,16 +6693,62 @@ def pwr_sim(wkstbase, minimum_output=0):
     # Pre-compute accumulator level for output dict
     _acc_level_m = (acc_liqvol / acc_area) if (acc_area is not None and float(acc_area) > 0) else np.zeros(number_timesteps)
 
+    # ── Early output CSV write ────────────────────────────────────────────────
+    # Write a minimal output CSV directly from pwr_sim, before post_processing
+    # is called, so that a crash anywhere in post_processing (Excel writer,
+    # matplotlib, source term, dose) still leaves a usable CSV on disk.
+    # This mirrors the same guarantee the diag CSV already has.
+    # post_processing will overwrite this with the full-fidelity version if it
+    # completes successfully.
+    _early_csv_name = f"{wkstbase}_out.csv"
+    try:
+        _early_data = {
+            "Time (s)":                    time,
+            "RCS Pressure (kPa)":          Pressure / 1e3,
+            "RCS Temperature (K)":         Temperature,
+            "Break Flow (kg/s)":           massflow_break,
+            "Break Enthalpy (kJ/kg)":      h_break_arr * 1e-3,
+            "Accumulator Flow (kg/s)":     massflow_in,
+            "Accumulator Liquid Volume (m3)": acc_liqvol,
+            "Total Mass Scaled":           Total_Mass_scaled,
+            "Vessel Level (m)":            ves_ll,
+            "Core Power (MW)":             net_heat_total / 1e6,
+            "Pump Speed (rpm)":            pump_omega,
+            "Pump Mass Flow (kg/s)":       pump_mdot,
+            "Core Coolant Velocity (m/s)": pump_velocity,
+            "Pump Velocity (m/s)":         pump_velocity,
+            "Steam Cooling Velocity (m/s)": steam_vel_arr,
+            "SG Heat Removal (MW)":        Q_sg / 1e6,
+            "Equilibrium Quality (-)":     x_eq,
+            "Void Fraction (-)":           alpha_void,
+            "Clad Surface Temp (K)":       TTwall,
+            "Clad HTC (W/m2-K)":          alpha,
+            "RK Total Power (MW)":         rkpower_total / 1e6,
+            "DNBR":                        DNBR,
+            "Hot Pin Clad Temp (K)":       T_hot_clad_arr,
+            "Hot Pin Fuel Temp (K)":       T_hot_fuel_arr,
+            "HPSI Flow (kg/s)":            hpsi_mdot_arr,
+            "LPSI Flow (kg/s)":            lpsi_mdot_arr,
+            "Pressurizer Level (m)":       pzr_level_arr,
+            "Reactivity net (pcm)":        rho_net_arr,
+        }
+        pd.DataFrame(_early_data).to_csv(_early_csv_name, index=False)
+        print(f"Early output CSV written: {_early_csv_name}", flush=True)
+    except Exception as _early_err:
+        print(f"WARNING: could not write early output CSV: {_early_err}", flush=True)
+
     print("POST-PROCESSING", flush=True)
-    post_processing(
-        time, Pressure, Temperature, massflow_break,
-        acc_pres, acc_tgas, massflow_in,
-        acc_liqvol, Total_Mass_scaled, ves_ll, net_heat_total,
+    try:
+        post_processing(
+            time, Pressure, Temperature, massflow_break,
+            acc_pres, acc_tgas, massflow_in,
+            acc_liqvol, Total_Mass_scaled, ves_ll, net_heat_total,
         R5_p, R5_t, R5_vessel_mass_scaled, R5_mdot,
         R5_accp, R5_acct, R5_massflow_in, R5_power,
         x_eq, wkstbase, title_name_include_line_1="",
         pump_omega=pump_omega, pump_mdot=pump_mdot,
         pump_velocity=pump_velocity, pump_head=pump_head,
+        steam_vel_arr=steam_vel_arr,
         Q_sg=Q_sg,
         alpha_void_out=alpha_void,
         TTwall_out=TTwall, alpha_out=alpha,
@@ -6603,7 +6796,37 @@ def pwr_sim(wkstbase, minimum_output=0):
         delta_clad_out=delta_clad,
         k_sigma_out=k_sigma,
         Pressure_report_out=np.where(np.isfinite(Pressure_report), Pressure_report, Pressure),
-    )
+        )
+    except Exception as _pp_err:
+        print(f"WARNING: post_processing failed: {_pp_err}", flush=True)
+        import traceback
+        traceback.print_exc()
+
+
+
+    # ── Optional FLARECON containment response coupling ──────────────────────
+    # If the archived input workbook contains a case-insensitive FLARECON
+    # worksheet, run the containment simulator using the just-written FLARE CSV
+    # as the mass/energy/H2 source term.  The Risk tool sets
+    # FLARE_SKIP_FLARECON=1 because that workflow is dose-consequence focused.
+    if os.environ.get("FLARE_SKIP_FLARECON", "").strip() not in ("1", "true", "TRUE", "yes", "YES"):
+        try:
+            _flare_csv_for_con = Path.cwd() / f"{wkstbase}_out.csv"
+            _flare_in_for_con  = _archived_input_xlsx
+            if _flare_csv_for_con.exists() and _flare_in_for_con.exists():
+                import flarecon_sim as _flarecon_sim
+                _con = _flarecon_sim.run_integrated_flarecon(
+                    flare_case=wkstbase,
+                    flare_input_xlsx=str(_flare_in_for_con),
+                    flare_output_csv=str(_flare_csv_for_con),
+                    output_dir=Path.cwd(),
+                    make_plots=(minimum_output == 0),
+                )
+                if _con is not None:
+                    print("FLARECON: containment response simulation complete", flush=True)
+        except Exception as _con_err:
+            print(f"WARNING: FLARECON integration failed: {_con_err}", flush=True)
+
 
     # Remove the private temporary Excel snapshot. The archived XLSX and CSV
     # snapshots remain in the case output folder for traceability.

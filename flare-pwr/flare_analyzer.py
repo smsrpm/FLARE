@@ -111,9 +111,15 @@ with st.sidebar:
     file = _sel_path.name
     df = pd.read_csv(_sel_path)
     max_step = len(df) - 1
+    # Load paired FLARECON output if it exists (CaseName_out.csv → CaseName_CON.csv)
+    _con_path = _sel_path.with_name(_sel_path.name.replace("_out.csv", "-CON.csv"))
+    df_con = pd.read_csv(_con_path) if _con_path.exists() else None
     st.divider()
     refresh_ms = st.slider("Speed (ms/step)", 0, 500, 300, step=25,
                            help="Delay between frames during playback.")
+    skip = st.number_input("Step skip", min_value=1, max_value=100, value=1, step=1,
+                           help="Advance this many timesteps per frame. "
+                                "Increase for long slowly-changing runs.")
     zoom = st.slider("Diagram zoom", 0.4, 1.4, 0.9, step=0.05,
                      help="Scale the plant diagram.")
     st.divider()
@@ -133,6 +139,10 @@ with st.sidebar:
     st.divider()
     st.caption(f"Case: `{file}`")
     st.caption(f"Steps: {max_step + 1}")
+    if df_con is not None:
+        st.caption(f"CON: `{_con_path.name}` ✓")
+    else:
+        st.caption("CON: no _CON.csv found")
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 row = df.iloc[st.session_state.step]
@@ -150,6 +160,25 @@ core_pwr = get("Core Power (MW)",                    0.0)
 T_hot_C  = T_hot_K  - 273.15
 T_clad_C = T_clad_K - 273.15
 P_MPa    = P_kPa / 1000.0
+
+# Containment (FLARECON) data — loaded from paired *_CON.csv if present
+if df_con is not None:
+    # Interpolate CON timestep: CON csv may have different time resolution
+    _con_step = min(st.session_state.step, len(df_con) - 1)
+    row_con = df_con.iloc[_con_step]
+    def get_con(k, default=0.0):
+        try:   return float(row_con.get(k, default))
+        except: return float(default)
+    P_con_kPa = get_con("Pressure [kPa]",  101.325)
+    T_con_C   = get_con("Gas Temp [C]",      27.0)
+    P_con_min = float(df_con["Pressure [kPa]"].min()) if "Pressure [kPa]" in df_con.columns else 101.0
+    P_con_max = float(df_con["Pressure [kPa]"].max()) if "Pressure [kPa]" in df_con.columns else 101.0
+    T_con_min = float(df_con["Gas Temp [C]"].min())    if "Gas Temp [C]"    in df_con.columns else  27.0
+    T_con_max = float(df_con["Gas Temp [C]"].max())    if "Gas Temp [C]"    in df_con.columns else  27.0
+else:
+    P_con_kPa, T_con_C = 101.325, 27.0
+    P_con_min, P_con_max = 101.0, 101.0
+    T_con_min, T_con_max =  27.0,  27.0
 
 # SI pumped injection flow (HPSI + LPSI)
 si_pumped_mdot  = get("SI Pumped Total (kg/s)", 0.0)
@@ -189,6 +218,27 @@ def fluid_color(T_C, P_MPa_val, alpha=0.82, t_min=None, t_max=None):
     light = int(70 - 30 * p)
     return f"hsla({hue},85%,{light}%,{alpha})"
 
+# Containment colour — mapped on its own pressure range so subtle changes show
+def containment_color(P_kPa_val, T_C_val, alpha=0.28):
+    """
+    Returns an hsla colour for the containment dome interior.
+    alpha=0.28 keeps the interior semi-transparent so underlying pipes show through.
+
+    Hue    : driven by temperature — cool blue (210°) at 27°C (ambient), shifting to
+             red (0°) at 150°C (design-basis). Range 210→0°, never passes through green.
+    Sat    : driven by pressure — more saturated as pressure rises (60→85%).
+    Light  : fixed at 55% — mid-range so both tint and hue read clearly.
+    """
+    p = clamp((P_kPa_val - P_con_min) / (P_con_max - P_con_min + 1e-9))
+    # Temperature uses fixed physical anchors: 27°C (ambient) → 150°C (design-basis hot)
+    # This way 130°C looks orange/red regardless of where the run ends.
+    t = clamp((T_C_val - 27.0) / (150.0 - 27.0))
+    hue   = int(210 - 210 * t)   # 210=cool blue at ambient → 0=red at high T
+    sat   = int(60  +  25 * p)   # 60% at low P, 85% at high P
+    light = 55                   # fixed lightness
+    return f"hsla({hue},{sat}%,{light}%,{alpha})"
+
+col_con = containment_color(P_con_kPa, T_con_C)
 col_hot       = fluid_color(T_hot_C,      P_MPa)
 col_cold      = fluid_color(T_hot_C - 25, P_MPa)
 col_core      = fluid_color(T_clad_C, P_MPa, alpha=1.0,
@@ -322,6 +372,79 @@ CVCS_Y_LETDOWN = 520                # lower pipe — letdown flow out of vessel
 # ACC injection y (drops from ACC bottom to this y, then runs left to RV right wall)
 ACC_INJ_Y = 550
 
+# ── CONTAINMENT DOME geometry ─────────────────────────────────────────────────
+# Sits in the open space above the reactor vessel and accumulator.
+# Elliptical arch: straight vertical sides with a rounded elliptical top,
+# open at the bottom — matching the reference image.
+# Containment dome — top and right edges fixed; 24% area reduction (√0.8 × √0.95)
+CON_RIGHT = ACC_X + ACC_W      # 801  right edge fixed (ACC right wall)
+CON_TOP   = 15                 #  15  top edge fixed
+CON_W     = 393                # 393  = 451 * √0.76
+CON_H     = 240                # 240  = 275 * √0.76
+CON_LEFT  = CON_RIGHT - CON_W  # 408  left edge
+CON_BOT   = CON_TOP   + CON_H  # 255  bottom
+CON_CX    = (CON_LEFT + CON_RIGHT) // 2   # 604  horizontal centre
+CON_RX    = CON_W // 2         # 196  horizontal ellipse radius
+CON_RY    = CON_H // 2         # 120  vertical ellipse radius
+CON_ARCH_CY = CON_BOT - CON_RY # 135  y-centre of the arch ellipse
+
+# Badges: centred horizontally inside dome
+CON_BADGE_W  = 116
+CON_BADGE_X  = CON_CX - CON_BADGE_W // 2   # 546  centred on dome
+CON_BADGE_Y  = CON_TOP + (CON_H - 118) // 2 + 15  # 91  vertically centred below label
+
+# No-data text y positions — pre-computed as integers so they embed correctly
+# in the SVG f-string (avoids unevaluated expressions like {CON_TOP+CON_H//2})
+CON_NODATA_Y1 = CON_TOP + CON_H // 2 - 13   # 127  "no"
+CON_NODATA_Y2 = CON_TOP + CON_H // 2 +  7   # 147  "FLARECON"
+CON_NODATA_Y3 = CON_TOP + CON_H // 2 + 27   # 167  "data"
+
+# ── Containment dome interior content (badges or no-data message) ────────────
+# Vertically centre the content in the dome interior.
+# Interior usable area: x from CON_LEFT+40 to CON_RIGHT-40, y from CON_TOP+35 to CON_BOT
+# Centre point roughly (CON_CX, CON_TOP + CON_H*0.55)
+_con_mid_y = 0  # filled below after geometry is defined — computed inline in SVG block
+
+# Pre-compute badge and text positions as plain integers so they embed
+# correctly into the SVG f-string without unevaluated expressions.
+_badge_cx   = CON_BADGE_X + CON_BADGE_W // 2   # 604 — badge text centre x
+_badge2_y   = CON_BADGE_Y + 63                  # 154 — top of second badge
+_col_con_badge = col_con   # capture current colour for badge text
+
+if df_con is not None:
+    _con_interior = f"""
+<!-- CONTAINMENT PRESSURE badge — inside dome -->
+<rect x="{CON_BADGE_X}" y="{CON_BADGE_Y}" width="{CON_BADGE_W}" height="55" rx="4"
+      fill="#0d1117" stroke="#58697a" stroke-width="1" opacity="0.93"/>
+<text x="{_badge_cx}" y="{CON_BADGE_Y + 16}"
+      font-family="IBM Plex Mono,monospace" font-size="10" fill="#cdd9e5"
+      text-anchor="middle">CON PRESS</text>
+<text x="{_badge_cx}" y="{CON_BADGE_Y + 40}"
+      font-family="IBM Plex Mono,monospace" font-size="17" font-weight="600"
+      fill="#ffffff" text-anchor="middle">{P_con_kPa:.1f} kPa</text>
+<!-- CON TEMP badge -->
+<rect x="{CON_BADGE_X}" y="{_badge2_y}" width="{CON_BADGE_W}" height="55" rx="4"
+      fill="#0d1117" stroke="#58697a" stroke-width="1" opacity="0.93"/>
+<text x="{_badge_cx}" y="{_badge2_y + 16}"
+      font-family="IBM Plex Mono,monospace" font-size="10" fill="#cdd9e5"
+      text-anchor="middle">CON TEMP</text>
+<text x="{_badge_cx}" y="{_badge2_y + 40}"
+      font-family="IBM Plex Mono,monospace" font-size="17" font-weight="600"
+      fill="#ffffff" text-anchor="middle">{T_con_C:.1f} °C</text>"""
+else:
+    # Three words stacked vertically — y positions are plain ints, not expressions
+    _con_interior = f"""
+<!-- No FLARECON data message — stacked vertically -->
+<text x="{CON_CX}" y="{CON_NODATA_Y1}"
+      font-family="IBM Plex Sans,sans-serif" font-size="13" font-weight="600"
+      fill="#64748b" text-anchor="middle" opacity="0.80">no</text>
+<text x="{CON_CX}" y="{CON_NODATA_Y2}"
+      font-family="IBM Plex Sans,sans-serif" font-size="13" font-weight="600"
+      fill="#64748b" text-anchor="middle" opacity="0.80">FLARECON</text>
+<text x="{CON_CX}" y="{CON_NODATA_Y3}"
+      font-family="IBM Plex Sans,sans-serif" font-size="13" font-weight="600"
+      fill="#64748b" text-anchor="middle" opacity="0.80">data</text>"""
+
 # ── Fill helper ───────────────────────────────────────────────────────────────
 def fill_rect(x, y, w, h, level, color):
     fh = h * clamp(level)
@@ -345,6 +468,13 @@ svg = f"""
   <clipPath id="cp-sg"> <rect x="{SG_X}"  y="{SG_Y}"  width="{SG_W}"  height="{SG_H}"/></clipPath>
   <clipPath id="cp-rv"> <rect x="{RV_X}"  y="{RV_Y}"  width="{RV_W}"  height="{RV_H}"/></clipPath>
   <clipPath id="cp-acc"><rect x="{ACC_X}" y="{ACC_Y}" width="{ACC_W}" height="{ACC_H}"/></clipPath>
+  <clipPath id="cp-con">
+    <path d="M {CON_LEFT},{CON_BOT}
+             L {CON_LEFT},{CON_ARCH_CY}
+             A {CON_RX},{CON_RY} 0 0 1 {CON_RIGHT},{CON_ARCH_CY}
+             L {CON_RIGHT},{CON_BOT}
+             Z"/>
+  </clipPath>
 </defs>
 
 <!-- Background -->
@@ -457,6 +587,28 @@ svg = f"""
 <text x="{CVCS_X_END}" y="{CVCS_Y_LETDOWN + PW + 14}"
       font-family="IBM Plex Sans,sans-serif" font-size="13"
       font-weight="600" fill="{col_ldwn_label}">Letdown  {cvcs_letdown:.2f} kg/s</text>
+
+<!-- ════════════════════════════════════════════════════════════════
+     CONTAINMENT DOME
+     ════════════════════════════════════════════════════════════════ -->
+
+<!-- Dome fill — semi-transparent col_con so pipes beneath remain visible -->
+<g clip-path="url(#cp-con)">
+  <rect x="{CON_LEFT}" y="{CON_TOP}" width="{CON_W}" height="{CON_H}"
+        fill="{col_con}"/>
+</g>
+<!-- Dome outline: arch outline drawn on top of fill -->
+<path d="M {CON_LEFT},{CON_BOT}
+         L {CON_LEFT},{CON_ARCH_CY}
+         A {CON_RX},{CON_RY} 0 0 1 {CON_RIGHT},{CON_ARCH_CY}
+         L {CON_RIGHT},{CON_BOT}"
+      fill="none" stroke="{col_con}" stroke-width="4" stroke-linejoin="round"/>
+<!-- Dome label -->
+<text x="{CON_CX}" y="{CON_TOP + 22}"
+      font-family="IBM Plex Sans,sans-serif" font-size="13" font-weight="600"
+      fill="#334155" text-anchor="middle">Containment</text>
+
+{_con_interior}
 
 <!-- ════════════════════════════════════════════════════════════════
      VESSELS
@@ -617,7 +769,7 @@ with st.sidebar:
 if st.session_state.playing:
     if st.session_state.step < max_step:
         time.sleep(refresh_ms / 1000.0)
-        st.session_state.step += 1
+        st.session_state.step = min(st.session_state.step + skip, max_step)
         st.rerun()
     else:
         st.session_state.playing = False

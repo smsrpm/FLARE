@@ -216,13 +216,40 @@ def resolve_base_input_path(work_dir: Path, base_case: str, configured_path=None
         )
     return candidates[0]
 
-def build_ua_input(work_dir: Path, run_dir: Path, base_case: str, overrides: dict, sample_id: int, base_input_path: Path = None) -> str:
+def build_ua_input(work_dir: Path, run_dir: Path, base_case: str, overrides: dict, sample_id: int, base_input_path: Path = None, active_vars_cfg: dict | None = None) -> str:
     src      = Path(base_input_path) if base_input_path is not None else work_dir / f"{base_case}_in.xlsx"
     tmp_name = f"ua_{base_case}_{sample_id}"
     dst      = run_dir / f"{tmp_name}_in.xlsx"
 
     snap = _copy_input_snapshot(src, run_dir)
     wb = None
+
+    def _find_sheet_ci(wb, desired):
+        if not desired:
+            return None
+        d = str(desired).strip().casefold()
+        for name in wb.sheetnames:
+            if str(name).strip().casefold() == d:
+                return name
+        return None
+
+    def _insert_overrides(ws, ov):
+        if not ov:
+            return
+        time_row = None
+        for row in ws.iter_rows(max_col=1):
+            v = row[0].value
+            if isinstance(v, str) and v.strip().lower().startswith("time"):
+                time_row = row[0].row
+                break
+        if time_row is None:
+            time_row = ws.max_row + 1
+        n_ins = len(ov) + 1
+        ws.insert_rows(time_row, amount=n_ins)
+        ws.cell(row=time_row, column=1).value = "# UA overrides (last-assignment-wins)"
+        for i, (var, val) in enumerate(ov.items(), start=1):
+            ws.cell(row=time_row + i, column=1).value = f"{var} = {val:.8g}"
+
     try:
         wb = load_workbook(snap)
         ws = wb[f"{base_case}_in"]
@@ -230,20 +257,24 @@ def build_ua_input(work_dir: Path, run_dir: Path, base_case: str, overrides: dic
             wb[f"{base_case}_out"].title = f"{tmp_name}_out"
         ws.title = f"{tmp_name}_in"
 
-        time_row = None
-        for row in ws.iter_rows(max_col=1):
-            v = row[0].value
-            if isinstance(v, str) and v.strip().startswith("Time"):
-                time_row = row[0].row
-                break
-        if time_row is None:
-            time_row = ws.max_row
+        main_overrides = {}
+        sheet_overrides = {}
+        for var, val in overrides.items():
+            cfg = (active_vars_cfg or {}).get(var, {})
+            sheet = str(cfg.get("sheet", "") or "").strip()
+            if sheet and sheet.casefold() != f"{base_case}_in".casefold():
+                sheet_overrides.setdefault(sheet, {})[var] = val
+            else:
+                main_overrides[var] = val
 
-        n_ins = len(overrides) + 1
-        ws.insert_rows(time_row, amount=n_ins)
-        ws.cell(row=time_row, column=1).value = "# UA overrides (last-assignment-wins)"
-        for i, (var, val) in enumerate(overrides.items(), start=1):
-            ws.cell(row=time_row + i, column=1).value = f"{var} = {val:.8g}"
+        _insert_overrides(ws, main_overrides)
+
+        for sheet, ov in sheet_overrides.items():
+            actual = _find_sheet_ci(wb, sheet)
+            if actual is None:
+                print(f"[ua-worker] WARNING: UA sheet '{sheet}' not found; skipping overrides: {', '.join(ov)}", flush=True)
+                continue
+            _insert_overrides(wb[actual], ov)
 
         # Save the perturbed input directly in the UA run folder, where flare_sim.py will run.
         wb.save(dst)
@@ -332,6 +363,21 @@ def extract_scalars(base_case: str, sample_id: int, run_dir: Path) -> dict:
             r["N_fail_gap"] = int(df["Rod Failures Gap (est.)"].max())
         if "Rod Failures EarlyIV (est.)" in df.columns:
             r["N_fail_eiv"] = int(df["Rod Failures EarlyIV (est.)"].max())
+
+        con_path = run_dir / f"ua_{base_case}_{sample_id}-CON.csv"
+        if con_path.exists():
+            try:
+                cdf = pd.read_csv(con_path)
+                if "Pressure [kPa]" in cdf.columns:
+                    r["CON_P_peak_kPa"] = pd.to_numeric(cdf["Pressure [kPa]"], errors="coerce").max()
+                if "Gas Temp [C]" in cdf.columns:
+                    r["CON_T_peak_C"] = pd.to_numeric(cdf["Gas Temp [C]"], errors="coerce").max()
+                if "H2 Concentration [vol%]" in cdf.columns:
+                    r["CON_H2_peak_volpct"] = pd.to_numeric(cdf["H2 Concentration [vol%]"], errors="coerce").max()
+                if "Sump Level [m]" in cdf.columns:
+                    r["CON_sump_level_peak_m"] = pd.to_numeric(cdf["Sump Level [m]"], errors="coerce").max()
+            except Exception as _con_e:
+                r["CON_error"] = str(_con_e)
         return r
     except Exception as e:
         return {"error": str(e)}
@@ -359,6 +405,25 @@ UA_PLOTTED_TS_COLUMNS = [
     "Zr Oxidizing Rods (est.)",
 ]
 
+UA_PLOTTED_CON_COLUMNS = [
+    "Pressure [kPa]",
+    "Gas Temp [C]",
+    "Wall Temp Inner [C]",
+    "Concrete Surface Temp [C]",
+    "Wet Floor/Sump Temp [C]",
+    "Steam in Gas [kg]",
+    "H2 Concentration [vol%]",
+    "H2 Mass [kg]",
+    "Condensed Mass [kg]",
+    "Cond Rate [kg/s]",
+    "Wall HF [W/m2]",
+    "Wall Heat Removal [W]",
+    "Sump Level [m]",
+    "Liquid Volume [m3]",
+    "NC Quality [-]",
+    "Source mdot [kg/s]",
+]
+
 UNIT_CONV_WORKER = {
     "(K)":    ("°C", lambda v: v - 273.15),
     "(kPa)":  ("kPa", lambda v: v),
@@ -377,6 +442,10 @@ SCALAR_UNIT_WORKER = {
     "P_min_kPa":            "(kPa)",
     "P_max_kPa":            "(kPa)",
     "P_peak_MW":            "(MW)",
+    "CON_P_peak_kPa":       "(kPa)",
+    "CON_T_peak_C":         "(°C)",
+    "CON_H2_peak_volpct":   "(vol%)",
+    "CON_sump_level_peak_m": "(m)",
 }
 
 def _safe_plot_token(text, max_len=48):
@@ -606,7 +675,7 @@ def main(config_path: Path) -> int:
                 break
 
             overrides = {var: float(sample_matrix[var][i - 1]) for var in active_vars}
-            tmp_case = build_ua_input(work_dir, run_dir, base_case, overrides, i, base_input_path)
+            tmp_case = build_ua_input(work_dir, run_dir, base_case, overrides, i, base_input_path, active_vars)
             log_path = run_dir / f"ua_{base_case}_{i}_console.log"
 
             status.update({

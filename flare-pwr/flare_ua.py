@@ -139,6 +139,16 @@ button[role="tab"][aria-selected="true"] {
     font-size: 0.85rem;
 }
 .hdiv { border-top: 1px solid var(--border); margin: 1.5rem 0; }
+.metric-grid-labeled { margin-bottom: 0.25rem; }
+.metric-grid-title {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted, #888);
+    margin-bottom: 0.4rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
 .metric-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem; }
 .metric-tile {
     background: var(--surface);
@@ -217,7 +227,12 @@ def _load_model():
             or os.environ.get("ANTHROPIC_MODEL")
             or "claude-sonnet-4-5")
 
-def _anthropic_text(system_prompt, user_prompt, max_tokens=1800):
+def _anthropic_text(system_prompt, user_prompt, max_tokens=4000):
+    """Call Claude and return (text, stop_reason).
+
+    Raises RuntimeError on API / HTTP errors.  The stop_reason lets callers
+    detect truncation ('max_tokens') and warn the user.
+    """
     api_key = _load_api_key()
     if not api_key:
         raise RuntimeError("No API key found. Add ANTHROPIC_API_KEY to runtime/flare_config.txt (or Runtime/flare_config.txt) or save it on the FLARE Home page.")
@@ -240,7 +255,12 @@ def _anthropic_text(system_prompt, user_prompt, max_tokens=1800):
     if resp.status_code >= 400:
         raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:600]}")
     data = resp.json()
-    return "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+    text = "\n".join(
+        block.get("text", "") for block in data.get("content", [])
+        if block.get("type") == "text"
+    ).strip()
+    stop_reason = data.get("stop_reason", "")
+    return text, stop_reason
 
 # Hardwired variable catalogue: {var_name: (label, default_dist, base, p1, p2, help)}
 DEFAULT_UA_VARIABLES = {
@@ -374,7 +394,8 @@ def _normalize_ua_variable_catalog(raw):
                 f"UA variable '{var}' must define numeric base, p1, and p2 values."
             ) from exc
         help_text = str(cfg.get("help", cfg.get("description", "")))
-        catalog[var] = (label, dist, base, p1, p2, help_text)
+        sheet = str(cfg.get("sheet", "")).strip()
+        catalog[var] = (label, dist, base, p1, p2, help_text, sheet)
 
     if not catalog:
         raise ValueError("UA variable catalogue contains no usable variables.")
@@ -383,7 +404,9 @@ def _normalize_ua_variable_catalog(raw):
 def _write_default_ua_variables_file(path: Path):
     """Create an editable JSON catalogue from the built-in defaults."""
     raw = {}
-    for var, (label, dist, base, p1, p2, help_text) in DEFAULT_UA_VARIABLES.items():
+    for var, cfg in DEFAULT_UA_VARIABLES.items():
+        label, dist, base, p1, p2, help_text = cfg[:6]
+        sheet = cfg[6] if len(cfg) > 6 else ""
         raw[var] = {
             "label": label,
             "distribution": dist,
@@ -392,6 +415,8 @@ def _write_default_ua_variables_file(path: Path):
             "p2": p2,
             "help": help_text,
         }
+        if sheet:
+            raw[var]["sheet"] = sheet
     path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def load_ua_variables():
@@ -483,14 +508,14 @@ UA_PLOTTED_TS_COLUMNS = [
 
 # Maps scalar output variable names to (TS CSV column, offset, unit label)
 TS_MAP = {
-    "hot_pin_clad_peak_K":  ("Hot Pin Clad Temp (K)",       -273.15, "°C"),
-    "hot_pin_clad_final_K": ("Hot Pin Clad Temp (K)",       -273.15, "°C"),
-    "avg_clad_peak_K":      ("Clad Surface Temp (K)",       -273.15, "°C"),
-    "avg_clad_final_K":     ("Clad Surface Temp (K)",       -273.15, "°C"),
-    "hot_pin_fuel_peak_K":  ("Hot Pin Fuel Temp (K)",       -273.15, "°C"),
+    "hot_pin_clad_peak_K":  ("Hot Pin Clad Temp",           -273.15, "°C"),
+    "hot_pin_clad_final_K": ("Hot Pin Clad Temp",           -273.15, "°C"),
+    "avg_clad_peak_K":      ("Clad Surface Temp",           -273.15, "°C"),
+    "avg_clad_final_K":     ("Clad Surface Temp",           -273.15, "°C"),
+    "hot_pin_fuel_peak_K":  ("Hot Pin Fuel Temp",           -273.15, "°C"),
     "P_min_kPa":            ("RCS Pressure (kPa)",           0,      "kPa"),
     "P_max_kPa":            ("RCS Pressure (kPa)",           0,      "kPa"),
-    "T_max_K":              ("RCS Temperature (K)",         -273.15, "°C"),
+    "T_max_K":              ("RCS Temperature",             -273.15, "°C"),
     "DNBR_min":             ("DNBR",                         0,      ""),
     "N_fail_DNB":           ("Rod Failures DNB (est.)",      0,      "rods"),
     "N_fail_gap":           ("Rod Failures Gap (est.)",      0,      "rods"),
@@ -928,6 +953,8 @@ def _load_ua_run_from_dir(run_dir: Path, base_case: str):
         st.session_state.ua_samples = _samp_df
     if _res_df is not None:
         st.session_state.ua_results = _restore_input_columns_for_stats(_res_df, _samp_df)
+
+    # FLARE RCS time-series: ua_{base_case}_{sample}_out.csv
     _ts_list = []
     import re as _re
     for _ts_f in sorted(run_dir.glob(f"ua_{base_case}_*_out.csv")):
@@ -938,6 +965,18 @@ def _load_ua_run_from_dir(run_dir: Path, base_case: str):
             except Exception:
                 pass
     st.session_state.ua_ts = _ts_list
+
+    # FLARECON containment time-series: ua_{base_case}_{sample}-CON.csv
+    _con_ts_list = []
+    for _con_f in sorted(run_dir.glob(f"ua_{base_case}_*-CON.csv")):
+        _m = _re.search(r"_(\d+)-CON\.csv$", _con_f.name)
+        if _m:
+            try:
+                _con_ts_list.append({"sample": int(_m.group(1)), "df": pd.read_csv(_con_f)})
+            except Exception:
+                pass
+    st.session_state.ua_con_ts = _con_ts_list
+
     st.session_state.ua_run_dir = run_dir
     st.session_state.ua_case = base_case
 
@@ -1011,10 +1050,17 @@ def _start_ua_worker(base_case, active_vars, n_samples, fast_mode, input_path=No
     st.session_state.ua_results = None
     st.session_state.ua_samples = None
     st.session_state.ua_ts = []
+    st.session_state.ua_con_ts = []
     return proc.pid, run_dir
 
 def _request_ua_abort(run_dir: Path):
-    """Ask worker to abort and, if available, kill the worker/child process tree."""
+    """Ask worker to abort and, if available, kill the worker/child process tree.
+
+    After signalling the processes, this function writes "aborted" directly to
+    the status file.  This is necessary because the worker process is being
+    killed and may never get a chance to write the final aborted status itself,
+    leaving the status file stuck at "running" and the UI polling indefinitely.
+    """
     abort_path = run_dir / _UA_ABORT_FILE
     abort_path.write_text(json.dumps({
         "abort_requested": True,
@@ -1024,15 +1070,43 @@ def _request_ua_abort(run_dir: Path):
 
     status = _json_read(run_dir / _UA_STATUS_FILE, {})
     pids = [status.get("current_pid"), status.get("worker_pid")]
+    all_killed = True
     for pid in [p for p in pids if p]:
         try:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                               capture_output=True, text=True, timeout=10)
+                result = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                                        capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    all_killed = False
             else:
                 os.kill(int(pid), 15)
+                # Give the process a moment to terminate, then confirm
+                _time.sleep(0.5)
+                try:
+                    os.kill(int(pid), 0)   # signal 0 = existence check
+                    all_killed = False     # still alive
+                except (ProcessLookupError, PermissionError):
+                    pass                   # gone — good
         except Exception:
             pass
+
+    # Write aborted status directly so the UI sees the correct state on the
+    # next rerun even if the worker never wrote its own final status.
+    done  = int(status.get("completed_samples", 0) or 0)
+    total = int(status.get("total_samples", 0) or 0)
+    status.update({
+        "status":    "aborted",
+        "message":   f"UA aborted by user: {done}/{total} samples completed.",
+        "last_update": datetime.now().isoformat(timespec="seconds"),
+        "current_pid": None,
+    })
+    try:
+        status_path = run_dir / _UA_STATUS_FILE
+        tmp = status_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(status, indent=2), encoding="utf-8")
+        tmp.replace(status_path)
+    except Exception:
+        pass
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -1074,10 +1148,13 @@ with st.sidebar:
                                 max_value=5000, value=50, step=10,
                                 help=(
                                     "Number of Monte Carlo simulation runs. "
-                                    "50–100 samples is sufficient to estimate the mean and "
-                                    "standard deviation of most outputs. "
-                                    "200+ samples are needed for reliable 95th-percentile "
-                                    "estimates (Wilks' formula requires 59 for one-sided 95/95). "
+                                    "Under Wilks' order-statistic method, the required sample size "
+                                    "depends only on the desired confidence and probability level — "
+                                    "not on the number of input variables. "
+                                    "59 samples are sufficient for a one-sided 95th-percentile / "
+                                    "95% confidence (95/95) statement; 93 for two-sided 95/95. "
+                                    "For a 95th-percentile / 50% confidence (95/50) statement, "
+                                    "14 samples suffice. "
                                     "Runtime scales linearly — allow ~1 min per sample."
                                 ))
 
@@ -1101,7 +1178,55 @@ with st.sidebar:
     selected_input_path = _selected_entry["path"]
     st.caption(f"Input file: `{selected_input_path.relative_to(WORK_DIR)}`")
 
+    # Reset run state when the user picks a different base case so the Run tab
+    # shows IDLE rather than the previous run's status/folder/results.
+    # Exception: if the user just loaded a previous run whose case happens to
+    # differ from the dropdown selection (e.g. they loaded a CaseLBLOCA run
+    # while the dropdown was on CaseATWS), do not reset on this render cycle —
+    # the loaded results need to survive into the Results tab.  We detect this
+    # by checking whether the loaded run folder matches the currently-selected
+    # run in the "Load previous run" dropdown.
+    _prev_case     = st.session_state.get("ua_case")
+    _loaded_run    = st.session_state.get("_ua_loaded_run")
+    _sel_run_check = st.session_state.get("ua_prev_run_sel", "— current session —")
+    _just_loaded   = (_loaded_run is not None and _loaded_run == _sel_run_check)
+    if _prev_case is not None and _prev_case != selected and not _just_loaded:
+        _cur_status = st.session_state.get("ua_status", "idle")
+        if _cur_status not in ("starting", "running"):
+            st.session_state.ua_status  = "idle"
+            st.session_state.ua_run_dir = None
+            st.session_state.ua_results = None
+            st.session_state.ua_case    = selected
+            st.session_state.ua_ts      = []
+            st.session_state.ua_con_ts  = []
+            for _k in ("_ua_loaded_worker_run", "_ua_loaded_run"):
+                if _k in st.session_state:
+                    del st.session_state[_k]
+
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
+
+    # Detect whether the selected input workbook has a FLARECON worksheet.
+    # FLARECON UA variables are only shown when the sheet exists — there is no
+    # point sampling containment parameters for a case that has no containment
+    # model configured.
+    def _has_flarecon_sheet(path: Path) -> bool:
+        try:
+            import shutil as _shutil, tempfile as _tempfile
+            tmp = Path(_tempfile.mktemp(suffix=".xlsx"))
+            _shutil.copy2(path, tmp)
+            try:
+                from openpyxl import load_workbook as _lwb
+                wb = _lwb(str(tmp), read_only=True, data_only=True)
+                result = any(n.strip().casefold() == "flarecon" for n in wb.sheetnames)
+                wb.close()
+                return result
+            finally:
+                try: tmp.unlink(missing_ok=True)
+                except Exception: pass
+        except Exception:
+            return False
+
+    _case_has_flarecon = _has_flarecon_sheet(selected_input_path)
 
     # Per-variable distribution editor
     active_vars = {}
@@ -1112,7 +1237,12 @@ with st.sidebar:
         "Hover over any variable name for its physical description and typical range."
     )
     with st.expander("Edit variable distributions", expanded=True):
-        for var, (label, def_dist, base, def_p1, def_p2, var_help) in UA_VARIABLES.items():
+        for var, _ucfg in UA_VARIABLES.items():
+            label, def_dist, base, def_p1, def_p2, var_help = _ucfg[:6]
+            var_sheet = _ucfg[6] if len(_ucfg) > 6 else ""
+            # Skip FLARECON variables when the selected case has no FLARECON sheet
+            if var_sheet.strip().casefold() == "flarecon" and not _case_has_flarecon:
+                continue
             enabled = st.checkbox(label, value=False, key=f"en_{var}",
                                   help=var_help)
             if enabled:
@@ -1141,7 +1271,8 @@ with st.sidebar:
                                          key=f"p2_{var}", label_visibility="collapsed",
                                          help=lbl2)
                 active_vars[var] = {"dist": dist, "base": base,
-                                    "p1": p1, "p2": p2, "label": label}
+                                    "p1": p1, "p2": p2, "label": label,
+                                    "sheet": var_sheet}
 
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
 
@@ -1176,6 +1307,7 @@ with st.sidebar:
                         st.session_state.ua_results  = _restore_input_columns_for_stats(_res_df, _samp_df)
                         st.session_state.ua_run_dir  = _sel_dir
                         st.session_state.ua_case     = _case_from_dir
+                        st.session_state.ua_status   = "done"   # so Run tab shows terminal state
                         if _samp_df is not None:
                             st.session_state.ua_samples = _samp_df
                         _ts_list = []
@@ -1189,6 +1321,17 @@ with st.sidebar:
                                 except Exception:
                                     pass
                         st.session_state.ua_ts = _ts_list
+                        _con_ts_list2 = []
+                        for _con_f in sorted(_sel_dir.glob(
+                                f"ua_{_case_from_dir}_*-CON.csv")):
+                            _mc = _re2.search(r"_(\d+)-CON\.csv$", _con_f.name)
+                            if _mc:
+                                try:
+                                    _con_ts_list2.append({"sample": int(_mc.group(1)),
+                                                          "df": pd.read_csv(_con_f)})
+                                except Exception:
+                                    pass
+                        st.session_state.ua_con_ts = _con_ts_list2
                         st.session_state._ua_loaded_run = _sel_run
                         st.rerun()
                     except Exception as _le:
@@ -1214,7 +1357,8 @@ with st.sidebar:
 
 # ── Main panel ────────────────────────────────────────────────────────────────
 
-st.markdown(f"## Uncertainty Analysis &mdash; {selected}")
+_display_case = st.session_state.get("ua_case") or selected
+st.markdown(f"## Uncertainty Analysis &mdash; {_display_case}")
 
 tab_run, tab_results, tab_samples = st.tabs(
     ["▶  Run", "📊  Results", "📋  Samples"]
@@ -1227,6 +1371,7 @@ if "ua_results" not in st.session_state: st.session_state.ua_results = None
 if "ua_samples" not in st.session_state: st.session_state.ua_samples = None
 if "ua_case"    not in st.session_state: st.session_state.ua_case    = None
 if "ua_ts"      not in st.session_state: st.session_state.ua_ts      = []   # time-series per sample
+if "ua_con_ts"  not in st.session_state: st.session_state.ua_con_ts  = []   # containment time-series per sample
 if "ua_run_dir" not in st.session_state: st.session_state.ua_run_dir = None # output subfolder
 
 
@@ -1301,8 +1446,11 @@ with tab_run:
 
         if st.button("⛔ Abort UA Run", type="primary", width="content"):
             _request_ua_abort(_run_dir)
-            st.warning("Abort requested. The current simulation process will be stopped.")
-            _time.sleep(1.0)
+            st.warning("Abort requested — stopping the current simulation process.")
+            # Reset UI state so the Run tab returns to the idle configuration
+            # table rather than continuing to poll as if a run is in progress.
+            st.session_state.ua_status  = "aborted"
+            _time.sleep(1.5)
             st.rerun()
 
         log_path = Path(_status_json.get("current_log", "")) if _status_json.get("current_log") else None
@@ -1311,6 +1459,34 @@ with tab_run:
                 st.code(_tail_text(log_path, max_chars=12000), language="text")
 
         # Poll while browser remains connected. If browser disconnects, worker continues.
+        # Safety net: if the status file has not been updated for > 30 seconds while
+        # still showing "running", the worker is likely dead (e.g. killed externally
+        # or crashed before writing its final status).  Treat it as failed so the
+        # UI stops polling and shows an actionable terminal state.
+        _last_update_str = _status_json.get("last_update", "")
+        if _last_update_str:
+            try:
+                _last_update_dt = datetime.fromisoformat(str(_last_update_str))
+                _stale_s = (datetime.now() - _last_update_dt).total_seconds()
+                if _stale_s > 30:
+                    # Worker has gone silent — write a failed status so the UI exits
+                    # the polling branch on the next rerun.
+                    _dead_status = dict(_status_json)
+                    _dead_status.update({
+                        "status":      "failed",
+                        "message":     f"Worker process appears to have stopped (no update for {_stale_s:.0f} s).",
+                        "last_update": datetime.now().isoformat(timespec="seconds"),
+                        "current_pid": None,
+                    })
+                    try:
+                        _sp = _run_dir / _UA_STATUS_FILE
+                        _tp = _sp.with_suffix(".tmp")
+                        _tp.write_text(json.dumps(_dead_status, indent=2), encoding="utf-8")
+                        _tp.replace(_sp)
+                    except Exception:
+                        pass
+            except (ValueError, TypeError):
+                pass
         _time.sleep(2.0)
         st.rerun()
 
@@ -1459,7 +1635,7 @@ with tab_results:
                         if not c.startswith("in_")
                         and c not in ("sample", "status", "error")]
             ts_out_cols     = [c for c in out_cols if c in TS_MAP]
-            scalar_out_cols = out_cols
+            scalar_out_cols = ts_out_cols if ts_out_cols else out_cols
 
             if not out_cols:
                 st.warning("No output columns found in results.")
@@ -1498,12 +1674,34 @@ with tab_results:
                         ] if c in ts_csv_cols),
                         ts_csv_cols[0] if ts_csv_cols else None,
                     )
+                    # Helper: convert a raw CSV column name to a display label,
+                    # replacing any storage-unit suffix with the display unit.
+                    # e.g. "Hot Pin Clad Temp (K)" -> "Hot Pin Clad Temp [°C]"
+                    def _col_display_label(col, _use_eng=_use_english):
+                        for sfx, (si_lbl, eng_lbl, *_) in UNIT_CONV.items():
+                            if col.endswith(sfx):
+                                base = col[:-len(sfx)].rstrip()
+                                unit = eng_lbl if _use_eng else si_lbl
+                                return f"{base} [{unit}]" if unit else base
+                        return col
+
+                    # Helper: clean display label for a scalar column name
+                    # e.g. "hot_pin_clad_peak_K" -> "Hot Pin Clad Temp [°C]"
+                    def _scalar_display_label(col, _use_eng=_use_english):
+                        if col in TS_MAP:
+                            base, _, unit = TS_MAP[col]
+                            if _use_eng and unit == "°C":
+                                unit = "°F"
+                            return f"{base} [{unit}]" if unit else base
+                        return col.replace("_", " ")
+
                     selected_ts = st.selectbox(
                         "Time-series variable",
                         ts_csv_cols if ts_csv_cols else ["(no plotted variables available)"],
                         index=ts_csv_cols.index(default_ts)
                               if default_ts in ts_csv_cols else 0,
                         key="sel_ts",
+                        format_func=_col_display_label,
                         help=(
                             "Limited to the same time-series quantities plotted in "
                             "the PWR Simulator Results tab."
@@ -1520,9 +1718,15 @@ with tab_results:
                         index=scalar_out_cols.index(default_sc)
                               if default_sc in scalar_out_cols else 0,
                         key="sel_sc",
+                        format_func=_scalar_display_label,
                     )
 
+                # y: scalar column used for CDF and scatter plots (unchanged).
+                # _y_stats/_y_stats_valleys: per-sample peak/valley of the TS
+                # variable, used for the stats tiles so they track the TS selector.
                 y = df_ok[selected_out].dropna()
+                _y_stats         = None
+                _y_stats_valleys = None
 
                 # ── Time-series overlay for selected TS variable ──────────
                 ts_list = st.session_state.ua_ts
@@ -1533,6 +1737,8 @@ with tab_results:
                 if ts_list_now and selected_ts and selected_ts not in ("(no data yet)", "(no plotted variables available)"):
                     n_ts = len(ts_list_now)
                     fig_ts = go.Figure()
+                    _ts_peaks   = []
+                    _ts_valleys = []
                     for j, entry in enumerate(ts_list_now):
                         df_ts = entry["df"]
                         if selected_ts in df_ts.columns:
@@ -1546,6 +1752,14 @@ with tab_results:
                                 name=f"S{entry['sample']}",
                                 showlegend=(n_ts <= 20),
                             ))
+                            _finite = _yvals[np.isfinite(_yvals)]
+                            if len(_finite):
+                                _ts_peaks.append(float(np.max(_finite)))
+                                _ts_valleys.append(float(np.min(_finite)))
+                    if _ts_peaks:
+                        _y_stats         = np.array(_ts_peaks)
+                        _y_stats_valleys = np.array(_ts_valleys)
+                        _y_stats_unit    = _unit
                     # Build clean ylabel: strip original unit suffix, add converted unit
                     _, _unit = convert_col(
                         __import__("numpy").array([0.0]), selected_ts)
@@ -1556,7 +1770,7 @@ with tab_results:
                             break
                     _ylabel = f"{_base_label} [{_unit}]" if _unit else _base_label
                     fig_ts.update_layout(
-                        title=dict(text=f"Time-series  -  {selected_ts}  (n={n_ts} samples)",
+                        title=dict(text=f"Time-series  -  {_col_display_label(selected_ts)}  (n={n_ts} samples)",
                                    font=dict(family="IBM Plex Mono", size=12, color=PLOT_TEXT)),
                         plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_PAPER,
                         font=dict(family="IBM Plex Sans", size=11, color=PLOT_TEXT),
@@ -1571,27 +1785,113 @@ with tab_results:
                                     config={"displayModeBar": False})
                     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
 
+                # ── Containment time-series overlay (FLARECON) ───────────────
+                _con_ts_list = st.session_state.get("ua_con_ts", [])
+                if _con_ts_list:
+                    st.markdown("**Containment response time-series**")
+                    _con_available = set()
+                    for _ce in _con_ts_list:
+                        try:
+                            _con_available.update(
+                                c for c in _ce["df"].columns if c != "Time [s]"
+                            )
+                        except Exception:
+                            pass
+                    from flare_ua_worker import UA_PLOTTED_CON_COLUMNS as _CON_COLS
+                    _con_cols = [c for c in _CON_COLS if c in _con_available]
+                    if _con_cols:
+                        _sel_con = st.selectbox(
+                            "Containment time-series variable",
+                            _con_cols,
+                            index=0,
+                            key="sel_con_ts",
+                        )
+                        _n_con = len(_con_ts_list)
+                        fig_con = go.Figure()
+                        for _j, _ce in enumerate(_con_ts_list):
+                            _cdf = _ce["df"]
+                            if _sel_con in _cdf.columns and "Time [s]" in _cdf.columns:
+                                fig_con.add_trace(go.Scatter(
+                                    x=pd.to_numeric(_cdf["Time [s]"], errors="coerce") / 3600.0,
+                                    y=pd.to_numeric(_cdf[_sel_con], errors="coerce"),
+                                    mode="lines",
+                                    line=dict(color=sample_color(_j, _n_con), width=1.5),
+                                    name=f"S{_ce['sample']}",
+                                    showlegend=(_n_con <= 20),
+                                ))
+                        fig_con.update_layout(
+                            title=dict(text=f"Containment  -  {_sel_con}  (n={_n_con} samples)",
+                                       font=dict(family="IBM Plex Mono", size=12, color=PLOT_TEXT)),
+                            plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_PAPER,
+                            font=dict(family="IBM Plex Sans", size=11, color=PLOT_TEXT),
+                            xaxis=dict(title="Time [hr]", gridcolor=PLOT_GRID),
+                            yaxis=dict(title=_sel_con, gridcolor=PLOT_GRID),
+                            margin=dict(l=60, r=20, t=45, b=45),
+                            height=380,
+                            legend=dict(bgcolor="rgba(255,255,255,0.8)",
+                                        font=dict(size=9)),
+                        )
+                        st.plotly_chart(fig_con, width="stretch",
+                                        config={"displayModeBar": False})
+                    st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
+
                 # ── Scalar summary ────────────────────────────────────────────
-                if len(y) > 0:
-                    _vc = lambda v: convert_scalar(v, selected_out)[0]
-                    _, _su = convert_scalar(y.iloc[0], selected_out)
-                    _su_tag = f" [{_su}]" if _su else ""
-                    tiles = [
-                        (fmt_general(_vc(y.min())),  f"Min{_su_tag}",     "ok"),
-                        (fmt_general(_vc(y.mean())), f"Mean{_su_tag}",    "ok"),
-                        (fmt_general(_vc(y.max())),  f"Max{_su_tag}",
-                         "danger" if "clad" in selected_out.lower() else "ok"),
-                        (fmt_general(convert_std(y.std(), selected_out)[0]),
-                         "Std Dev", "ok"),
-                    ]
-                    html = '<div class="metric-grid">'
-                    for val, lbl, cls in tiles:
-                        html += (f'<div class="metric-tile {cls}">'
-                                 f'<div class="val">{val}</div>'
-                                 f'<div class="lbl">{lbl}</div>'
-                                 f'</div>')
-                    html += '</div>'
-                    st.markdown(html, unsafe_allow_html=True)
+                _use_ts_stats = _y_stats is not None and len(_y_stats) > 0
+                _stat_arr     = _y_stats if _use_ts_stats else (
+                                    np.array(y) if len(y) > 0 else None)
+                _valley_arr   = _y_stats_valleys if _use_ts_stats else _stat_arr
+
+                if _stat_arr is not None and len(_stat_arr) > 0:
+                    if _use_ts_stats:
+                        _su_tag    = f" [{_y_stats_unit}]" if _y_stats_unit else ""
+                        _is_danger = "clad" in selected_ts.lower()
+                        def _make_tiles(arr, is_peak):
+                            return [
+                                (fmt_general(float(np.min(arr))),  f"Min{_su_tag}",  "ok"),
+                                (fmt_general(float(np.mean(arr))), f"Mean{_su_tag}", "ok"),
+                                (fmt_general(float(np.max(arr))),  f"Max{_su_tag}",
+                                 ("danger" if _is_danger else "ok") if is_peak else "ok"),
+                                (fmt_general(float(np.std(arr))),  "Std Dev",        "ok"),
+                            ]
+                        peak_tiles   = _make_tiles(_stat_arr,   is_peak=True)
+                        valley_tiles = _make_tiles(_valley_arr, is_peak=False)
+                    else:
+                        _vc     = lambda v: convert_scalar(v, selected_out)[0]
+                        _, _su  = convert_scalar(float(_stat_arr[0]), selected_out)
+                        _su_tag = f" [{_su}]" if _su else ""
+                        _is_danger = "clad" in selected_out.lower()
+                        def _make_tiles_sc(arr, is_peak):
+                            return [
+                                (fmt_general(_vc(float(np.min(arr)))),  f"Min{_su_tag}",  "ok"),
+                                (fmt_general(_vc(float(np.mean(arr)))), f"Mean{_su_tag}", "ok"),
+                                (fmt_general(_vc(float(np.max(arr)))),  f"Max{_su_tag}",
+                                 ("danger" if _is_danger else "ok") if is_peak else "ok"),
+                                (fmt_general(convert_std(float(np.std(arr)), selected_out)[0]),
+                                 "Std Dev", "ok"),
+                            ]
+                        peak_tiles   = _make_tiles_sc(_stat_arr,   is_peak=True)
+                        valley_tiles = _make_tiles_sc(_valley_arr, is_peak=False)
+
+                    if selected_ts and selected_ts not in (
+                            "(no data yet)", "(no plotted variables available)"):
+                        _stat_label = _col_display_label(selected_ts)
+                    else:
+                        _stat_label = _scalar_display_label(selected_out)
+
+                    def _render_tile_row(tiles, row_label):
+                        h = (f'<div class="metric-grid-labeled">'
+                             f'<div class="metric-grid-title">{_stat_label} — {row_label}</div>'
+                             f'<div class="metric-grid">')
+                        for val, lbl, cls in tiles:
+                            h += (f'<div class="metric-tile {cls}">'
+                                  f'<div class="val">{val}</div>'
+                                  f'<div class="lbl">{lbl}</div>'
+                                  f'</div>')
+                        h += '</div></div>'
+                        return h
+
+                    st.markdown(_render_tile_row(peak_tiles,   "Peak"),   unsafe_allow_html=True)
+                    st.markdown(_render_tile_row(valley_tiles, "Valley"), unsafe_allow_html=True)
 
                 st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
 
@@ -1604,11 +1904,11 @@ with tab_results:
                     line=dict(color=C[0], width=2), name="CDF"
                 ))
                 fig_cdf.update_layout(
-                    title=dict(text=f"CDF  -  {selected_out}",
+                    title=dict(text=f"CDF  -  {_scalar_display_label(selected_out)}",
                                font=dict(family="IBM Plex Mono", size=12, color=PLOT_TEXT)),
                     plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_PAPER,
                     font=dict(family="IBM Plex Sans", size=11, color=PLOT_TEXT),
-                    xaxis=dict(title=selected_out.replace("_", " "),
+                    xaxis=dict(title=_scalar_display_label(selected_out),
                                gridcolor=PLOT_GRID),
                     yaxis=dict(title="Cumulative probability",
                                gridcolor=PLOT_GRID, range=[0, 1]),
@@ -1621,7 +1921,7 @@ with tab_results:
 
                 # ── Scatter plots: each input vs selected output  -  stacked ─────
                 if in_cols:
-                    st.markdown(f"**Scatter plots &mdash; inputs vs {selected_out}**")
+                    st.markdown(f"**Scatter plots &mdash; inputs vs {_scalar_display_label(selected_out)}**")
                     for in_var in in_cols:
                         common = df_ok[[in_var, selected_out]].dropna()
                         if len(common) < 2:
@@ -1646,7 +1946,7 @@ with tab_results:
                             plot_bgcolor=PLOT_BG, paper_bgcolor=PLOT_PAPER,
                             font=dict(size=11, color=PLOT_TEXT),
                             xaxis=dict(title=var_label, gridcolor=PLOT_GRID),
-                            yaxis=dict(title=selected_out.replace("_", " "),
+                            yaxis=dict(title=_scalar_display_label(selected_out),
                                        gridcolor=PLOT_GRID),
                             margin=dict(l=60, r=20, t=45, b=50),
                             height=280,
@@ -1656,7 +1956,7 @@ with tab_results:
 
                     # ── Tornado (|r| ranking) ─────────────────────────────────
                     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
-                    st.markdown(f"**Tornado &mdash; Pearson |r| with {selected_out}**")
+                    st.markdown(f"**Tornado &mdash; Pearson |r| with {_scalar_display_label(selected_out)}**")
                     corrs = {}
                     for iv in in_cols:
                         common = df_ok[[iv, selected_out]].dropna()
@@ -1762,64 +2062,130 @@ with tab_results:
                         st.session_state.get("ua_samples"),
                     )
                     _df_ok_ai = _df_ai[_df_ai["status"] == "OK"].copy()
-                    _in_cols_ai = [c for c in _df_ok_ai.columns if c.startswith("in_")]
+                    _in_cols_ai  = [c for c in _df_ok_ai.columns if c.startswith("in_")]
                     _out_cols_ai = [c for c in _df_ok_ai.columns
                                     if not c.startswith("in_") and c not in ("sample", "status", "error")]
                     _numeric_out = [c for c in _out_cols_ai if pd.api.types.is_numeric_dtype(_df_ok_ai[c])]
-                    _summary = []
-                    for _c in _numeric_out[:20]:
-                        _s = pd.to_numeric(_df_ok_ai[_c], errors="coerce").dropna()
-                        if len(_s):
-                            _summary.append({
-                                "output": _c,
-                                "n": int(len(_s)),
-                                "min": float(_s.min()),
-                                "mean": float(_s.mean()),
-                                "max": float(_s.max()),
-                                "std": float(_s.std()) if len(_s) > 1 else 0.0,
-                                "p95": float(_s.quantile(0.95)),
-                            })
+
+                    # Separate FLARECON scalars so they are always included and
+                    # described with appropriate containment context.
+                    _CON_SCALAR_KEYS = {"CON_P_peak_kPa", "CON_T_peak_C",
+                                        "CON_H2_peak_volpct", "CON_sump_level_peak_m"}
+                    _con_out  = [c for c in _numeric_out if c in _CON_SCALAR_KEYS]
+                    _flare_out = [c for c in _numeric_out if c not in _CON_SCALAR_KEYS]
+
+                    def _scalar_summary(cols, df, cap=20):
+                        rows = []
+                        for _c in cols[:cap]:
+                            _s = pd.to_numeric(df[_c], errors="coerce").dropna()
+                            if len(_s):
+                                rows.append({
+                                    "output": _c,
+                                    "n": int(len(_s)),
+                                    "min": float(_s.min()),
+                                    "mean": float(_s.mean()),
+                                    "max": float(_s.max()),
+                                    "std": float(_s.std()) if len(_s) > 1 else 0.0,
+                                    "p95": float(_s.quantile(0.95)),
+                                })
+                        return rows
+
+                    _flare_summary = _scalar_summary(_flare_out, _df_ok_ai, cap=20)
+                    _con_summary   = _scalar_summary(_con_out,   _df_ok_ai, cap=10)
+
+                    # Pearson correlations — include CON outputs explicitly
+                    _corr_cols = (_flare_out[:15] + _con_out)
                     _corr_rows = []
-                    for _out in _numeric_out[:20]:
+                    for _out in _corr_cols:
                         for _iv in _in_cols_ai:
                             _common = _df_ok_ai[[_iv, _out]].apply(pd.to_numeric, errors="coerce").dropna()
                             if len(_common) > 2:
                                 _r = float(np.corrcoef(_common[_iv], _common[_out])[0, 1])
                                 if np.isfinite(_r):
                                     _corr_rows.append({"output": _out, "input": _iv.replace("in_", ""), "r": _r, "abs_r": abs(_r)})
-                    _corr_rows = sorted(_corr_rows, key=lambda x: x["abs_r"], reverse=True)[:20]
+                    _corr_rows = sorted(_corr_rows, key=lambda x: x["abs_r"], reverse=True)[:25]
+
                     _samples_csv = ""
                     try:
                         _samples_csv = st.session_state.ua_samples.head(20).to_csv(index=False) if st.session_state.get("ua_samples") is not None else ""
                     except Exception:
                         _samples_csv = ""
+
+                    _has_con = len(_con_summary) > 0
                     _system = (
-                        "You are FLARE's uncertainty-analysis narrative assistant. Write in a concise, "
-                        "technically defensible nuclear safety analysis style. Do not invent data. "
-                        "Use only the supplied summaries and correlations. Distinguish statistical "
-                        "association from causation."
+                        "You are FLARE's uncertainty-analysis narrative writer for nuclear safety analysis. "
+                        "Write continuous, flowing prose — not bullet points, not numbered lists. "
+                        "Every response must read as a cohesive technical narrative in the style "
+                        "of a safety analysis report: full sentences, logical transitions between ideas, "
+                        "conclusions drawn from evidence. "
+                        "Structure the narrative with a concise title heading at the top, section "
+                        "headings (using Markdown ## syntax) wherever there is a clear pivot in subject "
+                        "matter — for example, between RCS/core results and containment results, or "
+                        "between input sensitivity findings and output distribution discussion — and a "
+                        "final ## Conclusions section that states the key findings and any margin to "
+                        "acceptance criteria in plain, defensible language. "
+                        "All numeric measures must be stated explicitly with their value and abbreviated "
+                        "unit — for example '516 kPa', '127 °C', '3.7 vol%', '1.21 m' — never as a "
+                        "vague relative statement such as 'elevated' or 'approaches the limit' without "
+                        "the number. "
+                        "Do not invent data; use only the supplied statistics and correlations. "
+                        "Distinguish statistical association from physical causation. "
+                        "On sample adequacy, apply Wilks' order-statistic method: the maximum of N "
+                        "independent samples is a one-sided 95th-percentile tolerance limit at 95% "
+                        "confidence with N=59, regardless of the number of input variables sampled. "
+                        "For a 95/50 statement N=14 suffices. Do not cite any rule linking required "
+                        "sample size to the number of inputs — that is not part of Wilks' method."
                     )
-                    _length = "brief, about 3 paragraphs" if _ua_detail < 0.34 else ("moderate, about 5 paragraphs" if _ua_detail < 0.67 else "detailed, with concise bullets plus narrative")
+                    # Dynamic token budget: 1500 (brief) → 8000 (detailed),
+                    # matching the flare_ui approach to avoid truncation.
+                    _max_tokens = int(1500 + _ua_detail * (8000 - 1500))
+                    _length = ("short, 2–3 prose paragraphs" if _ua_detail < 0.34
+                               else ("moderate, 4–6 prose paragraphs" if _ua_detail < 0.67
+                                     else "thorough, 7–10 prose paragraphs"))
+                    _con_block = f"""
+FLARECON containment scalar summary (CON_P_peak_kPa = peak containment pressure;
+CON_T_peak_C = peak gas temperature; CON_H2_peak_volpct = peak H2 concentration;
+CON_sump_level_peak_m = peak sump level):
+{json.dumps(_con_summary, indent=2)}
+
+For containment results, note: (1) whether peak pressure remains below design pressure,
+(2) whether H2 concentration approaches flammability limits (4 vol% lower, 8 vol% detonable),
+and (3) which uncertain inputs most strongly drive containment pressure and H2 accumulation.
+""" if _has_con else ""
+
                     _user = f"""
-Prepare a {_length} AI Uncertainty Narrative for this FLARE UA run.
+Write a {_length} uncertainty-analysis narrative for the following FLARE UA run. \
+Write entirely in continuous prose — no bullet points, no headers, no numbered lists. \
+Cover in flowing paragraphs: the number of successful samples and what statistical \
+statement that supports under Wilks' method; which input variables most strongly \
+drive each key output based on the Pearson correlations; the range and 95th-percentile \
+behaviour of the most safety-relevant outputs; any cautions about failed samples, \
+correlation versus causation, and model-form limitations.{' Cover RCS/core results and containment results as separate prose sections.' if _has_con else ''}
 
 Case: {st.session_state.get('ua_case') or selected}
-Samples requested/available: {len(_df_ai)} total rows; {len(_df_ok_ai)} successful rows.
+Samples requested / successful: {len(_df_ai)} total rows; {len(_df_ok_ai)} successful rows.
 Input variables sampled: {[c.replace('in_', '') for c in _in_cols_ai]}
 
-Output summary statistics:
-{json.dumps(_summary, indent=2)}
-
-Top Pearson correlations by absolute value:
+FLARE RCS/core output summary statistics:
+{json.dumps(_flare_summary, indent=2)}
+{_con_block}
+Top Pearson correlations by absolute value (covers both RCS and containment outputs):
 {json.dumps(_corr_rows, indent=2)}
 
 First rows of sample matrix, if available:
 {_samples_csv}
-
-Discuss: adequacy of successful sample count, dominant uncertain inputs, important output distributions, tails/95th percentile behavior, and cautions about failed samples, correlation interpretation, and model-form limitations.
 """
                     with st.spinner("Generating AI uncertainty narrative…"):
-                        st.session_state.ua_ai_narrative = _anthropic_text(_system, _user, max_tokens=2400)
+                        _narrative_text, _stop_reason = _anthropic_text(
+                            _system, _user, max_tokens=_max_tokens)
+                        st.session_state.ua_ai_narrative = _narrative_text
+                    if _stop_reason == "max_tokens":
+                        st.warning(
+                            f"⚠️  The narrative was truncated at the token limit "
+                            f"({_max_tokens} tokens). Increase the Narrative detail "
+                            f"slider to allocate more tokens, or reduce the number of "
+                            f"output variables in the run."
+                        )
                 except Exception as _ai_e:
                     st.error(f"AI narrative failed: {_ai_e}")
 

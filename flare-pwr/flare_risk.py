@@ -74,7 +74,12 @@ def _load_model():
             or os.environ.get("ANTHROPIC_MODEL")
             or "claude-sonnet-4-5")
 
-def _anthropic_text(system_prompt, user_prompt, max_tokens=1800):
+def _anthropic_text(system_prompt, user_prompt, max_tokens=4000):
+    """Call Claude and return (text, stop_reason).
+
+    Raises RuntimeError on API / HTTP errors. The stop_reason lets callers
+    detect truncation ('max_tokens') and warn the user.
+    """
     api_key = _load_api_key()
     if not api_key:
         raise RuntimeError("No API key found. Add ANTHROPIC_API_KEY to runtime/flare_config.txt (or Runtime/flare_config.txt) or save it on the FLARE Home page.")
@@ -97,7 +102,12 @@ def _anthropic_text(system_prompt, user_prompt, max_tokens=1800):
     if resp.status_code >= 400:
         raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:600]}")
     data = resp.json()
-    return "\n".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
+    text = "\n".join(
+        block.get("text", "") for block in data.get("content", [])
+        if block.get("type") == "text"
+    ).strip()
+    stop_reason = data.get("stop_reason", "")
+    return text, stop_reason
 
 # ── Constants (must be defined before sidebar) ─────────────────────────────────
 _DEFAULT_FREQ  = 1e-3
@@ -1502,14 +1512,35 @@ if st.session_state.risk_results:
                 except Exception:
                     _max_row = None
                 _system = (
-                    "You are FLARE's risk-assessment narrative assistant. Write in a concise, "
-                    "technically defensible nuclear safety analysis style. Do not invent data. "
-                    "Use the supplied table only. Emphasize total dose, which includes accident "
-                    "dose plus iodine-spike pre-existing coolant activity where available."
+                    "You are FLARE's risk-assessment narrative writer for nuclear safety analysis. "
+                    "Write continuous, flowing prose — not bullet points, not numbered lists. "
+                    "Every response must read as a cohesive technical narrative in the style "
+                    "of a safety analysis report: full sentences, logical transitions between ideas, "
+                    "conclusions drawn from evidence. "
+                    "Structure the narrative with a concise title heading at the top, section "
+                    "headings (using Markdown ## syntax) wherever there is a clear pivot in subject "
+                    "matter — for example between overall acceptability, dominant contributors, "
+                    "and margin discussion — and a final ## Conclusions section that states the key "
+                    "findings and margin to the NEI 18-04 design-objective boundary in plain, "
+                    "defensible language. "
+                    "All numeric measures must be stated explicitly with their value and abbreviated "
+                    "unit — for example '24.7 rem', '0.31 rem', '1.2×10⁻⁵/yr' — never as a vague "
+                    "relative statement such as 'elevated' or 'approaches the limit' without the number. "
+                    "Do not invent data; use only the supplied table and summaries. "
+                    "Emphasize total dose, which includes accident dose plus iodine-spike "
+                    "pre-existing coolant activity where available."
                 )
-                _length = "brief, about 3 paragraphs" if _risk_detail < 0.34 else ("moderate, about 5 paragraphs" if _risk_detail < 0.67 else "detailed, with concise bullets plus narrative")
+                _max_tokens = int(1500 + _risk_detail * (8000 - 1500))
+                _length = ("short, 2–3 prose paragraphs" if _risk_detail < 0.34
+                           else ("moderate, 4–6 prose paragraphs" if _risk_detail < 0.67
+                                 else "thorough, 7–10 prose paragraphs"))
                 _user = f"""
-Prepare a {_length} AI Risk Narrative for the FLARE Frequency-Consequence results.
+Write a {_length} risk-assessment narrative for the FLARE Frequency-Consequence results. \
+Write entirely in continuous prose — no bullet points, no headers, no numbered lists. \
+Cover in flowing paragraphs: overall acceptability against the NEI 18-04 design-objective \
+boundary; the dominant dose contributors and which event categories they fall in; cases \
+nearest to or beyond the limits with explicit dose and frequency values; the meaning of \
+no-release or screened cases; and cautions about frequency assignments or failed simulations.
 
 Context:
 - Number of cases: {_n_cases}
@@ -1523,11 +1554,17 @@ Highest-dose row, if available:
 
 Results table CSV:
 {_table_csv}
-
-Discuss: overall acceptability, dominant dose contributors, cases nearest or beyond limits, meaning of no-release cases, and cautions about frequency assignments or failed simulations.
 """
                 with st.spinner("Generating AI risk narrative…"):
-                    st.session_state.risk_ai_narrative = _anthropic_text(_system, _user, max_tokens=2200)
+                    _narrative_text, _stop_reason = _anthropic_text(
+                        _system, _user, max_tokens=_max_tokens)
+                    st.session_state.risk_ai_narrative = _narrative_text
+                if _stop_reason == "max_tokens":
+                    st.warning(
+                        f"⚠️  The narrative was truncated at the token limit "
+                        f"({_max_tokens} tokens). Increase the Narrative detail "
+                        f"slider to allocate more tokens."
+                    )
             except Exception as _ai_e:
                 st.error(f"AI narrative failed: {_ai_e}")
 

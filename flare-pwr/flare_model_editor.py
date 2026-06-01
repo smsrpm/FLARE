@@ -125,26 +125,97 @@ ul[role="listbox"] * {
 section[data-testid="stSidebar"] code {
     background: transparent !important;
 }
+
+/* ── Editable input fields: visible border + tinted background ── */
+div[data-testid="stTextInput"] input {
+    background-color: #f0f4ff !important;
+    border: 1.5px solid #7090d0 !important;
+    border-radius: 5px !important;
+    color: #0d1117 !important;
+    font-family: monospace !important;
+}
+div[data-testid="stTextInput"] input:focus {
+    border-color: #3366cc !important;
+    background-color: #e8eeff !important;
+    box-shadow: 0 0 0 2px rgba(51,102,204,0.25) !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def load_rows(path):
+def load_rows(path, sheet=None):
     wb = load_workbook(path, read_only=True, data_only=True)
-    ws = wb.active
-    rows = [(i, row[0]) for i, row in enumerate(ws.iter_rows(max_col=1, values_only=True), 1)]
+    # Use named sheet if given; otherwise always use the first sheet.
+    # wb.active reflects whichever tab was last selected when saved — that
+    # may be FLARECON rather than the RCS input sheet.
+    ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.worksheets[0]
+    rows = []
+    for i, row in enumerate(ws.iter_rows(values_only=True), 1):
+        col_a = row[0] if row else None
+        # Collect the last non-empty text value to the right of col A as a tooltip
+        # fallback (typically a Description column further right than Value/Units).
+        right_candidates = [
+            str(v).strip() for v in row[1:]
+            if v is not None and str(v).strip()
+            and not str(v).strip().lstrip("-").replace(".", "", 1).isdigit()
+        ]
+        right_text = right_candidates[-1] if right_candidates else ""
+        rows.append((i, col_a, right_text))
     wb.close()
     return rows
 
 
-def build_sections(rows):
-    sections, current = [], None
-    banner_lines = []
-    prev_blank, in_banner = True, True
+def has_flarecon_sheet(path):
+    """Return the FLARECON sheet name (case-insensitive) or None."""
+    wb = load_workbook(path, read_only=True, data_only=True)
+    match = next((s for s in wb.sheetnames if s.upper() == "FLARECON"), None)
+    wb.close()
+    return match
 
-    for i, (r, text) in enumerate(rows):
+
+def _is_section_label(stripped):
+    """
+    Return True if a line looks like a section header label.
+
+    Accepts both:
+      - '#'-prefixed headers used in FLARE RCS input  (e.g. '# Job Control')
+      - Plain ALL-CAPS or Title-Case labels used in FLARECON input
+        (e.g. 'DESIGN PARAMETERS', 'Initial Conditions')
+    A line is NOT a section label if it contains '=' (it is a key=value pair)
+    or if it looks like a data value (numeric, boolean, or quoted string).
+    """
+    if "=" in stripped:
+        return False
+    if stripped.startswith("#"):
+        return True
+    # Reject bare numbers, booleans, quoted strings, and bracketed units
+    first_tok = stripped.split()[0] if stripped.split() else ""
+    try:
+        float(first_tok)
+        return False
+    except ValueError:
+        pass
+    if first_tok.lower() in ("true", "false"):
+        return False
+    if stripped.startswith(("'", '"')):
+        return False
+    # Reject table-header lines like 'time_spray [s]' — they contain '[' but no '='
+    # We still want to allow them to be skipped gracefully; they are not section labels.
+    if stripped.startswith(("time_", "q_", "mdot_")) and ("[" in stripped or not stripped.replace("_", "").replace(" ", "").isalpha()):
+        return False
+    return True
+
+
+def build_sections(rows, skip_banner=False):
+    sections, current = [], None
+    banner_lines = []   # list of (row_number, text)
+    prev_blank, in_banner = True, not skip_banner
+
+    for i, row_tuple in enumerate(rows):
+        r, text = row_tuple[0], row_tuple[1]
+        right_text = row_tuple[2] if len(row_tuple) > 2 else ""
         raw = "" if text is None else str(text)
         stripped = raw.strip()
 
@@ -152,8 +223,8 @@ def build_sections(rows):
             prev_blank = True
             continue
 
-        # lookahead
-        next_nonblank, intervening_hash = None, False
+        # lookahead: find next non-blank line and whether there's a section label between
+        next_nonblank, intervening_label = None, False
         for j in range(i + 1, len(rows)):
             nxt = rows[j][1]
             if nxt is None:
@@ -161,25 +232,26 @@ def build_sections(rows):
             nxt = str(nxt).strip()
             if not nxt:
                 continue
-            if nxt.startswith("#"):
-                intervening_hash = True
+            if _is_section_label(nxt):
+                intervening_label = True
                 break
             next_nonblank = nxt
             break
 
         if in_banner:
             if stripped.startswith("#"):
-                if next_nonblank and "=" in next_nonblank and not intervening_hash:
+                if next_nonblank and "=" in next_nonblank and not intervening_label:
                     in_banner = False
                 else:
-                    banner_lines.append(stripped[1:].strip())
+                    banner_lines.append((r, stripped[1:].strip()))
                     prev_blank = False
                     continue
             else:
                 in_banner = False
 
-        if stripped.startswith("#") and prev_blank:
-            current = {"name": stripped[1:].strip(), "vars": []}
+        if _is_section_label(stripped) and prev_blank:
+            label = stripped[1:].strip() if stripped.startswith("#") else stripped
+            current = {"name": label, "vars": []}
             sections.append(current)
             prev_blank = False
             continue
@@ -190,21 +262,28 @@ def build_sections(rows):
                 sections.append(current)
 
             key, val = [x.strip() for x in stripped.split("=", 1)]
+            # Split value from inline comment (e.g. "1500    # end time [s]")
+            val_parts = val.split("#", 1)
+            val_clean = val_parts[0].strip()
+            # Prefer inline comment; fall back to any text in columns to the right
+            tooltip = val_parts[1].strip() if len(val_parts) > 1 else right_text
             try:
-                val = float(val)
+                parsed = float(val_clean)
             except Exception:
-                pass
+                parsed = val_clean
 
-            current["vars"].append({"row": r, "key": key, "value": val})
+            current["vars"].append({"row": r, "key": key, "value": parsed, "tooltip": tooltip})
 
         prev_blank = False
 
-    return "\n".join(banner_lines), sections
+    banner_text = "\n".join(t for _, t in banner_lines)
+    return banner_text, banner_lines, sections
 
 
 def validate(rows):
     issues, prev_blank, in_banner = [], True, True
-    for r, text in rows:
+    for row_tuple in rows:
+        r, text = row_tuple[0], row_tuple[1]
         raw = "" if text is None else str(text)
         stripped = raw.strip()
 
@@ -226,28 +305,26 @@ def validate(rows):
     return issues
 
 
-def apply_updates(path, updates, banner_text):
+def apply_updates(path, updates, banner_rows, sheet=None):
     wb = load_workbook(path)
-    ws = wb.active
+    ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.worksheets[0]
 
-    row_idx = 1
-    for line in banner_text.split("\n"):
-        ws.cell(row=row_idx, column=1).value = "#   " + line
-        row_idx += 1
+    # Write back banner lines to their original row numbers
+    for row_num, line in banner_rows:
+        ws.cell(row=row_num, column=1).value = "# " + line
 
-    for row, key, new_val in updates:
+    for row, key, new_val, tooltip in updates:
         cell = ws.cell(row=row, column=1)
         if isinstance(cell.value, str) and "=" in cell.value:
-            cell.value = re.sub(
-                r"(\b" + re.escape(key) + r"\s*=\s*)(.*)",
-                r"\1" + str(new_val),
-                cell.value,
-            )
+            # Rebuild as "key = value    # tooltip" preserving the comment.
+            new_cell = f"{key} = {new_val}"
+            if tooltip:
+                new_cell += f"    # {tooltip}"
+            cell.value = new_cell
 
-    out = path.with_name(path.stem + "_edited.xlsx")
-    wb.save(out)
+    wb.save(path)
     wb.close()
-    return out
+    return path
 
 
 # ── FLARE Home button ────────────────────────────────────────────────────────
@@ -361,49 +438,178 @@ else:
     st.subheader(case_name)
     st.caption(str(file_path.relative_to(WORK_DIR)))
 
-    banner_text, sections = build_sections(rows)
+    banner_text, banner_rows, sections = build_sections(rows)
+    flarecon_sheet = has_flarecon_sheet(file_path)
 
+    # ── Sidebar: RCS sections ─────────────────────────────────────────────────
     if "section" not in st.session_state:
         st.session_state.section = "Banner"
 
     st.sidebar.markdown("---")
-    st.sidebar.header("Model Sections")
+    st.sidebar.header("RCS Model Sections")
 
-    if st.sidebar.button("Banner Header", use_container_width=True):
+    if st.sidebar.button("Banner Header", use_container_width=True, key="rcs_sec_Banner"):
         st.session_state.section = "Banner"
+        st.session_state.active_tab = "rcs"
 
     for sec in sections:
-        if st.sidebar.button(sec["name"], use_container_width=True):
+        if st.sidebar.button(sec["name"], use_container_width=True,
+                              key=f"rcs_sec_{sec['name']}"):
             st.session_state.section = sec["name"]
+            st.session_state.active_tab = "rcs"
 
-    updates = []
+    # ── Sidebar: FLARECON sections (only when sheet present) ──────────────────
+    if flarecon_sheet:
+        con_rows = load_rows(file_path, sheet=flarecon_sheet)
+        con_banner, con_banner_rows, con_sections = build_sections(con_rows, skip_banner=True)
 
-    if st.session_state.section == "Banner":
-        st.header("Banner Header")
-        banner_text = st.text_area("Edit Header", value=banner_text, height=200)
+        # Default to first section (not Banner) since FLARECON has no banner
+        if "con_section" not in st.session_state:
+            st.session_state.con_section = (
+                con_sections[0]["name"] if con_sections else "Banner"
+            )
+
+        st.sidebar.markdown("---")
+        st.sidebar.header("FLARECON Sections")
+
+        if st.sidebar.button("CON Banner Header", use_container_width=True,
+                              key="con_sec_Banner"):
+            st.session_state.con_section = "Banner"
+            st.session_state.active_tab = "con"
+
+        for sec in con_sections:
+            if st.sidebar.button(sec["name"], use_container_width=True,
+                                  key=f"con_sec_{sec['name']}"):
+                st.session_state.con_section = sec["name"]
+                st.session_state.active_tab = "con"
+
+    # ── Main panel: tabbed when FLARECON present, plain otherwise ─────────────
+    if flarecon_sheet:
+        tab_rcs, tab_con = st.tabs(["FLARE RCS Model", "FLARECON Model"])
     else:
-        section = next((s for s in sections if s["name"] == st.session_state.section), None)
-        if section is None:
-            st.session_state.section = "Banner"
-            st.rerun()
+        tab_rcs = st.container()
+        tab_con = None
 
-        st.header(section["name"])
+    # ── RCS editor panel ──────────────────────────────────────────────────────
+    with tab_rcs:
+        if st.session_state.section == "Banner":
+            st.header("Banner Header")
+            banner_text = st.text_area("Edit Header", value=banner_text, height=200)
+        else:
+            section = next((s for s in sections if s["name"] == st.session_state.section), None)
+            if section is None:
+                st.session_state.section = "Banner"
+                st.rerun()
 
-        for var in section["vars"]:
-            col1, col2 = st.columns([2, 2])
-            with col1:
-                st.text(var["key"])
-            with col2:
-                new_val = st.text_input(
-                    var["key"],
-                    value=str(var["value"]),
-                    key=f"{file_path}_{section['name']}_{var['key']}",
+            st.header(section["name"])
+
+            for var in section["vars"]:
+                col1, col2 = st.columns([2, 2])
+                with col1:
+                    tip = var.get("tooltip", "")
+                    if tip:
+                        st.markdown(
+                            f"<div style='padding-top:8px;font-family:monospace;font-size:0.9rem;"
+                            f"cursor:help;text-decoration:underline dotted #7090d0' "
+                            f"title='{tip}'>{var['key']}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.markdown(
+                            f"<div style='padding-top:8px;font-family:monospace;font-size:0.9rem'>"
+                            f"{var['key']}</div>",
+                            unsafe_allow_html=True,
+                        )
+                with col2:
+                    wk = f"{file_path}_{section['name']}_{var['key']}"
+                    if wk not in st.session_state:
+                        st.session_state[wk] = str(var["value"])
+                    st.text_input(
+                        var["key"],
+                        key=wk,
+                        label_visibility="collapsed",
+                    )
+
+        # Build updates from ALL sections using session_state widget values where
+        # available (visited sections) and original parsed values as fallback.
+        updates = []
+        for sec in sections:
+            for var in sec["vars"]:
+                widget_key = f"{file_path}_{sec['name']}_{var['key']}"
+                val = st.session_state.get(widget_key, str(var["value"]))
+                updates.append((var["row"], var["key"], val, var.get("tooltip", "")))
+
+        if st.button("Save RCS Model", key="save_rcs"):
+            # Re-pair edited banner text lines with original row numbers
+            edited_lines = banner_text.split("\n")
+            paired = [(banner_rows[i][0], edited_lines[i]) if i < len(edited_lines) else banner_rows[i]
+                      for i in range(len(banner_rows))]
+            out = apply_updates(file_path, updates, paired)
+            st.success(f"Saved to `{out.relative_to(WORK_DIR)}`")
+
+    # ── FLARECON editor panel ─────────────────────────────────────────────────
+    if tab_con is not None:
+        with tab_con:
+            if st.session_state.con_section == "Banner":
+                st.header("FLARECON Banner Header")
+                con_banner = st.text_area(
+                    "Edit FLARECON Header", value=con_banner,
+                    height=200, key="con_banner_area"
                 )
-            updates.append((var["row"], var["key"], new_val))
+            else:
+                con_sec = next(
+                    (s for s in con_sections if s["name"] == st.session_state.con_section),
+                    None
+                )
+                if con_sec is None:
+                    st.session_state.con_section = "Banner"
+                    st.rerun()
 
-    if st.button("Save Updated Excel"):
-        out = apply_updates(file_path, updates, banner_text)
-        st.success(f"Saved to `{out.relative_to(WORK_DIR)}`")
+                st.header(con_sec["name"])
+
+                for var in con_sec["vars"]:
+                    col1, col2 = st.columns([2, 2])
+                    with col1:
+                        tip = var.get("tooltip", "")
+                        if tip:
+                            st.markdown(
+                                f"<div style='padding-top:8px;font-family:monospace;font-size:0.9rem;"
+                                f"cursor:help;text-decoration:underline dotted #7090d0' "
+                                f"title='{tip}'>{var['key']}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f"<div style='padding-top:8px;font-family:monospace;font-size:0.9rem'>"
+                                f"{var['key']}</div>",
+                                unsafe_allow_html=True,
+                            )
+                    with col2:
+                        wk = f"con_{file_path}_{con_sec['name']}_{var['key']}"
+                        if wk not in st.session_state:
+                            st.session_state[wk] = str(var["value"])
+                        st.text_input(
+                            var["key"],
+                            key=wk,
+                            label_visibility="collapsed",
+                        )
+
+            # Build con_updates from ALL FLARECON sections via session_state.
+            con_updates = []
+            for sec in con_sections:
+                for var in sec["vars"]:
+                    widget_key = f"con_{file_path}_{sec['name']}_{var['key']}"
+                    val = st.session_state.get(widget_key, str(var["value"]))
+                    con_updates.append((var["row"], var["key"], val, var.get("tooltip", "")))
+
+            if st.button("Save FLARECON Model", key="save_con"):
+                edited_con_lines = con_banner.split("\n")
+                con_paired = [(con_banner_rows[i][0], edited_con_lines[i]) if i < len(edited_con_lines) else con_banner_rows[i]
+                              for i in range(len(con_banner_rows))]
+                out = apply_updates(
+                    file_path, con_updates, con_paired, sheet=flarecon_sheet
+                )
+                st.success(f"Saved to `{out.relative_to(WORK_DIR)}`")
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"Working Dir:\n`{WORK_DIR}`")
