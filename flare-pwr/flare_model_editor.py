@@ -15,6 +15,21 @@ st.set_page_config(layout="wide", page_title="FLARE Model Editor")
 
 WORK_DIR = Path(__file__).parent
 
+def _load_buddy_b64():
+    """Return a base64 data URI for the FLARE Buddy icon, or None."""
+    import base64
+    for _dir in (WORK_DIR / "icons", WORK_DIR / "Icons"):
+        _p = _dir / "FLAREBUDDY.png"
+        if _p.exists():
+            try:
+                return "data:image/png;base64," + base64.b64encode(_p.read_bytes()).decode()
+            except Exception:
+                return None
+    return None
+
+_BUDDY_B64 = _load_buddy_b64()
+
+
 # ── Input discovery helpers ──────────────────────────────────────────────────
 
 _EXCLUDE_DIR_PREFIXES = (
@@ -328,27 +343,19 @@ def apply_updates(path, updates, banner_rows, sheet=None):
 
 
 # ── FLARE Home button ────────────────────────────────────────────────────────
-st.sidebar.markdown("""
-    <style>
-    [data-testid="stSidebar"] button[kind="secondary"] {
-        background: transparent !important;
-        border: 1px solid #e8530a !important;
-        border-radius: 4px !important;
-        color: #f97316 !important;
-        font-size: 0.82rem !important;
-        letter-spacing: 0.08em !important;
-        font-weight: 700 !important;
-    }
-    [data-testid="stSidebar"] button[kind="secondary"]:hover {
-        background: rgba(232,83,10,0.18) !important;
-        box-shadow: 0 0 14px rgba(232,83,10,0.45) !important;
-        color: #ffffff !important;
-    }
-    </style>""", unsafe_allow_html=True)
-if st.sidebar.button("\U0001f525  FLARE Home", key="home_btn", width="stretch"):
-    st.session_state.page = "home"
-    st.query_params.clear()
-    st.rerun()
+st.sidebar.markdown(
+    f'''<a href="?page=home" target="_self" style="text-decoration:none;display:flex;
+        align-items:center;gap:0.55rem;padding:0.35rem 0.6rem;
+        border:1px solid #e8530a;border-radius:4px;
+        font-family:Share Tech Mono,monospace;font-size:1.6rem;
+        font-weight:700;letter-spacing:0.08em;color:#f97316;"
+        onmouseover="this.style.background='rgba(232,83,10,0.18)';this.style.boxShadow='0 0 14px rgba(232,83,10,0.45)';this.style.color='#ffffff';"
+        onmouseout="this.style.background='transparent';this.style.boxShadow='none';this.style.color='#f97316';">
+      {"<img src='" + _BUDDY_B64 + "' style='height:4.5rem;width:auto;object-fit:contain;flex-shrink:0;'/>" if _BUDDY_B64 else "🔥"}
+      FLARE Home
+    </a>''',
+    unsafe_allow_html=True,
+)
 st.sidebar.divider()
 
 # ── UI Modes ─────────────────────────────────────────────────────────────────

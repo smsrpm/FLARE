@@ -13,6 +13,19 @@ from pathlib import Path
 st.set_page_config(layout="wide", page_title="FLARE Plant Analyzer", page_icon="🔥")
 WORK_DIR = Path(__file__).parent
 
+def _load_buddy_b64():
+    """Return a base64 data URI for the FLARE Buddy icon, or None."""
+    for _dir in (WORK_DIR / "icons", WORK_DIR / "Icons"):
+        _p = _dir / "FLAREBUDDY.png"
+        if _p.exists():
+            try:
+                return "data:image/png;base64," + base64.b64encode(_p.read_bytes()).decode()
+            except Exception:
+                return None
+    return None
+
+_BUDDY_B64 = _load_buddy_b64()
+
 # ── Browser detection — must run before any rendering ────────────────────────
 try:
     ua = st.context.headers.get("User-Agent", "")
@@ -80,10 +93,19 @@ section[data-testid="stSidebar"] hr { margin:0.4rem 0 !important; }
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    if st.button("🔥  FLARE Home", key="home_btn", width="stretch"):
-        st.session_state.page = "home"
-        st.query_params.clear()
-        st.rerun()
+    st.markdown(
+        f'''<a href="?page=home" target="_self" style="text-decoration:none;display:flex;
+            align-items:center;gap:0.55rem;padding:0.35rem 0.6rem;
+            border:1px solid #e8530a;border-radius:4px;
+            font-family:Share Tech Mono,monospace;font-size:1.6rem;
+            font-weight:700;letter-spacing:0.08em;color:#f97316;"
+            onmouseover="this.style.background='rgba(232,83,10,0.18)';this.style.boxShadow='0 0 14px rgba(232,83,10,0.45)';this.style.color='#ffffff';"
+            onmouseout="this.style.background='transparent';this.style.boxShadow='none';this.style.color='#f97316';">
+          {"<img src='" + _BUDDY_B64 + "' style='height:4.5rem;width:auto;object-fit:contain;flex-shrink:0;'/>" if _BUDDY_B64 else "🔥"}
+          FLARE Home
+        </a>''',
+        unsafe_allow_html=True,
+    )
     st.divider()
     st.markdown("### 🏭 Plant Analyzer")
 

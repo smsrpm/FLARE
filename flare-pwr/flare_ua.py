@@ -11,6 +11,7 @@ import re
 import sys
 import csv
 import json
+import base64
 import subprocess
 import requests
 import time as _time
@@ -181,6 +182,30 @@ section[data-testid="stSidebar"] .stTooltipHoverTarget:hover svg.icon {
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 WORK_DIR = Path(__file__).parent
+
+def _load_buddy_b64():
+    """Return a base64 data URI for the FLARE Buddy icon, or None."""
+    for _dir in (WORK_DIR / "icons", WORK_DIR / "Icons"):
+        _p = _dir / "FLAREBUDDY.png"
+        if _p.exists():
+            try:
+                return "data:image/png;base64," + base64.b64encode(_p.read_bytes()).decode()
+            except Exception:
+                return None
+    return None
+
+_BUDDY_B64 = _load_buddy_b64()
+
+def _buddy_expander_label(title: str) -> str:
+    """Return an expander label with an inline FLARE Buddy thumbnail, or fall back to 🤖."""
+    if _BUDDY_B64:
+        return (
+            f"<img src='{_BUDDY_B64}' style='height:1.3rem;width:1.3rem;"
+            f"border-radius:50%;object-fit:cover;vertical-align:middle;"
+            f"margin-right:0.4rem;'/>{title}"
+        )
+    return f"🤖  {title}"
+
 
 
 def _runtime_dir(base_dir: Path | None = None) -> Path:
@@ -1113,27 +1138,19 @@ def _request_ua_abort(run_dir: Path):
 
 with st.sidebar:
     # ── Return to FLARE home ──────────────────────────────────────────────────
-    st.markdown("""
-        <style>
-        [data-testid="stSidebar"] button[kind="secondary"] {
-            background: transparent !important;
-            border: 1px solid #e8530a !important;
-            border-radius: 4px !important;
-            color: #f97316 !important;
-            font-size: 0.82rem !important;
-            letter-spacing: 0.08em !important;
-            font-weight: 700 !important;
-        }
-        [data-testid="stSidebar"] button[kind="secondary"]:hover {
-            background: rgba(232,83,10,0.18) !important;
-            box-shadow: 0 0 14px rgba(232,83,10,0.45) !important;
-            color: #ffffff !important;
-        }
-        </style>""", unsafe_allow_html=True)
-    if st.button("\U0001f525  FLARE Home", key="home_btn", width="stretch"):
-        st.session_state.page = "home"
-        st.query_params.clear()
-        st.rerun()
+    st.markdown(
+        f'''<a href="?page=home" target="_self" style="text-decoration:none;display:flex;
+            align-items:center;gap:0.55rem;padding:0.35rem 0.6rem;
+            border:1px solid #e8530a;border-radius:4px;
+            font-family:Share Tech Mono,monospace;font-size:1.6rem;
+            font-weight:700;letter-spacing:0.08em;color:#f97316;"
+            onmouseover="this.style.background='rgba(232,83,10,0.18)';this.style.boxShadow='0 0 14px rgba(232,83,10,0.45)';this.style.color='#ffffff';"
+            onmouseout="this.style.background='transparent';this.style.boxShadow='none';this.style.color='#f97316';">
+          {"<img src='" + _BUDDY_B64 + "' style='height:4.5rem;width:auto;object-fit:contain;flex-shrink:0;'/>" if _BUDDY_B64 else "🔥"}
+          FLARE Home
+        </a>''',
+        unsafe_allow_html=True,
+    )
     st.divider()
     # ─────────────────────────────────────────────────────────────────────────
     st.markdown('<div style="font-family:IBM Plex Mono;font-size:1.4rem;'
@@ -2038,6 +2055,14 @@ with tab_results:
     # ── AI Uncertainty Narrative ──────────────────────────────────────────────
     if df is not None and len(df) > 0 and "status" in df.columns:
         with st.expander("🤖  AI Uncertainty Narrative", expanded=True):
+            if _BUDDY_B64:
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;'>"
+                    f"<img src='{_BUDDY_B64}' style='height:2.2rem;width:2.2rem;border-radius:50%;object-fit:cover;flex-shrink:0;'/>"
+                    f"<span style='font-weight:700;font-size:1rem;'>FLARE Buddy — AI Uncertainty Narrative</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
             st.caption(
                 "Generate a technical narrative of the uncertainty-analysis results, "
                 "including key output distributions, sensitivity rankings, and interpretation."

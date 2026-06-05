@@ -300,7 +300,8 @@ IMG_EDIT = load_icon("icon_editor.png")
 IMG_PA   = load_icon("icon_analyzer.png")
 IMG_TM   = load_icon("icon_theory_manual.png")
 IMG_UM   = load_icon("icon_user_manual.png")
-IMG_RISK = load_icon("icon_risk.png")
+IMG_RISK    = load_icon("icon_risk.png")
+IMG_BUDDY   = load_icon("FLAREBUDDY.png")
 
 def _manual_path(filename):
     """Return the path to a manual stored in manuals/ or Manuals/.
@@ -559,9 +560,18 @@ div[data-testid="stExpander"] [data-testid="stCaptionContainer"] {{
 <div class="page-glow"></div>
 """, unsafe_allow_html=True)
 
-st.markdown("""
+_buddy_hero_img = (
+    f"<img src='{IMG_BUDDY}' style='"
+    "height:clamp(7rem,16vw,11rem);width:auto;object-fit:contain;"
+    "filter:drop-shadow(0 0 18px rgba(232,83,10,0.45));flex-shrink:0;'/>"
+) if IMG_BUDDY else ""
+
+st.markdown(f"""
 <div class="hero">
-  <div class="flare-title">FLARE</div>
+  <div style="display:flex;align-items:center;justify-content:center;gap:1.2rem;flex-wrap:wrap;">
+    <div class="flare-title">FLARE</div>
+    {_buddy_hero_img}
+  </div>
   <div class="flare-sub">
     <span class="orange">Fast Licensing</span>
     <span class="white"> Accident Response Engine</span><br>
@@ -1025,7 +1035,11 @@ def _augment_history_with_file_context(history, file_context):
 # Chat container
 st.markdown("<div class='chat-wrap'>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='chat-label'>⚛️  FLARE Assistant — ask a question about FLARE</div>",
+    (
+        "<div class='chat-label' style='display:flex;align-items:center;gap:0.5rem;'>"
+        + (f"<img src='{IMG_BUDDY}' style='height:2.4rem;width:2.4rem;border-radius:50%;object-fit:cover;flex-shrink:0;'/>" if IMG_BUDDY else "⚛️")
+        + "  FLARE Assistant — ask a question about FLARE</div>"
+    ),
     unsafe_allow_html=True,
 )
 
