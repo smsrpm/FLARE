@@ -103,26 +103,48 @@ def _aborted(run_dir: Path) -> bool:
     return (run_dir / ABORT_FILE).exists()
 
 def sample_values(dist, p1, p2, base, n, rng):
+    """Sample n values from the specified distribution.
+
+    Invalid parameters are handled gracefully: a descriptive warning is printed
+    and a constant array equal to `base` is returned so the rest of the UA run
+    can continue.  This prevents a single mis-configured variable (e.g. both
+    bounds left at 0.0) from aborting the entire batch.
+    """
+    def _warn_const(reason):
+        print(
+            f"[ua-worker] WARNING: distribution parameter error ({reason}). "
+            f"Variable will be held constant at base={base:.6g} for all samples.",
+            flush=True,
+        )
+        return np.full(n, float(base))
+
     if dist == "uniform":
         if p1 >= p2:
-            raise ValueError(f"Uniform requires Lower < Upper, got {p1} >= {p2}")
+            return _warn_const(f"Uniform requires Lower < Upper, got {p1} >= {p2}")
         return rng.uniform(p1, p2, n)
     if dist == "normal":
         if p2 <= 0:
-            raise ValueError(f"Normal requires Std deviation > 0, got {p2}")
+            return _warn_const(f"Normal requires Std deviation > 0, got {p2}")
         raw = rng.normal(p1, p2, n)
         return np.clip(raw, p1 - 4*p2, p1 + 4*p2)
     if dist == "lognormal":
         if p2 <= 0:
-            raise ValueError(f"Lognormal requires ln(std) > 0, got {p2}")
+            return _warn_const(f"Lognormal requires ln(std) > 0, got {p2}")
         return np.exp(rng.normal(p1, p2, n))
     if dist == "triangular":
         if p1 >= p2:
-            raise ValueError(f"Triangular requires Lower < Upper, got {p1} >= {p2}")
+            return _warn_const(f"Triangular requires Lower < Upper, got {p1} >= {p2}")
         if not (p1 <= base <= p2):
-            raise ValueError(f"Triangular mode {base} must be between {p1} and {p2}")
+            # Clamp mode to [p1, p2] rather than failing outright
+            clamped = float(np.clip(base, p1, p2))
+            print(
+                f"[ua-worker] WARNING: Triangular mode {base} outside [{p1}, {p2}]; "
+                f"clamping mode to {clamped:.6g}.",
+                flush=True,
+            )
+            return rng.triangular(p1, clamped, p2, n)
         return rng.triangular(p1, base, p2, n)
-    return np.full(n, base)
+    return np.full(n, float(base))
 
 def _copy_input_snapshot(src: Path, run_dir: Path) -> Path:
     """Copy an input workbook to a private snapshot before openpyxl reads it.
@@ -644,6 +666,32 @@ def main(config_path: Path) -> int:
 
     print(f"[ua-worker] Started: {run_dir}", flush=True)
     print(f"[ua-worker] Base case: {base_case}; samples={n_samples}; vars={len(active_vars)}", flush=True)
+
+    # ── Pre-flight: validate all distribution parameters and report issues ──
+    _preflight_ok = True
+    for _var, _vcfg in active_vars.items():
+        _d  = _vcfg.get("dist", "uniform")
+        _p1 = float(_vcfg.get("p1", 0))
+        _p2 = float(_vcfg.get("p2", 0))
+        _b  = float(_vcfg.get("base", 0))
+        _issues = []
+        if _d in ("uniform", "triangular") and _p1 >= _p2:
+            _issues.append(f"{_d}: Lower ({_p1}) >= Upper ({_p2}) — will be held constant at base={_b}")
+            _preflight_ok = False
+        if _d in ("normal", "lognormal") and _p2 <= 0:
+            _issues.append(f"{_d}: Std deviation ({_p2}) <= 0 — will be held constant at base={_b}")
+            _preflight_ok = False
+        if _d == "triangular" and not (_p1 <= _b <= _p2) and _p1 < _p2:
+            _issues.append(f"triangular: mode/base ({_b}) outside [{_p1}, {_p2}] — mode will be clamped")
+        for _issue in _issues:
+            print(f"[ua-worker] PARAM WARNING  {_var}: {_issue}", flush=True)
+    if not _preflight_ok:
+        print(
+            "[ua-worker] One or more variables have invalid distribution parameters. "
+            "Those variables will be held constant (no uncertainty contribution). "
+            "Check the sidebar bounds for each flagged variable.",
+            flush=True,
+        )
 
     try:
         rng = np.random.default_rng()

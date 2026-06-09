@@ -6959,7 +6959,17 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
     if _model in ("fixed", "legacy", "static"):
         return groups, {"model": _model, "n_fissions": None}
 
-    _n_rods = float(get_variable(local_namespace, "nbt_n_fuel_rods", 18200.0))
+    _n_pins_th = float(get_variable(local_namespace, "N_pins", 18200.0))
+    _n_rods = float(get_variable(local_namespace, "nbt_n_fuel_rods", _n_pins_th))
+    if _n_rods != _n_pins_th:
+        print(
+            f"WARNING: nbt_n_fuel_rods ({_n_rods:.0f}) differs from N_pins "
+            f"({_n_pins_th:.0f}). Source-term inventory will be scaled to "
+            f"{_n_rods:.0f} rods while the thermal-hydraulic core model uses "
+            f"{_n_pins_th:.0f} rods. Set nbt_n_fuel_rods = N_pins in the input "
+            f"file to suppress this warning.",
+            flush=True,
+        )
     _r_fuel = float(get_variable(local_namespace, "nbt_fuel_radius_m", 0.00418))
     _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", 2.408))
     _rho    = float(get_variable(local_namespace, "nbt_rho_uo2_kg_m3", 10400.0))

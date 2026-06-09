@@ -121,6 +121,34 @@ section[data-testid="stSidebar"] button[kind="primary"]:hover {
     background: #a40e26 !important;
 }
 
+/* Sidebar secondary/default buttons: keep Load buttons readable on dark theme. */
+section[data-testid="stSidebar"] div.stButton > button,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button,
+section[data-testid="stSidebar"] button[kind="secondary"] {
+    background: #263142 !important;
+    color: #ffffff !important;
+    border: 1px solid #f97316 !important;
+    border-radius: 6px !important;
+    opacity: 1 !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover,
+section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: #f97316 !important;
+    color: #ffffff !important;
+    border-color: #fb923c !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:disabled,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:disabled,
+section[data-testid="stSidebar"] button[kind="secondary"]:disabled,
+section[data-testid="stSidebar"] button[disabled] {
+    background: #374151 !important;
+    color: #d1d5db !important;
+    border: 1px solid #6b7280 !important;
+    opacity: 1 !important;
+}
+
+
 section[data-testid="stSidebar"] code {
     color: #ffffff !important;
     background: var(--dark-border) !important;
@@ -316,7 +344,10 @@ _ANTHROPIC_MODEL = load_model()
 
 NARRATIVE_QUALITY_GUIDANCE = """
 AI narrative quality requirements:
-- Use a tiered scope. For verification, null, or benign cases with no meaningful excursion, use only three concise sections: Steady-State/Initial Condition Performance, Code Behavior, and Regulatory Significance. Do not force full accident-analysis boilerplate onto benign cases.
+- Balance accident-sequence prose with regulatory figure-of-merit evaluation. First explain the physical sequence of events that drove the outcome, then connect that sequence directly to the safety-related FOMs.
+- Treat regulatory FOMs broadly, not only as 10 CFR 50.46 LOCA metrics. Discuss, when data are present, (1) LOCA fuel-cladding FOMs: PCT, ECR, and hydrogen generation; (2) non-LOCA specified acceptable fuel design limits such as DNBR/dryout margin, fuel temperature, pressure, and inventory/control response; (3) containment FOMs relevant to 10 CFR 50.44, including hydrogen concentration, steam inerting/flammability status, and containment pressure/temperature response; and (4) radiological dose FOMs relevant to 10 CFR 50.34(a)(1), 10 CFR 50.67, 10 CFR 100.11, and 10 CFR 100.21(c)(2), as applicable to the case.
+- Conclusions must state whether the results support the applicable General Design Criteria, especially reactivity control, reactor coolant pressure boundary protection, emergency core cooling, containment function, combustible gas control, and radiological consequence control. Do not merely restate statistics; connect outcomes to design-function adequacy.
+- Use a tiered scope. For verification, null, or benign cases with no meaningful excursion, keep the accident description concise but still identify the governing FOMs and why they remain bounded. Do not force full accident-analysis boilerplate onto benign cases.
 - Reserve detailed Fuel Integrity and Core Damage and Source Term and Radiological Consequences sections for cases with nonzero ECR, hydrogen generation, rod failures, radionuclide releases, or nonzero dose.
 - If all radionuclide group releases are zero, state that in one sentence and do not enumerate radionuclide groups individually.
 - If ECR and hydrogen generation are zero, state that in one sentence and do not expand into a full oxidation discussion.
@@ -327,6 +358,200 @@ AI narrative quality requirements:
 - If any dose receptor exceeds its regulatory limit, state this explicitly in conclusions, not only in tabulated data.
 - Do not reproduce source-term or dose tables in prose. The numerical tables are appended separately; discuss only the important implications.
 """
+
+# ── AI narrative detail mapping ──────────────────────────────────────────────
+# Keep this table aligned with flare_ua.py.  The Streamlit slider has 21
+# detents from 0.00 to 1.00 in 0.05 increments; each detent intentionally has a
+# distinct target word count so adjacent settings produce a meaningful change.
+NARRATIVE_DETAIL_WORD_TARGETS = {
+    0.00: 300,
+    0.05: 400,
+    0.10: 500,
+    0.15: 650,
+    0.20: 800,
+    0.25: 1000,
+    0.30: 1200,
+    0.35: 1450,
+    0.40: 1700,
+    0.45: 2000,
+    0.50: 2300,
+    0.55: 2600,
+    0.60: 2900,
+    0.65: 3200,
+    0.70: 3500,
+    0.75: 3800,
+    0.80: 4100,
+    0.85: 4400,
+    0.90: 4700,
+    0.95: 5000,
+    1.00: 5300,
+}
+
+
+def _narrative_detail_level(detail: float) -> float:
+    """Snap a nominal detail value to the 0.05 slider detent."""
+    try:
+        d = float(detail)
+    except Exception:
+        d = 0.5
+    key = round(d / 0.05) * 0.05
+    return max(0.0, min(1.0, round(key, 2)))
+
+
+def _narrative_detail_word_target(detail: float) -> int:
+    return int(NARRATIVE_DETAIL_WORD_TARGETS.get(_narrative_detail_level(detail), 2300))
+
+
+def _narrative_detail_word_range(detail: float) -> tuple[int, int]:
+    target = _narrative_detail_word_target(detail)
+    return int(round(target * 0.85)), int(round(target * 1.15))
+
+
+def _narrative_detail_descriptor(detail: float) -> str:
+    d = _narrative_detail_level(detail)
+    if d <= 0.00:
+        return "Technical abstract"
+    if d <= 0.05:
+        return "Extended abstract"
+    if d <= 0.10:
+        return "Short executive summary"
+    if d <= 0.20:
+        return "Brief technical summary"
+    if d <= 0.35:
+        return "Compact technical discussion"
+    if d <= 0.50:
+        return "Full concise technical narrative"
+    if d <= 0.65:
+        return "Expanded technical narrative"
+    if d <= 0.80:
+        return "Long-form technical discussion"
+    if d <= 0.95:
+        return "Near-comprehensive technical discussion"
+    return "Maximum-detail technical report narrative"
+
+
+
+
+def _narrative_trim_to_word_limit(text: str, max_words: int) -> str:
+    """Hard-limit AI-generated markdown section length by word count."""
+    try:
+        max_words = int(max_words)
+    except Exception:
+        return text or ""
+    if max_words <= 0 or not text:
+        return text or ""
+    words = re.findall(r"\S+", text)
+    if len(words) <= max_words:
+        return text
+    clipped = " ".join(words[:max_words]).strip()
+    floor = max(0, int(len(clipped) * 0.85))
+    sentence_end = max(clipped.rfind(". ", floor), clipped.rfind("; ", floor), clipped.rfind("! ", floor), clipped.rfind("? ", floor))
+    if sentence_end > floor:
+        clipped = clipped[:sentence_end + 1].strip()
+    return clipped
+
+
+
+def _normalize_ai_section_markdown(text: str, section_title: str | None = None) -> str:
+    """Keep section headings, but force body text to render as normal paragraphs.
+
+    The section generator may return the requested heading and the first body
+    sentence on the same physical Markdown line, e.g.
+    ``### Summary This analysis ...``.  Streamlit renders the entire line as a
+    heading.  This normalizer splits that pattern into a heading line followed
+    by ordinary paragraph text.  It also strips paragraph-length full-line bold
+    markup and demotes any extra intra-section headings.
+    """
+    if not text:
+        return ""
+
+    def _strip_inline_bold(s: str) -> str:
+        s = s.strip()
+        m = re.match(r"^\*\*(.+?)\*\*$", s)
+        return m.group(1).strip() if m else s
+
+    def _split_expected_title(heading_text: str, expected_title: str | None):
+        title_text = _strip_inline_bold(heading_text.strip().strip("#").strip())
+        if expected_title:
+            exp = str(expected_title).strip()
+            # Match the expected section title at the start, tolerating case
+            # differences and optional punctuation before the body sentence.
+            if title_text.lower().startswith(exp.lower()):
+                rest = title_text[len(exp):].strip()
+                rest = re.sub(r"^[-–—:.;\s]+", "", rest).strip()
+                return exp, rest
+        return title_text, ""
+
+    lines = str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    out: list[str] = []
+    kept_primary_heading = False
+    preserve_all_headings = section_title is None
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            out.append("")
+            continue
+
+        m = re.match(r"^#{1,6}\s+(.+?)\s*$", stripped)
+        if m:
+            title, rest = _split_expected_title(m.group(1), section_title)
+            use_heading = preserve_all_headings or not kept_primary_heading
+            if use_heading:
+                out.append(f"### {title}")
+                kept_primary_heading = True
+            else:
+                words = title.split()
+                if len(words) <= 8 and not re.search(r"[.;:,]$", title):
+                    out.append(f"**{title}**")
+                else:
+                    out.append(title)
+            if rest:
+                out.append("")
+                out.append(rest)
+            continue
+
+        # If the model made an entire paragraph bold, strip the bold markers for
+        # paragraph-length text while preserving genuinely short emphasis lines.
+        m = re.match(r"^\*\*(.+?)\*\*\s*$", stripped)
+        if m and len(m.group(1).split()) > 10:
+            out.append(m.group(1).strip())
+            continue
+
+        out.append(line)
+
+    # Collapse excessive blank lines while preserving paragraph separation.
+    cleaned = "\n".join(out)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if section_title and not re.match(r"^#{1,6}\s+", cleaned):
+        cleaned = f"### {section_title}\n\n{cleaned}".strip()
+    return cleaned
+
+def _narrative_max_tokens(detail: float) -> int:
+    """Return a generous API completion budget for the selected detail level.
+
+    The narrative-detail slider constrains length through explicit word-count
+    instructions in the prompt.  The API max_tokens value is not used as the
+    primary length control because hard token exhaustion produces a visibly
+    truncated narrative.  Instead, leave enough completion headroom for the
+    model to satisfy the requested word range and stop naturally.
+    """
+    _lo, hi = _narrative_detail_word_range(detail)
+    return int(min(12000, max(2500, round(hi * 2.8 + 1000))))
+
+
+def _narrative_timeout_s(detail: float) -> int:
+    """Scale read timeout with requested narrative detail."""
+    d = _narrative_detail_level(detail)
+    return int(round(120 + d * (420 - 120)))
+
+
+def _narrative_source_term_group_limit(detail: float) -> int:
+    """Limit prompt payload at low detail and expand smoothly with detail."""
+    d = _narrative_detail_level(detail)
+    return int(max(4, min(12, round(4 + d * 8))))
+
 
 PLOT_COLOR = "#0969da"
 PLOT_BG    = "#ffffff"
@@ -596,29 +821,139 @@ def load_containment_results(case_name, run_dir=None):
     return None
 
 
-def containment_scalar_summary(con_df):
+def _convert_containment_series_for_display(values, col_name, use_english=False):
+    """Return (numeric array, unit label) for FLARECON display units.
+
+    FLARECON CSVs are written in SI/metric units.  The PWR Simulator unit
+    selector previously converted only the FLARE/RCS plots; this helper applies
+    the same display-unit policy to containment pressure, temperature, liquid
+    level/volume, heat-removal, and mass inventories while preserving
+    dimensionless concentration values.
+    """
+    arr = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float)
+    name = str(col_name)
+    if not use_english:
+        if "[kPa]" in name:
+            return arr, "kPa"
+        if "[C]" in name:
+            return arr, "°C"
+        if "[m3]" in name:
+            return arr, "m³"
+        if "[m]" in name:
+            return arr, "m"
+        if "[W]" in name:
+            return arr, "W"
+        if "[kg]" in name:
+            return arr, "kg"
+        if "[kg/s]" in name:
+            return arr, "kg/s"
+        if "[vol%]" in name:
+            return arr, "vol%"
+        if "[-]" in name:
+            return arr, ""
+        return arr, ""
+    if "[kPa]" in name:
+        return arr * 0.145038, "psia"
+    if "[C]" in name:
+        return arr * 9.0 / 5.0 + 32.0, "°F"
+    if "[m3]" in name:
+        return arr * 35.3147, "ft³"
+    if "[m]" in name:
+        return arr * 3.28084, "ft"
+    if "[W]" in name:
+        return arr * 3.412141633, "Btu/hr"
+    if "[kg]" in name:
+        return arr * 2.20462, "lbm"
+    if "[kg/s]" in name:
+        return arr * 2.20462, "lb/s"
+    if "[vol%]" in name:
+        return arr, "vol%"
+    if "[-]" in name:
+        return arr, ""
+    return arr, ""
+
+
+def _containment_display_label(col_name, use_english=False):
+    vals, unit = _convert_containment_series_for_display([0.0], col_name, use_english)
+    base = re.sub(r"\s*\[[^\]]*\]\s*$", "", str(col_name)).strip()
+    return f"{base} [{unit}]" if unit else base
+
+
+def _fmt_ai_value(value, unit="", precision=3):
+    """Compact numeric formatter for AI narrative payloads."""
+    try:
+        v = float(value)
+    except Exception:
+        return "—"
+    if not np.isfinite(v):
+        return "—"
+    if abs(v) >= 1000 or (0 < abs(v) < 0.01):
+        txt = f"{v:.{precision}g}"
+    elif abs(v) >= 100:
+        txt = f"{v:.1f}"
+    elif abs(v) >= 10:
+        txt = f"{v:.2f}"
+    else:
+        txt = f"{v:.3f}"
+    return f"{txt} {unit}".strip()
+
+def _ai_series_display(values, col_name, use_english=False):
+    """Convert a FLARE/RCS result series for AI narrative display."""
+    arr = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float)
+    name = str(col_name)
+    if "(K)" in name:
+        return ((arr - 273.15) * 9.0/5.0 + 32.0, "°F") if use_english else (arr - 273.15, "°C")
+    if "(kPa)" in name:
+        return (arr * 0.145038, "psia") if use_english else (arr, "kPa")
+    if "(kg/s)" in name:
+        return (arr * 2.20462, "lb/s") if use_english else (arr, "kg/s")
+    if "(kg)" in name:
+        return (arr * 2.20462, "lbm") if use_english else (arr, "kg")
+    if "(m/s)" in name:
+        return (arr * 3.28084, "ft/s") if use_english else (arr, "m/s")
+    if "(m)" in name:
+        return (arr * 3.28084, "ft") if use_english else (arr, "m")
+    if "(MW)" in name:
+        return arr, "MW"
+    if "(rpm)" in name:
+        return arr, "rpm"
+    if "(%)" in name:
+        return arr, "%"
+    if "(-)" in name:
+        return arr, ""
+    return arr, ""
+
+def _ai_unit_policy_text(use_english=False):
+    return (
+        "NARRATIVE UNIT POLICY: The user selected English display units. Report dimensional values in English display units: °F, psia, lbm/lb/s, ft/ft/s, and Btu/hr where applicable. Do not report SI/metric values unless they are part of a regulatory limit that is conventionally stated in those units; if an SI value is mentioned for a limit, keep the selected English value first."
+        if use_english else
+        "NARRATIVE UNIT POLICY: The user selected Metric display units. Report dimensional values in metric display units: °C, kPa, kg/kg/s, m/m/s, and W/MW where applicable. Do not report English values unless they are part of a regulatory limit that is conventionally stated in those units; if an English value is mentioned for a limit, keep the selected metric value first."
+    )
+
+
+def containment_scalar_summary(con_df, use_english=False):
     if con_df is None or con_df.empty:
         return []
     items = []
     def peak(col, fmt="{:.2f}"):
         if col in con_df.columns:
-            v = pd.to_numeric(con_df[col], errors="coerce").max()
-            if pd.notna(v):
-                return fmt.format(float(v))
-        return None
-    p = peak("Pressure [kPa]", "{:.1f}")
-    if p: items.append((p, "Peak containment pressure [kPa]", "ok"))
-    tc = peak("Gas Temp [C]", "{:.1f}")
-    if tc: items.append((tc, "Peak containment temperature [°C]", "ok"))
-    h2 = peak("H2 Concentration [vol%]", "{:.2f}")
+            vals, unit = _convert_containment_series_for_display(con_df[col], col, use_english)
+            if np.isfinite(vals).any():
+                return fmt.format(float(np.nanmax(vals))), unit
+        return None, ""
+    p, p_unit = peak("Pressure [kPa]", "{:.1f}")
+    if p: items.append((p, f"Peak containment pressure [{p_unit}]", "ok"))
+    tc, tc_unit = peak("Gas Temp [C]", "{:.1f}")
+    if tc: items.append((tc, f"Peak containment temperature [{tc_unit}]", "ok"))
+    h2, h2_unit = peak("H2 Concentration [vol%]", "{:.2f}")
     if h2:
         h2_val = float(h2)
         h2_cls = "danger" if h2_val >= 13.0 else ("warn" if h2_val >= 4.0 else "ok")
         items.append((h2, "Peak H₂ concentration [vol%]", h2_cls))
-    stm = peak("Steam Concentration [vol%]", "{:.1f}")
+    stm, stm_unit = peak("Steam Concentration [vol%]", "{:.1f}")
     if stm: items.append((stm, "Peak steam concentration [vol%]", "ok"))
-    sl = peak("Sump Level [m]", "{:.2f}")
-    if sl: items.append((sl, "Peak sump level [m]", "ok"))
+    sl, sl_unit = peak("Sump Level [m]", "{:.2f}")
+    if sl: items.append((sl, f"Peak sump level [{sl_unit}]", "ok"))
     status = containment_flammability_status(con_df)
     if status:
         cls = ("danger" if "Detonation" in status
@@ -644,20 +979,24 @@ def containment_flammability_status(con_df):
     return "Non-flammable / steam-inerted"
 
 
-def make_containment_plots(con_df, case_name=""):
+def make_containment_plots(con_df, case_name="", use_english=False):
     figs = {}
     if con_df is None or con_df.empty or "Time [s]" not in con_df.columns:
         return figs
     t_hr = pd.to_numeric(con_df["Time [s]"], errors="coerce") / 3600.0
-    def add_fig(key, ycols, title, ytitle):
+    def add_fig(key, ycols, title, ytitle_si, ytitle_eng=None):
         fig = go.Figure()
         for col in ycols:
             if col in con_df.columns:
-                fig.add_trace(go.Scatter(x=t_hr, y=pd.to_numeric(con_df[col], errors="coerce"), mode="lines", name=col))
+                yv, unit = _convert_containment_series_for_display(con_df[col], col, use_english)
+                fig.add_trace(go.Scatter(
+                    x=t_hr, y=yv, mode="lines",
+                    name=_containment_display_label(col, use_english),
+                ))
         fig.update_layout(
             title=title,
             xaxis_title="Time [hr]",
-            yaxis_title=ytitle,
+            yaxis_title=(ytitle_eng if use_english and ytitle_eng else ytitle_si),
             margin=dict(l=40, r=20, t=48, b=40),
             legend=dict(
                 x=1.0, y=1.0,
@@ -668,36 +1007,119 @@ def make_containment_plots(con_df, case_name=""):
             ),
         )
         figs[key] = fig
-    add_fig("pressure", ["Pressure [kPa]"], "Containment Pressure", "Pressure [kPa]")
-    add_fig("temperature", ["Gas Temp [C]", "Wall Temp Inner [C]", "Concrete Surface Temp [C]", "Wet Floor/Sump Temp [C]"], "Containment Temperatures", "Temperature [°C]")
-    add_fig("liquid", ["Liquid Volume [m3]", "Sump Level [m]"], "Accumulated Liquid / Sump Level", "Volume [m³] / Level [m]")
+    add_fig("pressure", ["Pressure [kPa]"], "Containment Pressure", "Pressure [kPa]", "Pressure [psia]")
+    add_fig("temperature", ["Gas Temp [C]", "Wall Temp Inner [C]", "Concrete Surface Temp [C]", "Wet Floor/Sump Temp [C]"], "Containment Temperatures", "Temperature [°C]", "Temperature [°F]")
+    add_fig("liquid", ["Liquid Volume [m3]", "Sump Level [m]"], "Accumulated Liquid / Sump Level", "Volume [m³] / Level [m]", "Volume [ft³] / Level [ft]")
     add_fig("composition", ["H2 Concentration [vol%]", "Steam Concentration [vol%]"], "Gas Composition", "Concentration [vol%]")
-    add_fig("heat", ["Wall Heat Removal [W]", "Wet Floor Heat Removal [W]", "Dry Floor Heat Removal [W]", "Spray Heat Removal [W]", "LHSI Heat Removal [W]"], "Heat Removal", "Heat Removal [W]")
-    add_fig("masses", ["Air Mass [kg]", "Steam in Gas [kg]", "H2 Mass [kg]", "Condensed Mass [kg]"], "Containment Mass Inventories", "Mass [kg]")
+    add_fig("heat", ["Wall Heat Removal [W]", "Wet Floor Heat Removal [W]", "Dry Floor Heat Removal [W]", "Spray Heat Removal [W]", "LHSI Heat Removal [W]"], "Heat Removal", "Heat Removal [W]", "Heat Removal [Btu/hr]")
+    add_fig("masses", ["Air Mass [kg]", "Steam in Gas [kg]", "H2 Mass [kg]", "Condensed Mass [kg]"], "Containment Mass Inventories", "Mass [kg]", "Mass [lbm]")
     # The Shapiro diagram is generated by FLARECON as a PNG because the
     # flammability-envelope geometry is clearer and more maintainable in the
     # matplotlib implementation used by the containment module.
     return figs
 
 
-def _containment_lines_for_narrative(case_name, run_dir=None):
+def _containment_lines_for_narrative(case_name, run_dir=None, use_english=False):
     con_df = load_containment_results(case_name, run_dir=run_dir)
     if con_df is None or con_df.empty:
         return []
     lines = ["CONTAINMENT RESPONSE DATA FOR NARRATIVE:"]
-    def add_peak(col, label, unit):
+    def add_peak(col, label):
         if col in con_df.columns and "Time [s]" in con_df.columns:
-            v = pd.to_numeric(con_df[col], errors="coerce")
-            if v.notna().any():
-                idx = v.idxmax()
-                lines.append(f"{label}: peak {float(v.loc[idx]):.3g} {unit} at t={float(con_df['Time [s]'].loc[idx]):.1f} s")
-    add_peak("Pressure [kPa]", "Containment pressure", "kPa")
-    add_peak("Gas Temp [C]", "Containment gas temperature", "°C")
-    add_peak("H2 Concentration [vol%]", "Hydrogen concentration", "vol%")
-    add_peak("Steam Concentration [vol%]", "Steam concentration", "vol%")
+            raw = pd.to_numeric(con_df[col], errors="coerce")
+            vals, unit = _convert_containment_series_for_display(raw, col, use_english)
+            if np.isfinite(vals).any():
+                idx = int(np.nanargmax(vals))
+                time_val = float(con_df["Time [s]"].iloc[idx])
+                lines.append(f"{label}: peak {_fmt_ai_value(vals[idx], unit)} at t={time_val:.1f} s")
+    add_peak("Pressure [kPa]", "Containment pressure")
+    add_peak("Gas Temp [C]", "Containment gas temperature")
+    add_peak("H2 Concentration [vol%]", "Hydrogen concentration")
+    add_peak("Steam Concentration [vol%]", "Steam concentration")
     status = containment_flammability_status(con_df)
     if status:
         lines.append(f"Hydrogen flammability status: {status}")
+    return lines
+
+
+
+def _regulatory_fom_lines_for_narrative(df, case_name, run_dir=None, use_english=False):
+    """Return compact regulatory-FOM lines for the AI event narrative."""
+    lines = ["REGULATORY FIGURES OF MERIT AND DESIGN-CRITERIA CONTEXT:"]
+    try:
+        t = pd.to_numeric(df["Time (s)"], errors="coerce") if "Time (s)" in df.columns else pd.Series(range(len(df)))
+        def _series(col):
+            if col not in df.columns:
+                return None
+            return pd.to_numeric(df[col], errors="coerce")
+
+        hpct = _series("Hot Pin Clad Temp (K)")
+        if hpct is not None and hpct.notna().any():
+            idx = hpct.idxmax(); pct_k = float(hpct.loc[idx]); pct_c = pct_k - 273.15; pct_f = pct_c * 9.0 / 5.0 + 32.0
+            status = "PASS" if pct_k < 1477.0 else "EXCEEDS LIMIT"
+            if use_english:
+                lines.append(f"10 CFR 50.46 PCT FOM: peak hot-pin clad temperature {pct_f:.0f} °F at t={float(t.loc[idx]):.1f} s; 2200 °F limit status: {status}.")
+            else:
+                lines.append(f"10 CFR 50.46 PCT FOM: peak hot-pin clad temperature {pct_c:.1f} °C at t={float(t.loc[idx]):.1f} s; 1204 °C (2200 °F) limit status: {status}.")
+        ecr = _series("Zr Oxidation Mean Oxidizing Rod ECR (%)")
+        if ecr is not None and ecr.notna().any():
+            lines.append(f"10 CFR 50.46 oxidation FOM: peak mean-oxidizing-rod ECR {float(ecr.max()):.4g}% compared with the 17% cladding oxidation criterion.")
+        h2 = _series("H2 Generated (kg)")
+        h2_full = _series("H2 Full Core Cladding Reaction (kg)")
+        if h2 is not None and h2.notna().any():
+            v = float(h2.max())
+            if h2_full is not None and h2_full.notna().any() and float(h2_full.max()) > 0.0:
+                _hv, _hu = _ai_series_display([v], "H2 Generated (kg)", use_english)
+                lines.append(f"10 CFR 50.46 hydrogen-generation FOM: peak calculated H2 generation {_fmt_ai_value(_hv[0], _hu)}, equivalent to {100.0*v/float(h2_full.max()):.4g}% of full-core cladding reaction basis.")
+            else:
+                _hv, _hu = _ai_series_display([v], "H2 Generated (kg)", use_english)
+                lines.append(f"10 CFR 50.46 hydrogen-generation FOM: peak calculated H2 generation {_fmt_ai_value(_hv[0], _hu)}.")
+
+        dn = _series("DNBR")
+        if dn is not None:
+            dn_valid = dn.replace(0, np.nan).dropna()
+            if len(dn_valid):
+                idx = dn_valid.idxmin(); mdnbr = float(dn_valid.loc[idx])
+                status = "DNB/dryout predicted" if mdnbr < 1.0 else "bounded above DNB/dryout threshold"
+                lines.append(f"Non-LOCA SAFDL / fuel-design FOM: minimum DNBR or dryout margin {mdnbr:.4g} at t={float(t.loc[idx]):.1f} s; {status}.")
+        pf = _series("Hot Pin Fuel Temp (K)")
+        if pf is not None and pf.notna().any():
+            idx = pf.idxmax()
+            _pfv, _pfu = _ai_series_display([float(pf.loc[idx])], "Hot Pin Fuel Temp (K)", use_english)
+            lines.append(f"Non-LOCA fuel-temperature FOM: peak hot-pin fuel temperature {_fmt_ai_value(_pfv[0], _pfu)} at t={float(t.loc[idx]):.1f} s.")
+        pr = _series("RCS Pressure (kPa)")
+        if pr is not None and pr.notna().any():
+            _prv, _pru = _ai_series_display([float(pr.max()), float(pr.min())], "RCS Pressure (kPa)", use_english)
+            lines.append(f"RCS pressure-boundary FOM: peak RCS pressure {_fmt_ai_value(_prv[0], _pru)}; minimum RCS pressure {_fmt_ai_value(_prv[1], _pru)}.")
+
+        con_df = load_containment_results(case_name, run_dir=run_dir)
+        if con_df is not None and not con_df.empty:
+            ct = pd.to_numeric(con_df["Time [s]"], errors="coerce") if "Time [s]" in con_df.columns else pd.Series(range(len(con_df)))
+            if "Pressure [kPa]" in con_df.columns:
+                cp = pd.to_numeric(con_df["Pressure [kPa]"], errors="coerce")
+                if cp.notna().any():
+                    idx = cp.idxmax()
+                    _cpv, _cpu = _convert_containment_series_for_display([float(cp.loc[idx])], "Pressure [kPa]", use_english)
+                    lines.append(f"Containment pressure FOM: peak containment pressure {_fmt_ai_value(_cpv[0], _cpu)} at t={float(ct.loc[idx]):.1f} s; compare to the applicable containment design pressure if specified.")
+            if "H2 Concentration [vol%]" in con_df.columns:
+                ch2 = pd.to_numeric(con_df["H2 Concentration [vol%]"], errors="coerce")
+                if ch2.notna().any():
+                    idx = ch2.idxmax(); status = containment_flammability_status(con_df) or "not evaluated"
+                    lines.append(f"10 CFR 50.44 combustible-gas FOM: peak containment H2 concentration {float(ch2.loc[idx]):.3g} vol% at t={float(ct.loc[idx]):.1f} s; reference levels are 4 vol% LFL and about 8 vol% detonable threshold; FLARECON status: {status}.")
+
+        dose_rows = load_dose(case_name, run_dir=run_dir)
+        if dose_rows:
+            bits = [f"{r[0]} TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in dose_rows if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5]
+            if bits:
+                lines.append("Radiological dose FOMs for 10 CFR 50.34(a)(1), 10 CFR 50.67, 10 CFR 100.11, and 10 CFR 100.21(c)(2), as applicable: " + "; ".join(bits))
+        isp_rows = load_iodine_spike(case_name, run_dir=run_dir)
+        if isp_rows:
+            bits = [f"{r[0]} iodine-spike TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in isp_rows if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5]
+            if bits:
+                lines.append("Iodine-spike dose FOMs: " + "; ".join(bits))
+        lines.append("GDC conclusion priority: explain how the accident sequence and FOMs support or challenge the applicable GDC safety functions: reactivity control, RCPB protection, ECCS/core cooling, containment integrity, combustible-gas control, and offsite/control-room dose control.")
+    except Exception as e:
+        lines.append(f"Regulatory FOM extraction warning: {e}")
     return lines
 
 
@@ -2323,16 +2745,18 @@ with st.sidebar:
             key="sim_all_final_report_detail",
             help=(
                 "Controls the detail level for the AI event narratives generated for every case in the final report. "
-                "This works like the AI Event Narrative detail slider in the Results panel: lower values produce brief summaries; "
-                "higher values produce more detailed technical narratives."
+                "The slider has 21 detents; each 0.05 increment maps to a distinct target word count, "
+                "from ~300 words at 0.00 to ~5300 words at 1.00."
             ),
         )
-        if _final_report_detail < 0.25:
-            st.caption("Final Report narrative detail: **Brief**")
-        elif _final_report_detail < 0.75:
-            st.caption("Final Report narrative detail: **Standard**")
-        else:
-            st.caption("Final Report narrative detail: **Detailed**")
+        _fr_detail_level = _narrative_detail_level(_final_report_detail)
+        _fr_word_target = _narrative_detail_word_target(_final_report_detail)
+        _fr_word_lo, _fr_word_hi = _narrative_detail_word_range(_final_report_detail)
+        st.caption(
+            f"Final Report narrative detail: **{_narrative_detail_descriptor(_final_report_detail)}** "
+            f"— detent {_fr_detail_level:.2f}, target ~{_fr_word_target:,} words "
+            f"(acceptable range {_fr_word_lo:,}–{_fr_word_hi:,})."
+        )
     if final_report_flag and _fast_mode:
         st.caption("Final Report mode overrides Fast mode so figures and plots are generated.")
     run_all_btn = st.button(
@@ -2357,7 +2781,15 @@ with st.sidebar:
 
 # ── Main panel ─────────────────────────────────────────────────────────────────
 
-st.markdown(f"## {selected}")
+# Display the active results case, not just the sidebar-selected input case.
+# Loading a previous run can intentionally make these differ; the page title
+# should follow the loaded/run output shown in the Run and Results tabs.
+_display_case = st.session_state.get("last_case") or selected
+st.markdown(f"## {_display_case}")
+if _display_case != selected:
+    _display_dir = st.session_state.get("run_dir")
+    _dir_txt = f" from `{Path(_display_dir).name}`" if _display_dir else ""
+    st.caption(f"Loaded results for `{_display_case}`{_dir_txt}. Sidebar input case remains `{selected}`.")
 
 tab_run, tab_results, tab_params = st.tabs(
     ["▶  Run", "📊  Results", "⚙  Input Parameters"]
@@ -2662,7 +3094,7 @@ with tab_results:
             st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
             tab_con = st.tabs(["🏢  Containment Response"])[0]
             with tab_con:
-                con_metrics = containment_scalar_summary(con_df)
+                con_metrics = containment_scalar_summary(con_df, use_english=_use_english)
                 if con_metrics:
                     html_tiles = '<div class="metric-grid">'
                     for item in con_metrics:
@@ -2677,7 +3109,7 @@ with tab_results:
                     html_tiles += '</div>'
                     st.markdown(html_tiles, unsafe_allow_html=True)
                 try:
-                    con_figs = make_containment_plots(con_df, run_case)
+                    con_figs = make_containment_plots(con_df, run_case, use_english=_use_english)
                 except Exception as _ce:
                     st.error(f"Containment plot generation error: {_ce}")
                     con_figs = {}
@@ -2692,840 +3124,6 @@ with tab_results:
                 if _shapiro_png.exists():
                     st.markdown("#### Shapiro Steam–Air–Hydrogen Flammability Diagram")
                     st.image(str(_shapiro_png), use_container_width=True)
-
-        # ── AI Event Narrative ────────────────────────────────────────────────
-        st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
-        with st.expander("🤖  AI Event Narrative", expanded=True):
-            if _BUDDY_B64:
-                st.markdown(
-                    f"<div style='display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;'>"
-                    f"<img src='{_BUDDY_B64}' style='height:2.2rem;width:2.2rem;border-radius:50%;object-fit:cover;flex-shrink:0;'/>"
-                    f"<span style='font-weight:700;font-size:1rem;'>FLARE Buddy — AI Event Narrative</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            # Re-read the key each render so adding/editing flare_config.txt
-            # during a FLARE session is recognized after a normal Streamlit rerun.
-            _current_api_key = load_api_key()
-            if not _current_api_key:
-                st.warning(
-                    "No API key found. Add `ANTHROPIC_API_KEY = sk-ant-...` "
-                    "to `runtime/flare_config.txt` (or `Runtime/flare_config.txt`) in the FLARE folder."
-                )
-            else:
-                # Build a structured data summary to ground the narrative
-                def _build_narrative_prompt(df, case_name):
-                    lines = [f"Case: {case_name}"]
-
-                    t  = df["Time (s)"]
-                    dt = t.diff().fillna(0)
-                    t0, tf = float(t.iloc[0]), float(t.iloc[-1])
-                    lines.append(f"Simulation span: {t0:.1f} – {tf:.1f} s")
-
-                    if "RCS Pressure (kPa)" in df.columns:
-                        p = df["RCS Pressure (kPa)"]
-                        lines.append(f"RCS pressure: initial {p.iloc[0]:.0f} kPa, "
-                                     f"min {p.min():.0f} kPa at t={t.iloc[p.idxmin()]:.1f} s, "
-                                     f"final {p.iloc[-1]:.0f} kPa")
-
-                    if "RCS Temperature (K)" in df.columns:
-                        T = df["RCS Temperature (K)"] - 273.15
-                        lines.append(f"RCS temperature: initial {T.iloc[0]:.1f} °C, "
-                                     f"peak {T.max():.1f} °C at t={t.iloc[T.idxmax()]:.1f} s")
-
-                    if "RK Total Power (MW)" in df.columns:
-                        pw = df["RK Total Power (MW)"]
-                        lines.append(f"Core power: initial {pw.iloc[0]:.1f} MW, "
-                                     f"peak {pw.max():.1f} MW, "
-                                     f"final {pw.iloc[-1]:.3f} MW")
-
-                    if "Vessel Level (m)" in df.columns:
-                        ll = df["Vessel Level (m)"]
-                        lines.append(f"Vessel level: initial {ll.iloc[0]:.2f} m, "
-                                     f"min {ll.min():.2f} m at t={t.iloc[ll.idxmin()]:.1f} s, "
-                                     f"final {ll.iloc[-1]:.2f} m")
-
-                    if "Pump Mass Flow (kg/s)" in df.columns:
-                        mf  = df["Pump Mass Flow (kg/s)"]
-                        mf0 = float(mf.iloc[0])
-                        lines.append(f"Pump flow: initial {mf0:.0f} kg/s, "
-                                     f"final {mf.iloc[-1]:.1f} kg/s")
-                        if mf0 > 0:
-                            trip_idx = (mf < 0.01 * mf0).idxmax()
-                            if mf.iloc[trip_idx] < 0.01 * mf0:
-                                lines.append(f"RCP flow reaches zero at t={t.iloc[trip_idx]:.1f} s")
-
-                    # Accumulator — enriched
-                    if "Accumulator Flow (kg/s)" in df.columns:
-                        acc = df["Accumulator Flow (kg/s)"]
-                        if acc.max() > 0:
-                            active = acc > 0.1
-                            t_start = float(t[active].iloc[0])  if active.any() else None
-                            t_end   = float(t[active].iloc[-1]) if active.any() else None
-                            duration = (t_end - t_start) if (t_start and t_end) else 0
-                            total_kg = float((acc * dt).sum())
-                            depleted = False
-                            if "Accumulator Level (m)" in df.columns:
-                                al = df["Accumulator Level (m)"]
-                                depleted = bool(al[active.shift(-1, fill_value=False) == False].min() < 0.05) if active.any() else False
-                            lines.append(
-                                f"Accumulator injection: start t={t_start:.1f} s, "
-                                f"end t={t_end:.1f} s, duration {duration:.0f} s, "
-                                f"peak {acc.max():.0f} kg/s, "
-                                f"total injected ≈{total_kg:.0f} kg"
-                                + (", accumulator FULLY DEPLETED" if depleted else "")
-                            )
-
-                    # LPSI — enriched
-                    if "LPSI Flow (kg/s)" in df.columns:
-                        lpsi = df["LPSI Flow (kg/s)"]
-                        if lpsi.max() > 0:
-                            active = lpsi > 0.1
-                            t_start = float(t[active].iloc[0]) if active.any() else None
-                            t_end   = float(t[active].iloc[-1]) if active.any() else None
-                            total_kg = float((lpsi * dt).sum())
-                            lines.append(
-                                f"LPSI injection: start t={t_start:.1f} s, "
-                                f"end t={t_end:.1f} s, "
-                                f"peak {lpsi.max():.0f} kg/s, "
-                                f"total injected ≈{total_kg:.0f} kg"
-                            )
-
-                    # HPSI — enriched
-                    if "HPSI Flow (kg/s)" in df.columns:
-                        hpsi = df["HPSI Flow (kg/s)"]
-                        if hpsi.max() > 0:
-                            active = hpsi > 0.1
-                            t_start = float(t[active].iloc[0]) if active.any() else None
-                            t_end   = float(t[active].iloc[-1]) if active.any() else None
-                            total_kg = float((hpsi * dt).sum())
-                            lines.append(
-                                f"HPSI injection: start t={t_start:.1f} s, "
-                                f"end t={t_end:.1f} s, "
-                                f"peak {hpsi.max():.0f} kg/s, "
-                                f"total injected ≈{total_kg:.0f} kg"
-                            )
-
-                    # CVCS
-                    if "CVCS Makeup (kg/s)" in df.columns:
-                        mu = df["CVCS Makeup (kg/s)"]
-                        if mu.max() > 0:
-                            active = mu > 0.1
-                            t_start = float(t[active].iloc[0]) if active.any() else None
-                            lines.append(f"CVCS makeup/letdown: activates t={t_start:.1f} s, "
-                                         f"flow {mu.max():.1f} kg/s")
-                            if "RCS Boron (ppm)" in df.columns:
-                                bn = df["RCS Boron (ppm)"]
-                                lines.append(f"RCS boron: initial {bn.iloc[0]:.0f} ppm, "
-                                             f"final {bn.iloc[-1]:.0f} ppm "
-                                             f"(Δ{bn.iloc[-1]-bn.iloc[0]:+.0f} ppm)")
-
-                    if "DNBR" in df.columns:
-                        dn = df["DNBR"].replace(0, np.nan)
-                        mdnbr = dn.min()
-                        if not np.isnan(mdnbr):
-                            lines.append(f"MDNBR: {mdnbr:.3f} at t={t.iloc[dn.idxmin()]:.1f} s"
-                                         + (" — DNB OCCURRED" if mdnbr < 1.0 else ""))
-
-                    if "Clad Surface Temp (K)" in df.columns:
-                        tc = df["Clad Surface Temp (K)"] - 273.15
-                        lines.append(f"Avg clad temp: initial {tc.iloc[0]:.1f} °C, "
-                                     f"peak {tc.max():.1f} °C at t={t.iloc[tc.idxmax()]:.1f} s")
-
-                    if "Hot Pin Clad Temp (K)" in df.columns:
-                        thc = df["Hot Pin Clad Temp (K)"] - 273.15
-                        lines.append(f"Hot pin clad temp: peak {thc.max():.1f} °C "
-                                     f"at t={t.iloc[thc.idxmax()]:.1f} s")
-
-                    if "Hot Pin Fuel Temp (K)" in df.columns:
-                        thf = df["Hot Pin Fuel Temp (K)"] - 273.15
-                        lines.append(f"Hot pin fuel temp: peak {thf.max():.1f} °C "
-                                     f"at t={t.iloc[thf.idxmax()]:.1f} s")
-
-                    if "Clad HTC (W/m2-K)" in df.columns:
-                        htc = df["Clad HTC (W/m2-K)"]
-                        lines.append(f"Core HTC: initial {htc.iloc[0]:.0f} W/m²K, "
-                                     f"min {htc.min():.0f} W/m²K at t={t.iloc[htc.idxmin()]:.1f} s")
-
-                    if "SG Heat Removal (MW)" in df.columns:
-                        sg = df["SG Heat Removal (MW)"]
-                        if sg.max() > 0:
-                            lines.append(f"SG heat removal: peak {sg.max():.1f} MW "
-                                         f"at t={t.iloc[sg.idxmax()]:.1f} s")
-
-                    if "PORV Mass Flow (kg/s)" in df.columns:
-                        pv = df["PORV Mass Flow (kg/s)"]
-                        if pv.max() > 0:
-                            active = pv > 0.01
-                            t_start = float(t[active].iloc[0]) if active.any() else None
-                            t_end   = float(t[active].iloc[-1]) if active.any() else None
-                            lines.append(f"PORV: opens t={t_start:.1f} s, "
-                                         f"last open t={t_end:.1f} s, "
-                                         f"peak {pv.max():.1f} kg/s")
-
-                    if "Pressurizer Level (m)" in df.columns:
-                        pzl = df["Pressurizer Level (m)"].replace(0, np.nan)
-                        if pzl.notna().any():
-                            lines.append(f"Pressurizer level: initial {pzl.iloc[0]:.2f} m, "
-                                         f"min {pzl.min():.2f} m at t={t.iloc[pzl.idxmin()]:.1f} s, "
-                                         f"final {pzl.iloc[-1]:.2f} m")
-
-                    for col, label in [
-                        ("Rod Failures DNB (est.)",     "Rod failures (DNB)"),
-                        ("Rod Failures Gap (est.)",     "Rod failures (gap release)"),
-                        ("Rod Failures EarlyIV (est.)", "Rod failures (early in-vessel)"),
-                    ]:
-                        if col in df.columns and df[col].max() > 0:
-                            lines.append(f"{label}: {int(df[col].max())} rods")
-
-                    if "Equilibrium Quality (-)" in df.columns:
-                        xeq = df["Equilibrium Quality (-)"]
-                        lines.append(f"Equilibrium quality: min {xeq.min():.3f}, "
-                                     f"max {xeq.max():.3f}")
-
-                    # Narrative scope and acceptance-criteria guardrails
-                    try:
-                        _pwr0 = float(df["RK Total Power (MW)"].iloc[0]) if "RK Total Power (MW)" in df.columns else 0.0
-                        _sg0 = float(df["SG Heat Removal (MW)"].iloc[0]) if "SG Heat Removal (MW)" in df.columns else 0.0
-                        if _pwr0 > 0 and _sg0 < 0.5 * _pwr0:
-                            lines.append("Initial-condition check: initial SG heat removal is less than 50% of initial reactor power; do not describe this as normal full-power steady-state operation unless other data support that conclusion.")
-                    except Exception:
-                        pass
-
-                    try:
-                        _pct_limit_K = 1477.0
-                        _pct = None
-                        if "Hot Pin Clad Temp (K)" in df.columns:
-                            _pct = float(pd.to_numeric(df["Hot Pin Clad Temp (K)"], errors="coerce").max())
-                            if _pct >= _pct_limit_K:
-                                lines.append(f"10 CFR 50.46 PCT check: peak hot-pin clad temperature {_pct:.1f} K exceeds the 1477 K limit; state this as a limit exceedance.")
-                            else:
-                                lines.append(f"10 CFR 50.46 PCT check: peak hot-pin clad temperature {_pct:.1f} K is below the 1477 K limit.")
-                    except Exception:
-                        pass
-
-                    try:
-                        _ecr = float(pd.to_numeric(df.get("Zr Oxidation Mean Oxidizing Rod ECR (%)", pd.Series([0.0])), errors="coerce").fillna(0.0).max())
-                        _h2 = float(pd.to_numeric(df.get("H2 Generated (kg)", pd.Series([0.0])), errors="coerce").fillna(0.0).max())
-                        _rod_cols = ["Rod Failures DNB (est.)", "Rod Failures Gap (est.)", "Rod Failures EarlyIV (est.)"]
-                        _rods = 0.0
-                        for _c in _rod_cols:
-                            if _c in df.columns:
-                                _rods = max(_rods, float(pd.to_numeric(df[_c], errors="coerce").fillna(0.0).max()))
-                        if _ecr <= 0.0 and _h2 <= 0.0 and _rods <= 0.0:
-                            lines.append("Fuel-integrity scope: ECR, hydrogen generation, and rod failures are zero; collapse fuel-integrity discussion to one concise sentence.")
-                        if (case_name or "").lower().endswith("null") or (_ecr <= 0.0 and _h2 <= 0.0 and _rods <= 0.0 and _pct is not None and _pct < 900.0):
-                            lines.append("Narrative scope: treat this as a verification/null or benign case; use a short three-section structure rather than a full accident narrative.")
-                    except Exception:
-                        pass
-
-                    try:
-                        if "DNBR" in df.columns:
-                            _dn_final = pd.to_numeric(df["DNBR"], errors="coerce").iloc[-1]
-                            if pd.isna(_dn_final):
-                                lines.append("DNBR interpretation: final DNBR is NaN because the DNB correlation is not applicable under the final conditions; this is expected behavior, not a numerical convergence issue.")
-                    except Exception:
-                        pass
-
-                    _st_lines = _source_term_lines_for_narrative(case_name, run_dir=_run_dir)
-                    if _st_lines:
-                        lines.append("")
-                        lines.append("SOURCE TERM AND RADIOLOGICAL DATA FOR NARRATIVE:")
-                        lines.extend(_st_lines)
-
-                    _con_lines = _containment_lines_for_narrative(case_name, run_dir=_run_dir)
-                    if _con_lines:
-                        lines.append("")
-                        lines.extend(_con_lines)
-
-                    return "\n".join(lines)
-
-                def _build_sequence_of_events(df, filter_keywords=None):
-                    """Detect key timestamped events from the data for the SOE table."""
-                    t   = df["Time (s)"]
-                    dt  = t.diff().fillna(0)
-                    soe = []
-
-                    def first_time(mask):
-                        idx = mask.idxmax() if mask.any() else None
-                        return float(t.iloc[idx]) if idx is not None and mask.any() else None
-
-                    def last_time(mask):
-                        idxs = t[mask]
-                        return float(idxs.iloc[-1]) if len(idxs) > 0 else None
-
-                    # Simulation start
-                    soe.append((float(t.iloc[0]), "Simulation start — reactor at full power"))
-
-                    # Reactor power events
-                    if "RK Total Power (MW)" in df.columns:
-                        pw  = df["RK Total Power (MW)"]
-                        pw0 = float(pw.iloc[0])
-                        op  = first_time(pw > 1.05 * pw0)
-                        scr = first_time((t > float(t.iloc[0]) + 0.5) & (pw < 0.5 * pw0))
-                        if op is not None and (scr is None or op < scr):
-                            soe.append((op, f"High-flux trip setpoint reached ({pw.max():.0f} MW peak)"))
-                        if scr is not None:
-                            soe.append((scr, f"Reactor scram — power below 50% rated"))
-
-                    # Pump coastdown
-                    if "Pump Mass Flow (kg/s)" in df.columns:
-                        mf  = df["Pump Mass Flow (kg/s)"]
-                        mf0 = float(mf.iloc[0])
-                        if mf0 > 0:
-                            t50 = first_time((t > 0.5) & (mf < 0.5 * mf0))
-                            t00 = first_time((t > 0.5) & (mf < 0.01 * mf0))
-                            if t50: soe.append((t50, "RCP coastdown — pump flow below 50% rated"))
-                            if t00: soe.append((t00, "RCP flow effectively zero"))
-
-                    # PORV
-                    if "PORV Mass Flow (kg/s)" in df.columns:
-                        pv = df["PORV Mass Flow (kg/s)"]
-                        if pv.max() > 0.01:
-                            tp = first_time(pv > 0.01)
-                            tc = last_time(pv > 0.01)
-                            if tp: soe.append((tp, f"PORV opens ({pv.max():.1f} kg/s peak)"))
-                            if tc and tc != tp:
-                                soe.append((tc, "PORV last open — RCS pressure stabilising"))
-
-                    # RCS pressure min
-                    if "RCS Pressure (kPa)" in df.columns:
-                        p = df["RCS Pressure (kPa)"]
-                        soe.append((float(t.iloc[p.idxmin()]),
-                                    f"Minimum RCS pressure — {p.min():.0f} kPa"))
-
-                    # Accumulator — start, depletion, end
-                    if "Accumulator Flow (kg/s)" in df.columns:
-                        acc    = df["Accumulator Flow (kg/s)"]
-                        active = acc > 0.1
-                        if active.any():
-                            ta_start = first_time(active)
-                            ta_end   = last_time(active)
-                            total_kg = float((acc * dt).sum())
-                            soe.append((ta_start,
-                                        f"Accumulator injection begins ({acc.max():.0f} kg/s peak)"))
-                            # Depletion: level reaches near-zero
-                            depleted = False
-                            if "Accumulator Level (m)" in df.columns:
-                                al = df["Accumulator Level (m)"]
-                                depl_mask = active & (al < 0.05)
-                                if depl_mask.any():
-                                    td = first_time(depl_mask)
-                                    soe.append((td,
-                                        f"Accumulator empty — injection ends "
-                                        f"(≈{total_kg:.0f} kg total injected)"))
-                                    depleted = True
-                            if not depleted and ta_end and ta_end != ta_start:
-                                soe.append((ta_end,
-                                    f"Accumulator injection ends "
-                                    f"(≈{total_kg:.0f} kg total injected)"))
-
-                    # LPSI
-                    if "LPSI Flow (kg/s)" in df.columns:
-                        lpsi   = df["LPSI Flow (kg/s)"]
-                        active = lpsi > 0.1
-                        if active.any():
-                            total_kg = float((lpsi * dt).sum())
-                            soe.append((first_time(active),
-                                        f"LPSI injection begins ({lpsi.max():.0f} kg/s peak)"))
-                            tl_end = last_time(active)
-                            if tl_end and tl_end != first_time(active):
-                                soe.append((tl_end,
-                                            f"LPSI injection ends (≈{total_kg:.0f} kg total)"))
-
-                    # HPSI
-                    if "HPSI Flow (kg/s)" in df.columns:
-                        hpsi   = df["HPSI Flow (kg/s)"]
-                        active = hpsi > 0.1
-                        if active.any():
-                            total_kg = float((hpsi * dt).sum())
-                            soe.append((first_time(active),
-                                        f"HPSI injection begins ({hpsi.max():.0f} kg/s peak)"))
-
-                    # CVCS
-                    if "CVCS Makeup (kg/s)" in df.columns:
-                        mu = df["CVCS Makeup (kg/s)"]
-                        if mu.max() > 0.1:
-                            soe.append((first_time(mu > 0.1),
-                                        f"CVCS makeup/letdown activates ({mu.max():.1f} kg/s)"))
-
-                    # Boron dilution trip
-                    if "RCS Boron (ppm)" in df.columns:
-                        bn  = df["RCS Boron (ppm)"]
-                        bn0 = float(bn.iloc[0])
-                        if bn0 > 0 and bn.min() < 0.95 * bn0:
-                            td = first_time(bn < 0.95 * bn0)
-                            soe.append((td,
-                                        f"RCS boron below 95% initial "
-                                        f"({bn0:.0f}→{bn.min():.0f} ppm)"))
-
-                    # DNB
-                    if "DNBR" in df.columns:
-                        dn = df["DNBR"].replace(0, np.nan)
-                        if dn.min() < 1.0:
-                            soe.append((first_time(dn < 1.0),
-                                        f"DNB — DNBR drops below 1.0 (min {dn.min():.3f})"))
-
-                    # Vessel level min and recovery
-                    if "Vessel Level (m)" in df.columns:
-                        ll   = df["Vessel Level (m)"]
-                        ll0  = float(ll.iloc[0])
-                        tidx = ll.idxmin()
-                        soe.append((float(t.iloc[tidx]),
-                                    f"Minimum vessel level — {ll.min():.2f} m"))
-                        # Recovery: level recovers to 50% of initial after minimum
-                        recov = (t > float(t.iloc[tidx])) & (ll > 0.5 * ll0)
-                        tr = first_time(recov)
-                        if tr:
-                            soe.append((tr, f"Vessel level recovers to 50% initial ({0.5*ll0:.2f} m)"))
-
-                    # Peak fuel temperature
-                    if "Hot Pin Fuel Temp (K)" in df.columns:
-                        thf = df["Hot Pin Fuel Temp (K)"] - 273.15
-                        soe.append((float(t.iloc[thf.idxmax()]),
-                                    f"Peak hot pin fuel temperature — {thf.max():.0f} °C"))
-
-                    # Peak clad temperature
-                    if "Hot Pin Clad Temp (K)" in df.columns:
-                        thc = df["Hot Pin Clad Temp (K)"] - 273.15
-                        soe.append((float(t.iloc[thc.idxmax()]),
-                                    f"Peak hot pin clad temperature — {thc.max():.0f} °C"))
-                    elif "Clad Surface Temp (K)" in df.columns:
-                        tc3 = df["Clad Surface Temp (K)"] - 273.15
-                        soe.append((float(t.iloc[tc3.idxmax()]),
-                                    f"Peak average clad temperature — {tc3.max():.0f} °C"))
-
-                    # Pressurizer level min
-                    if "Pressurizer Level (m)" in df.columns:
-                        pzl = df["Pressurizer Level (m)"].replace(0, np.nan)
-                        if pzl.notna().any() and pzl.min() < float(pzl.iloc[0]) * 0.9:
-                            soe.append((float(t.iloc[pzl.idxmin()]),
-                                        f"Minimum pressurizer level — {pzl.min():.2f} m"))
-
-                    # End of simulation
-                    soe.append((float(t.iloc[-1]), "End of simulation"))
-
-                    # Sort and deduplicate (remove identical times keeping first)
-                    soe.sort(key=lambda x: x[0])
-                    seen = set()
-                    soe_dedup = []
-                    for ts, desc in soe:
-                        key = round(ts, 1)
-                        if key not in seen:
-                            seen.add(key)
-                            soe_dedup.append((ts, desc))
-                    soe = soe_dedup
-
-                    # Filter for Brief mode
-                    if filter_keywords:
-                        soe = [(ts, desc) for ts, desc in soe
-                               if any(kw.lower() in desc.lower()
-                                      for kw in filter_keywords)]
-
-                    # Build markdown table
-                    table  = "\n\n---\n\n**Sequence of Events**\n\n"
-                    table += "| Time (s) | Event |\n"
-                    table += "|---:|:------|\n"
-                    for ts, desc in soe:
-                        table += f"| {ts:.1f} | {desc} |\n"
-                    return table
-                    table += "|---:|:------|\n"
-                    for ts, desc in soe:
-                        table += f"| {ts:.1f} | {desc} |\n"
-                    return table
-
-                _narrative_key = f"narrative_{run_case}"
-                _tables_key    = f"tables_{run_case}"
-                _tables_only_key = f"tables_only_{run_case}"
-                if _narrative_key not in st.session_state:
-                    st.session_state[_narrative_key] = None
-                if _tables_key not in st.session_state:
-                    st.session_state[_tables_key] = None
-                if _tables_only_key not in st.session_state:
-                    st.session_state[_tables_only_key] = False
-
-                _detail_val = st.slider(
-                    "Detail level", min_value=0.0, max_value=1.0, value=0.5,
-                    step=0.05,
-                    key="narrative_detail",
-                    help="0 = Brief summary  |  0.5 = Standard  |  1.0 = Comprehensive analysis",
-                )
-                # Map continuous 0–1 to label and parameters
-                if _detail_val < 0.25:
-                    _detail_label = "Brief"
-                elif _detail_val < 0.75:
-                    _detail_label = "Standard"
-                else:
-                    _detail_label = "Detailed"
-                st.caption(f"**{_detail_label}**")
-
-                # Interpolate API response budget.  The previous 300–2048 token
-                # range could truncate reports even at high detail, especially once
-                # source-term, dose, and FLARECON summaries are included.
-                _max_tokens = int(1500 + _detail_val * (8000 - 1500))
-
-                # Interpolate paragraph count
-                _para_min = max(1, round(1 + _detail_val * 7))   # 1 at 0 → 8 at 1
-                _para_max = _para_min + 1
-                _paragraphs = (f"{_para_min} paragraph" if _para_min == 1
-                               else f"{_para_min}–{_para_max} paragraphs")
-
-                # Instruction scales continuously — more topics added as detail increases
-                _topics = [
-                    (0.00, "the initiating event and immediate plant response"),
-                    (0.20, "the thermal-hydraulic progression"),
-                    (0.40, "safety system performance (ECCS, PORV, RPS)"),
-                    (0.55, "fuel and cladding thermal response with peak values"),
-                    (0.65, "reactivity feedback and kinetics behaviour"),
-                    (0.75, "acceptance criteria evaluation and regulatory significance"),
-                    (0.85, "specific parameter values and times for all key events"),
-                    (0.92, "uncertainty considerations and sensitivity to key assumptions"),
-                ]
-                _active = [t for thresh, t in _topics if _detail_val >= thresh]
-                if len(_active) == 1:
-                    _instruction = f"Focus on {_active[0]}. Omit minor details."
-                else:
-                    _instruction = ("Cover the following in order: "
-                                    + "; ".join(f"({i+1}) {t}" for i, t in enumerate(_active)) + ".")
-
-                # SOE filter: brief mode only includes key events
-                _soe_filter = ({"scram", "trip", "inject", "DNB", "peak", "End", "start"}
-                                if _detail_val < 0.25 else None)
-
-                def _build_ic_final(df):
-                        """Build a list of (parameter, initial, final, units) rows."""
-                        t   = df["Time (s)"]
-                        rows = []
-
-                        def ic_fin(col, label, units, scale=1.0, fmt=".1f", offset=0.0):
-                            if col in df.columns:
-                                s = df[col].dropna()
-                                if len(s) < 2:
-                                    return
-                                ic  = (float(s.iloc[0])  + offset) * scale
-                                fin = (float(s.iloc[-1]) + offset) * scale
-                                rows.append((label,
-                                             f"{ic:{fmt}}",
-                                             f"{fin:{fmt}}",
-                                             units))
-
-                        ic_fin("RCS Pressure (kPa)",       "RCS Pressure",          "kPa",  fmt=".0f")
-                        ic_fin("RCS Temperature (K)",      "RCS Temperature",       "°C",   offset=-273.15, fmt=".1f")
-                        ic_fin("RK Total Power (MW)",      "Core Power",            "MW",   fmt=".1f")
-                        ic_fin("Core Power (MW)",          "Heat to Coolant",       "MW",   fmt=".1f")
-                        ic_fin("Total Mass Scaled",        "RCS Inventory (scaled)","—",    fmt=".4f")
-                        ic_fin("Vessel Level (m)",         "Vessel Level",          "m",    fmt=".2f")
-                        ic_fin("Pump Mass Flow (kg/s)",    "RCP Mass Flow",         "kg/s", fmt=".0f")
-                        ic_fin("Pump Speed (rpm)",         "RCP Speed",             "rpm",  fmt=".0f")
-                        ic_fin("Clad Surface Temp (K)",    "Avg Clad Temp",         "°C",   offset=-273.15, fmt=".1f")
-                        ic_fin("Hot Pin Clad Temp (K)",    "Hot Pin Clad Temp",     "°C",   offset=-273.15, fmt=".1f")
-                        ic_fin("Hot Pin Fuel Temp (K)",    "Hot Pin Fuel Temp",     "°C",   offset=-273.15, fmt=".1f")
-                        ic_fin("DNBR",                     "DNBR",                  "—",    fmt=".3f")
-                        ic_fin("Equilibrium Quality (-)",  "Equilibrium Quality",   "—",    fmt=".4f")
-                        ic_fin("Void Fraction (-)",        "Void Fraction",         "—",    fmt=".4f")
-                        ic_fin("SG Heat Removal (MW)",     "SG Heat Removal",       "MW",   fmt=".1f")
-                        ic_fin("Pressurizer Level (m)",    "Pressurizer Level",     "m",    fmt=".2f")
-                        ic_fin("RCS Boron (ppm)",          "RCS Boron",             "ppm",  fmt=".0f")
-                        ic_fin("Accumulator Level (m)",    "Accumulator Level",     "m",    fmt=".2f")
-                        ic_fin("Reactivity net (pcm)",     "Net Reactivity",        "pcm",  fmt=".1f")
-                        return rows
-
-                _btn_col1, _btn_col2 = st.columns([1, 1])
-                with _btn_col1:
-                    _gen_narrative = st.button("Generate narrative",
-                                               key="gen_narrative", type="primary",
-                                               help="Requires Anthropic API key")
-                with _btn_col2:
-                    _gen_tables = st.button("Build tables only",
-                                            key="gen_tables",
-                                            help="No API key needed — builds IC, SOE and Word download locally")
-
-                # Tables-only path (no API call)
-                if _gen_tables:
-                    _soe_tbl   = _build_sequence_of_events(df, filter_keywords=None)
-                    _ic_r      = _build_ic_final(df)
-                    st.session_state[_tables_key] = {"soe": _soe_tbl, "ic": _ic_r, "tables_only": True}
-
-                # Full narrative path (API call)
-                if _gen_narrative:
-                    with st.spinner("Analysing results…"):
-                        _data_summary = _build_narrative_prompt(df, run_case)
-                        _soe_table    = _build_sequence_of_events(
-                            df, filter_keywords=_soe_filter
-                        )
-                        _prompt = (
-                            "You are a PWR safety analysis engineer reviewing the output "
-                            "of a FLARE transient simulation. Write a clear, concise "
-                            f"technical narrative ({_paragraphs}) describing "
-                            "the event sequence, the plant response, and the safety significance. "
-                            "Use standard nuclear engineering terminology. "
-                            f"{_instruction} "
-                            + NARRATIVE_QUALITY_GUIDANCE + " "
-                            "Use explicit section headings. Keep fuel integrity/core-damage topics "
-                            "separate from source-term and radiological topics. Discuss ECR, hydrogen generation, "
-                            "DNB, cladding temperature, and rod failures only under a heading such as "
-                            "'Fuel Integrity and Core Damage'. Discuss radionuclide release fractions, source-term model, "
-                            "NOTBADTRAD dose, iodine-spike dose, and radiological consequences only under "
-                            "'Source Term and Radiological Consequences'. Do not merge those topics. "
-                            "If source-term data are supplied, include the important numerical group-release and dose results "
-                            "from that data in the source-term section. "
-                            "Base your narrative strictly on the data provided — "
-                            "do not invent values not present in the summary. "
-                            "End your response after the final paragraph — do not "
-                            "add a sequence of events table (one is appended separately).\n\n"
-                            "Simulation data summary:\n" + _data_summary
-                        )
-                        try:
-                            _resp = requests.post(
-                                "https://api.anthropic.com/v1/messages",
-                                headers={
-                                    "x-api-key":         _current_api_key,
-                                    "anthropic-version": "2023-06-01",
-                                    "content-type":      "application/json",
-                                },
-                                json={
-                                    "model":      _ANTHROPIC_MODEL,
-                                    "max_tokens": _max_tokens,
-                                    "messages":   [{"role": "user", "content": _prompt}],
-                                },
-                                timeout=120,
-                            )
-                            _resp.raise_for_status()
-                            _resp_json = _resp.json()
-
-                            # Anthropic responses can contain more than one content block.
-                            # Join all text blocks rather than assuming content[0] is the
-                            # complete answer.  Also surface token-limit truncation instead
-                            # of silently displaying an incomplete narrative.
-                            _text_blocks = [
-                                block.get("text", "")
-                                for block in _resp_json.get("content", [])
-                                if block.get("type") == "text" and block.get("text")
-                            ]
-                            _narrative_text = "\n".join(_text_blocks).strip()
-
-                            if not _narrative_text:
-                                _narrative_text = "⚠️  API returned no narrative text."
-
-                            _stop_reason = _resp_json.get("stop_reason")
-                            if _stop_reason == "max_tokens":
-                                _narrative_text += (
-                                    "\n\n⚠️ Narrative truncated because the API response reached "
-                                    f"the current token limit ({_max_tokens}). Increase the "
-                                    "detail/token setting or reduce the prompt content."
-                                )
-                            elif _stop_reason and _stop_reason not in {"end_turn", "stop_sequence"}:
-                                _narrative_text += f"\n\n⚠️ Narrative stopped with API stop_reason: {_stop_reason}."
-
-                            st.session_state[_narrative_key] = _narrative_text + _soe_table
-                            # Also store SOE so download works; IC/final-state table is
-                            # displayed only when the user selects Build tables only.
-                            st.session_state[_tables_key] = {
-                                "soe": _soe_table,
-                                "ic":  _build_ic_final(df),
-                                "tables_only": False,
-                            }
-                        except Exception as _ne:
-                            st.session_state[_narrative_key] = f"⚠️  API error: {_ne}"
-
-                # ── Display: narrative (if generated) then tables ─────────────
-                if st.session_state.get(_narrative_key):
-                    st.markdown(st.session_state[_narrative_key])
-
-                # Tables come from either path. The Initial Conditions & Final State
-                # table is intentionally displayed only for the explicit
-                # "Build tables only" path; generated narratives keep the run view concise.
-                _stored_tables = st.session_state.get(_tables_key)
-                _tables_only_active = bool(_stored_tables and _stored_tables.get("tables_only"))
-                _ic_rows = (_stored_tables.get("ic", [])
-                            if (_stored_tables and _tables_only_active) else [])
-
-                # SOE — render explicitly when no narrative (tables-only path)
-                if _stored_tables and not st.session_state.get(_narrative_key):
-                    _soe_md = _stored_tables.get("soe", "")
-                    if _soe_md:
-                        st.markdown(_soe_md)
-
-                if _tables_only_active:
-                    if not _ic_rows:
-                        _ic_rows = _build_ic_final(df)
-                    if _ic_rows:
-                        st.markdown("---\n**Initial Conditions & Final State**")
-                        import pandas as _pd2
-                        _ic_df = _pd2.DataFrame(
-                            _ic_rows, columns=["Parameter", "Initial", "Final", "Units"]
-                        )
-                        st.dataframe(_ic_df, hide_index=True, width="stretch")
-
-                # ── Download as Word document (available from either button) ─
-                if _stored_tables or st.session_state.get(_narrative_key):
-                    def _narrative_to_docx(text, case_name, ic_rows=None, report_tables=None):
-                        """Convert narrative markdown + SOE/source-term/dose tables to a .docx bytes buffer."""
-                        try:
-                            from docx import Document as DocxDocument
-                            from docx.shared import Pt, RGBColor, Inches
-                        except ImportError:
-                            return None   # python-docx not installed
-
-                        import re, io
-                        from datetime import date
-
-                        doc = DocxDocument()
-
-                        # Page margins
-                        for section in doc.sections:
-                            section.top_margin    = Inches(1)
-                            section.bottom_margin = Inches(1)
-                            section.left_margin   = Inches(1.25)
-                            section.right_margin  = Inches(1.25)
-
-                        # Title
-                        title = doc.add_heading(f"Event Narrative — {case_name}", level=1)
-                        title.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
-
-                        # Date line
-                        from datetime import date
-                        dp = doc.add_paragraph(f"Generated: {date.today().isoformat()}")
-                        dp.runs[0].font.size = Pt(9)
-                        dp.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
-                        doc.add_paragraph()   # spacer
-
-                        # Split narrative from SOE table
-                        parts = text.split("\n\n---\n\n")
-                        narrative_text = parts[0].strip()
-                        soe_text = parts[1].strip() if len(parts) > 1 else None
-
-                        # Write narrative paragraphs
-                        for para in narrative_text.split("\n\n"):
-                            para = para.strip()
-                            if not para:
-                                continue
-                            # Bold inline (**text**)
-                            p = doc.add_paragraph()
-                            p.paragraph_format.space_after = Pt(6)
-                            # Simple inline bold parse
-                            segments = re.split(r'\*\*(.*?)\*\*', para)
-                            for i, seg in enumerate(segments):
-                                run = p.add_run(seg)
-                                run.bold = (i % 2 == 1)
-                                run.font.size = Pt(11)
-
-                        # SOE table
-                        if soe_text:
-                            doc.add_paragraph()
-                            h = doc.add_heading("Sequence of Events", level=2)
-                            h.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
-
-                            # Parse markdown table rows
-                            rows = [r for r in soe_text.split("\n")
-                                    if r.startswith("|") and "---" not in r]
-                            if rows:
-                                # Extract cells
-                                parsed = [[c.strip() for c in r.strip("|").split("|")]
-                                          for r in rows]
-                                tbl = doc.add_table(rows=len(parsed), cols=2)
-                                tbl.style = "Table Grid"
-                                for ri, row_data in enumerate(parsed):
-                                    cells = tbl.rows[ri].cells
-                                    for ci, val in enumerate(row_data[:2]):
-                                        cells[ci].text = val
-                                        run = cells[ci].paragraphs[0].runs
-                                        if run:
-                                            run[0].font.size = Pt(10)
-                                            if ri == 0:   # header row
-                                                run[0].bold = True
-
-                        # IC / Final State table
-                        if ic_rows:
-                            doc.add_paragraph()
-                            h2 = doc.add_heading("Initial Conditions & Final State", level=2)
-                            h2.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
-                            border = {"style": "single", "size": 1, "color": "CCCCCC"}
-                            from docx.oxml.ns import qn
-                            from docx.oxml import OxmlElement
-                            tbl2 = doc.add_table(rows=1 + len(ic_rows), cols=4)
-                            tbl2.style = "Table Grid"
-                            # Header row
-                            hdr_cells = tbl2.rows[0].cells
-                            for ci, hdr in enumerate(["Parameter", "Initial", "Final", "Units"]):
-                                hdr_cells[ci].text = hdr
-                                run = hdr_cells[ci].paragraphs[0].runs
-                                if run:
-                                    run[0].bold = True
-                                    run[0].font.size = Pt(10)
-                            # Data rows
-                            for ri, (param, ic, fin, units) in enumerate(ic_rows):
-                                row_cells = tbl2.rows[ri + 1].cells
-                                for ci, val in enumerate([param, ic, fin, units]):
-                                    row_cells[ci].text = val
-                                    run = row_cells[ci].paragraphs[0].runs
-                                    if run:
-                                        run[0].font.size = Pt(10)
-
-
-                        # Source-term and dose tables exactly as displayed in Results panel
-                        if report_tables:
-                            current_section = None
-                            for item in report_tables:
-                                section = item.get("section", "")
-                                title_txt = item.get("title", "")
-                                df_tbl = item.get("df")
-                                if df_tbl is None or getattr(df_tbl, "empty", True):
-                                    continue
-                                if section != current_section:
-                                    doc.add_paragraph()
-                                    h3 = doc.add_heading(section, level=2)
-                                    h3.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
-                                    current_section = section
-                                if title_txt:
-                                    p_title = doc.add_paragraph()
-                                    r_title = p_title.add_run(title_txt)
-                                    r_title.bold = True
-                                    r_title.font.size = Pt(10)
-                                cols = [str(c) for c in df_tbl.columns]
-                                tblx = doc.add_table(rows=1 + len(df_tbl), cols=len(cols))
-                                tblx.style = "Table Grid"
-                                for ci, hdr in enumerate(cols):
-                                    cell = tblx.rows[0].cells[ci]
-                                    cell.text = hdr
-                                    runs = cell.paragraphs[0].runs
-                                    if runs:
-                                        runs[0].bold = True
-                                        runs[0].font.size = Pt(8)
-                                for ri, (_, row) in enumerate(df_tbl.iterrows(), start=1):
-                                    for ci, col in enumerate(cols):
-                                        cell = tblx.rows[ri].cells[ci]
-                                        cell.text = str(row.get(col, ""))
-                                        runs = cell.paragraphs[0].runs
-                                        if runs:
-                                            runs[0].font.size = Pt(8)
-                                doc.add_paragraph()
-
-                        buf = io.BytesIO()
-                        doc.save(buf)
-                        buf.seek(0)
-                        return buf.read()
-
-                    _docx_text = (st.session_state.get(_narrative_key) or
-                                  (_stored_tables.get("soe", "") if _stored_tables else ""))
-                    _docx_report_tables = build_source_term_dose_report_tables(run_case, run_dir=_run_dir)
-                    _docx_bytes = _narrative_to_docx(
-                        _docx_text, run_case,
-                        ic_rows=_ic_rows,
-                        report_tables=_docx_report_tables,
-                    )
-                    if _docx_bytes is not None:
-                        st.download_button(
-                            label="⬇  Download narrative (.docx)",
-                            data=_docx_bytes,
-                            file_name=f"{run_case}_narrative.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            key="dl_narrative_docx",
-                        )
-                    else:
-                        st.info("Install **python-docx** to enable Word download: "
-                                "`pip install python-docx`")
-
 
         # ── NBT Source Term and Dose Results ───────────────────────────────
         # Kept after the main FLARE nuclear thermal-hydraulic results so the
@@ -3919,4 +3517,1052 @@ with tab_results:
                 st.button("⬇  Download figures PDF",
                           disabled=True, width="stretch",
                           help="Run the simulation to generate the PDF")
+
+        # ── AI Event Narrative ────────────────────────────────────────────────
+        st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
+        with st.expander("🤖  AI Event Narrative", expanded=True):
+            if _BUDDY_B64:
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:0.6rem;margin-bottom:0.5rem;'>"
+                    f"<img src='{_BUDDY_B64}' style='height:2.2rem;width:2.2rem;border-radius:50%;object-fit:cover;flex-shrink:0;'/>"
+                    f"<span style='font-weight:700;font-size:1rem;'>FLARE Buddy — AI Event Narrative</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            # Re-read the key each render so adding/editing flare_config.txt
+            # during a FLARE session is recognized after a normal Streamlit rerun.
+            _current_api_key = load_api_key()
+            if not _current_api_key:
+                st.warning(
+                    "No API key found. Add `ANTHROPIC_API_KEY = sk-ant-...` "
+                    "to `runtime/flare_config.txt` (or `Runtime/flare_config.txt`) in the FLARE folder."
+                )
+            else:
+                # Build a structured data summary to ground the narrative
+                def _build_narrative_prompt(df, case_name, detail_level=0.5, use_english=False):
+                    lines = [f"Case: {case_name}", _ai_unit_policy_text(use_english)]
+
+                    t  = df["Time (s)"]
+                    dt = t.diff().fillna(0)
+                    t0, tf = float(t.iloc[0]), float(t.iloc[-1])
+                    lines.append(f"Simulation span: {t0:.1f} – {tf:.1f} s")
+
+                    if "RCS Pressure (kPa)" in df.columns:
+                        p_raw = df["RCS Pressure (kPa)"]
+                        p_vals, p_unit = _ai_series_display(p_raw, "RCS Pressure (kPa)", use_english)
+                        p = pd.Series(p_vals, index=df.index)
+                        lines.append(f"RCS pressure: initial {_fmt_ai_value(p.iloc[0], p_unit)}, "
+                                     f"min {_fmt_ai_value(p.min(), p_unit)} at t={t.iloc[p.idxmin()]:.1f} s, "
+                                     f"final {_fmt_ai_value(p.iloc[-1], p_unit)}")
+
+                    if "RCS Temperature (K)" in df.columns:
+                        T_vals, T_unit = _ai_series_display(df["RCS Temperature (K)"], "RCS Temperature (K)", use_english)
+                        T = pd.Series(T_vals, index=df.index)
+                        lines.append(f"RCS temperature: initial {_fmt_ai_value(T.iloc[0], T_unit)}, "
+                                     f"peak {_fmt_ai_value(T.max(), T_unit)} at t={t.iloc[T.idxmax()]:.1f} s")
+
+                    if "RK Total Power (MW)" in df.columns:
+                        pw = df["RK Total Power (MW)"]
+                        lines.append(f"Core power: initial {pw.iloc[0]:.1f} MW, "
+                                     f"peak {pw.max():.1f} MW, "
+                                     f"final {pw.iloc[-1]:.3f} MW")
+
+                    if "Vessel Level (m)" in df.columns:
+                        ll_vals, ll_unit = _ai_series_display(df["Vessel Level (m)"], "Vessel Level (m)", use_english)
+                        ll = pd.Series(ll_vals, index=df.index)
+                        lines.append(f"Vessel level: initial {_fmt_ai_value(ll.iloc[0], ll_unit)}, "
+                                     f"min {_fmt_ai_value(ll.min(), ll_unit)} at t={t.iloc[ll.idxmin()]:.1f} s, "
+                                     f"final {_fmt_ai_value(ll.iloc[-1], ll_unit)}")
+
+                    if "Pump Mass Flow (kg/s)" in df.columns:
+                        mf_raw  = df["Pump Mass Flow (kg/s)"]
+                        mf_vals, mf_unit = _ai_series_display(mf_raw, "Pump Mass Flow (kg/s)", use_english)
+                        mf = pd.Series(mf_vals, index=df.index)
+                        mf0 = float(mf.iloc[0])
+                        lines.append(f"Pump flow: initial {_fmt_ai_value(mf0, mf_unit)}, "
+                                     f"final {_fmt_ai_value(mf.iloc[-1], mf_unit)}")
+                        if mf0 > 0:
+                            trip_idx = (mf < 0.01 * mf0).idxmax()
+                            if mf.iloc[trip_idx] < 0.01 * mf0:
+                                lines.append(f"RCP flow reaches zero at t={t.iloc[trip_idx]:.1f} s")
+
+                    # Accumulator — enriched
+                    if "Accumulator Flow (kg/s)" in df.columns:
+                        acc = df["Accumulator Flow (kg/s)"]
+                        if acc.max() > 0:
+                            active = acc > 0.1
+                            t_start = float(t[active].iloc[0])  if active.any() else None
+                            t_end   = float(t[active].iloc[-1]) if active.any() else None
+                            duration = (t_end - t_start) if (t_start and t_end) else 0
+                            total_kg = float((acc * dt).sum())
+                            depleted = False
+                            if "Accumulator Level (m)" in df.columns:
+                                al = df["Accumulator Level (m)"]
+                                depleted = bool(al[active.shift(-1, fill_value=False) == False].min() < 0.05) if active.any() else False
+                            _acc_peak, _acc_funit = _ai_series_display([acc.max()], "Accumulator Flow (kg/s)", use_english)
+                            _acc_mass, _acc_munit = _ai_series_display([total_kg], "H2 Generated (kg)", use_english)
+                            lines.append(
+                                f"Accumulator injection: start t={t_start:.1f} s, "
+                                f"end t={t_end:.1f} s, duration {duration:.0f} s, "
+                                f"peak {_fmt_ai_value(_acc_peak[0], _acc_funit)}, "
+                                f"total injected ≈{_fmt_ai_value(_acc_mass[0], _acc_munit)}"
+                                + (", accumulator FULLY DEPLETED" if depleted else "")
+                            )
+
+                    # LPSI — enriched
+                    if "LPSI Flow (kg/s)" in df.columns:
+                        lpsi = df["LPSI Flow (kg/s)"]
+                        if lpsi.max() > 0:
+                            active = lpsi > 0.1
+                            t_start = float(t[active].iloc[0]) if active.any() else None
+                            t_end   = float(t[active].iloc[-1]) if active.any() else None
+                            total_kg = float((lpsi * dt).sum())
+                            _lpsi_peak, _lpsi_funit = _ai_series_display([lpsi.max()], "LPSI Flow (kg/s)", use_english)
+                            _lpsi_mass, _lpsi_munit = _ai_series_display([total_kg], "H2 Generated (kg)", use_english)
+                            lines.append(
+                                f"LPSI injection: start t={t_start:.1f} s, "
+                                f"end t={t_end:.1f} s, "
+                                f"peak {_fmt_ai_value(_lpsi_peak[0], _lpsi_funit)}, "
+                                f"total injected ≈{_fmt_ai_value(_lpsi_mass[0], _lpsi_munit)}"
+                            )
+
+                    # HPSI — enriched
+                    if "HPSI Flow (kg/s)" in df.columns:
+                        hpsi = df["HPSI Flow (kg/s)"]
+                        if hpsi.max() > 0:
+                            active = hpsi > 0.1
+                            t_start = float(t[active].iloc[0]) if active.any() else None
+                            t_end   = float(t[active].iloc[-1]) if active.any() else None
+                            total_kg = float((hpsi * dt).sum())
+                            _hpsi_peak, _hpsi_funit = _ai_series_display([hpsi.max()], "HPSI Flow (kg/s)", use_english)
+                            _hpsi_mass, _hpsi_munit = _ai_series_display([total_kg], "H2 Generated (kg)", use_english)
+                            lines.append(
+                                f"HPSI injection: start t={t_start:.1f} s, "
+                                f"end t={t_end:.1f} s, "
+                                f"peak {_fmt_ai_value(_hpsi_peak[0], _hpsi_funit)}, "
+                                f"total injected ≈{_fmt_ai_value(_hpsi_mass[0], _hpsi_munit)}"
+                            )
+
+                    # CVCS
+                    if "CVCS Makeup (kg/s)" in df.columns:
+                        mu = df["CVCS Makeup (kg/s)"]
+                        if mu.max() > 0:
+                            active = mu > 0.1
+                            t_start = float(t[active].iloc[0]) if active.any() else None
+                            lines.append(f"CVCS makeup/letdown: activates t={t_start:.1f} s, "
+                                         f"flow {mu.max():.1f} kg/s")
+                            if "RCS Boron (ppm)" in df.columns:
+                                bn = df["RCS Boron (ppm)"]
+                                lines.append(f"RCS boron: initial {bn.iloc[0]:.0f} ppm, "
+                                             f"final {bn.iloc[-1]:.0f} ppm "
+                                             f"(Δ{bn.iloc[-1]-bn.iloc[0]:+.0f} ppm)")
+
+                    if "DNBR" in df.columns:
+                        dn = df["DNBR"].replace(0, np.nan)
+                        mdnbr = dn.min()
+                        if not np.isnan(mdnbr):
+                            lines.append(f"MDNBR: {mdnbr:.3f} at t={t.iloc[dn.idxmin()]:.1f} s"
+                                         + (" — DNB OCCURRED" if mdnbr < 1.0 else ""))
+
+                    if "Clad Surface Temp (K)" in df.columns:
+                        tc_vals, tc_unit = _ai_series_display(df["Clad Surface Temp (K)"], "Clad Surface Temp (K)", use_english)
+                        tc = pd.Series(tc_vals, index=df.index)
+                        lines.append(f"Avg clad temp: initial {_fmt_ai_value(tc.iloc[0], tc_unit)}, "
+                                     f"peak {_fmt_ai_value(tc.max(), tc_unit)} at t={t.iloc[tc.idxmax()]:.1f} s")
+
+                    if "Hot Pin Clad Temp (K)" in df.columns:
+                        thc_vals, thc_unit = _ai_series_display(df["Hot Pin Clad Temp (K)"], "Hot Pin Clad Temp (K)", use_english)
+                        thc = pd.Series(thc_vals, index=df.index)
+                        lines.append(f"Hot pin clad temp: peak {_fmt_ai_value(thc.max(), thc_unit)} "
+                                     f"at t={t.iloc[thc.idxmax()]:.1f} s")
+
+                    if "Hot Pin Fuel Temp (K)" in df.columns:
+                        thf_vals, thf_unit = _ai_series_display(df["Hot Pin Fuel Temp (K)"], "Hot Pin Fuel Temp (K)", use_english)
+                        thf = pd.Series(thf_vals, index=df.index)
+                        lines.append(f"Hot pin fuel temp: peak {_fmt_ai_value(thf.max(), thf_unit)} "
+                                     f"at t={t.iloc[thf.idxmax()]:.1f} s")
+
+                    if "Clad HTC (W/m2-K)" in df.columns:
+                        htc = df["Clad HTC (W/m2-K)"]
+                        lines.append(f"Core HTC: initial {htc.iloc[0]:.0f} W/m²K, "
+                                     f"min {htc.min():.0f} W/m²K at t={t.iloc[htc.idxmin()]:.1f} s")
+
+                    if "SG Heat Removal (MW)" in df.columns:
+                        sg = df["SG Heat Removal (MW)"]
+                        if sg.max() > 0:
+                            lines.append(f"SG heat removal: peak {sg.max():.1f} MW "
+                                         f"at t={t.iloc[sg.idxmax()]:.1f} s")
+
+                    if "PORV Mass Flow (kg/s)" in df.columns:
+                        pv = df["PORV Mass Flow (kg/s)"]
+                        if pv.max() > 0:
+                            active = pv > 0.01
+                            t_start = float(t[active].iloc[0]) if active.any() else None
+                            t_end   = float(t[active].iloc[-1]) if active.any() else None
+                            _pvv, _pvu = _ai_series_display([pv.max()], "PORV Mass Flow (kg/s)", use_english)
+                            lines.append(f"PORV: opens t={t_start:.1f} s, "
+                                         f"last open t={t_end:.1f} s, "
+                                         f"peak {_fmt_ai_value(_pvv[0], _pvu)}")
+
+                    if "Pressurizer Level (m)" in df.columns:
+                        pzl_raw = df["Pressurizer Level (m)"].replace(0, np.nan)
+                        pzl_vals, pzl_unit = _ai_series_display(pzl_raw, "Pressurizer Level (m)", use_english)
+                        pzl = pd.Series(pzl_vals, index=df.index)
+                        if pzl.notna().any():
+                            lines.append(f"Pressurizer level: initial {_fmt_ai_value(pzl.iloc[0], pzl_unit)}, "
+                                         f"min {_fmt_ai_value(pzl.min(), pzl_unit)} at t={t.iloc[pzl.idxmin()]:.1f} s, "
+                                         f"final {_fmt_ai_value(pzl.iloc[-1], pzl_unit)}")
+
+                    for col, label in [
+                        ("Rod Failures DNB (est.)",     "Rod failures (DNB)"),
+                        ("Rod Failures Gap (est.)",     "Rod failures (gap release)"),
+                        ("Rod Failures EarlyIV (est.)", "Rod failures (early in-vessel)"),
+                    ]:
+                        if col in df.columns and df[col].max() > 0:
+                            lines.append(f"{label}: {int(df[col].max())} rods")
+
+                    if "Equilibrium Quality (-)" in df.columns:
+                        xeq = df["Equilibrium Quality (-)"]
+                        lines.append(f"Equilibrium quality: min {xeq.min():.3f}, "
+                                     f"max {xeq.max():.3f}")
+
+                    # Narrative scope and acceptance-criteria guardrails
+                    try:
+                        _pwr0 = float(df["RK Total Power (MW)"].iloc[0]) if "RK Total Power (MW)" in df.columns else 0.0
+                        _sg0 = float(df["SG Heat Removal (MW)"].iloc[0]) if "SG Heat Removal (MW)" in df.columns else 0.0
+                        if _pwr0 > 0 and _sg0 < 0.5 * _pwr0:
+                            lines.append("Initial-condition check: initial SG heat removal is less than 50% of initial reactor power; do not describe this as normal full-power steady-state operation unless other data support that conclusion.")
+                    except Exception:
+                        pass
+
+                    try:
+                        _pct_limit_K = 1477.0
+                        _pct = None
+                        if "Hot Pin Clad Temp (K)" in df.columns:
+                            _pct = float(pd.to_numeric(df["Hot Pin Clad Temp (K)"], errors="coerce").max())
+                            _pct_vals, _pct_unit = _ai_series_display([_pct], "Hot Pin Clad Temp (K)", use_english)
+                            _pct_limit = 2200.0 if use_english else (1477.0 - 273.15)
+                            _pct_limit_unit = "°F" if use_english else "°C"
+                            if _pct >= _pct_limit_K:
+                                lines.append(f"10 CFR 50.46 PCT check: peak hot-pin clad temperature {_fmt_ai_value(_pct_vals[0], _pct_unit)} exceeds the {_pct_limit:.0f} {_pct_limit_unit} limit; state this as a limit exceedance.")
+                            else:
+                                lines.append(f"10 CFR 50.46 PCT check: peak hot-pin clad temperature {_fmt_ai_value(_pct_vals[0], _pct_unit)} is below the {_pct_limit:.0f} {_pct_limit_unit} limit.")
+                    except Exception:
+                        pass
+
+                    try:
+                        _ecr = float(pd.to_numeric(df.get("Zr Oxidation Mean Oxidizing Rod ECR (%)", pd.Series([0.0])), errors="coerce").fillna(0.0).max())
+                        _h2 = float(pd.to_numeric(df.get("H2 Generated (kg)", pd.Series([0.0])), errors="coerce").fillna(0.0).max())
+                        _rod_cols = ["Rod Failures DNB (est.)", "Rod Failures Gap (est.)", "Rod Failures EarlyIV (est.)"]
+                        _rods = 0.0
+                        for _c in _rod_cols:
+                            if _c in df.columns:
+                                _rods = max(_rods, float(pd.to_numeric(df[_c], errors="coerce").fillna(0.0).max()))
+                        if _ecr <= 0.0 and _h2 <= 0.0 and _rods <= 0.0:
+                            lines.append("Fuel-integrity scope: ECR, hydrogen generation, and rod failures are zero; collapse fuel-integrity discussion to one concise sentence.")
+                        if (case_name or "").lower().endswith("null") or (_ecr <= 0.0 and _h2 <= 0.0 and _rods <= 0.0 and _pct is not None and _pct < 900.0):
+                            lines.append("Narrative scope: treat this as a verification/null or benign case; use a short three-section structure rather than a full accident narrative.")
+                    except Exception:
+                        pass
+
+                    try:
+                        if "DNBR" in df.columns:
+                            _dn_final = pd.to_numeric(df["DNBR"], errors="coerce").iloc[-1]
+                            if pd.isna(_dn_final):
+                                lines.append("DNBR interpretation: final DNBR is NaN because the DNB correlation is not applicable under the final conditions; this is expected behavior, not a numerical convergence issue.")
+                    except Exception:
+                        pass
+
+                    _st_lines = _source_term_lines_for_narrative(
+                        case_name,
+                        run_dir=_run_dir,
+                        max_groups=_narrative_source_term_group_limit(detail_level),
+                    )
+                    if _st_lines:
+                        lines.append("")
+                        lines.append("SOURCE TERM AND RADIOLOGICAL DATA FOR NARRATIVE:")
+                        lines.extend(_st_lines)
+
+                    _con_lines = _containment_lines_for_narrative(case_name, run_dir=_run_dir, use_english=use_english)
+                    if _con_lines:
+                        lines.append("")
+                        lines.extend(_con_lines)
+
+                    _reg_lines = _regulatory_fom_lines_for_narrative(df, case_name, run_dir=_run_dir, use_english=use_english)
+                    if _reg_lines:
+                        lines.append("")
+                        lines.extend(_reg_lines)
+
+                    return "\n".join(lines)
+
+                def _build_sequence_of_events(df, filter_keywords=None):
+                    """Detect key timestamped events from the data for the SOE table."""
+                    t   = df["Time (s)"]
+                    dt  = t.diff().fillna(0)
+                    soe = []
+
+                    def first_time(mask):
+                        idx = mask.idxmax() if mask.any() else None
+                        return float(t.iloc[idx]) if idx is not None and mask.any() else None
+
+                    def last_time(mask):
+                        idxs = t[mask]
+                        return float(idxs.iloc[-1]) if len(idxs) > 0 else None
+
+                    # Simulation start
+                    soe.append((float(t.iloc[0]), "Simulation start — reactor at full power"))
+
+                    # Reactor power events
+                    if "RK Total Power (MW)" in df.columns:
+                        pw  = df["RK Total Power (MW)"]
+                        pw0 = float(pw.iloc[0])
+                        op  = first_time(pw > 1.05 * pw0)
+                        scr = first_time((t > float(t.iloc[0]) + 0.5) & (pw < 0.5 * pw0))
+                        if op is not None and (scr is None or op < scr):
+                            soe.append((op, f"High-flux trip setpoint reached ({pw.max():.0f} MW peak)"))
+                        if scr is not None:
+                            soe.append((scr, f"Reactor scram — power below 50% rated"))
+
+                    # Pump coastdown
+                    if "Pump Mass Flow (kg/s)" in df.columns:
+                        mf  = df["Pump Mass Flow (kg/s)"]
+                        mf0 = float(mf.iloc[0])
+                        if mf0 > 0:
+                            t50 = first_time((t > 0.5) & (mf < 0.5 * mf0))
+                            t00 = first_time((t > 0.5) & (mf < 0.01 * mf0))
+                            if t50: soe.append((t50, "RCP coastdown — pump flow below 50% rated"))
+                            if t00: soe.append((t00, "RCP flow effectively zero"))
+
+                    # PORV
+                    if "PORV Mass Flow (kg/s)" in df.columns:
+                        pv = df["PORV Mass Flow (kg/s)"]
+                        if pv.max() > 0.01:
+                            tp = first_time(pv > 0.01)
+                            tc = last_time(pv > 0.01)
+                            if tp: soe.append((tp, f"PORV opens ({pv.max():.1f} kg/s peak)"))
+                            if tc and tc != tp:
+                                soe.append((tc, "PORV last open — RCS pressure stabilising"))
+
+                    # RCS pressure min
+                    if "RCS Pressure (kPa)" in df.columns:
+                        p = df["RCS Pressure (kPa)"]
+                        soe.append((float(t.iloc[p.idxmin()]),
+                                    f"Minimum RCS pressure — {p.min():.0f} kPa"))
+
+                    # Accumulator — start, depletion, end
+                    if "Accumulator Flow (kg/s)" in df.columns:
+                        acc    = df["Accumulator Flow (kg/s)"]
+                        active = acc > 0.1
+                        if active.any():
+                            ta_start = first_time(active)
+                            ta_end   = last_time(active)
+                            total_kg = float((acc * dt).sum())
+                            soe.append((ta_start,
+                                        f"Accumulator injection begins ({acc.max():.0f} kg/s peak)"))
+                            # Depletion: level reaches near-zero
+                            depleted = False
+                            if "Accumulator Level (m)" in df.columns:
+                                al = df["Accumulator Level (m)"]
+                                depl_mask = active & (al < 0.05)
+                                if depl_mask.any():
+                                    td = first_time(depl_mask)
+                                    soe.append((td,
+                                        f"Accumulator empty — injection ends "
+                                        f"(≈{total_kg:.0f} kg total injected)"))
+                                    depleted = True
+                            if not depleted and ta_end and ta_end != ta_start:
+                                soe.append((ta_end,
+                                    f"Accumulator injection ends "
+                                    f"(≈{total_kg:.0f} kg total injected)"))
+
+                    # LPSI
+                    if "LPSI Flow (kg/s)" in df.columns:
+                        lpsi   = df["LPSI Flow (kg/s)"]
+                        active = lpsi > 0.1
+                        if active.any():
+                            total_kg = float((lpsi * dt).sum())
+                            soe.append((first_time(active),
+                                        f"LPSI injection begins ({lpsi.max():.0f} kg/s peak)"))
+                            tl_end = last_time(active)
+                            if tl_end and tl_end != first_time(active):
+                                soe.append((tl_end,
+                                            f"LPSI injection ends (≈{total_kg:.0f} kg total)"))
+
+                    # HPSI
+                    if "HPSI Flow (kg/s)" in df.columns:
+                        hpsi   = df["HPSI Flow (kg/s)"]
+                        active = hpsi > 0.1
+                        if active.any():
+                            total_kg = float((hpsi * dt).sum())
+                            soe.append((first_time(active),
+                                        f"HPSI injection begins ({hpsi.max():.0f} kg/s peak)"))
+
+                    # CVCS
+                    if "CVCS Makeup (kg/s)" in df.columns:
+                        mu = df["CVCS Makeup (kg/s)"]
+                        if mu.max() > 0.1:
+                            soe.append((first_time(mu > 0.1),
+                                        f"CVCS makeup/letdown activates ({mu.max():.1f} kg/s)"))
+
+                    # Boron dilution trip
+                    if "RCS Boron (ppm)" in df.columns:
+                        bn  = df["RCS Boron (ppm)"]
+                        bn0 = float(bn.iloc[0])
+                        if bn0 > 0 and bn.min() < 0.95 * bn0:
+                            td = first_time(bn < 0.95 * bn0)
+                            soe.append((td,
+                                        f"RCS boron below 95% initial "
+                                        f"({bn0:.0f}→{bn.min():.0f} ppm)"))
+
+                    # DNB
+                    if "DNBR" in df.columns:
+                        dn = df["DNBR"].replace(0, np.nan)
+                        if dn.min() < 1.0:
+                            soe.append((first_time(dn < 1.0),
+                                        f"DNB — DNBR drops below 1.0 (min {dn.min():.3f})"))
+
+                    # Vessel level min and recovery
+                    if "Vessel Level (m)" in df.columns:
+                        ll   = df["Vessel Level (m)"]
+                        ll0  = float(ll.iloc[0])
+                        tidx = ll.idxmin()
+                        soe.append((float(t.iloc[tidx]),
+                                    f"Minimum vessel level — {ll.min():.2f} m"))
+                        # Recovery: level recovers to 50% of initial after minimum
+                        recov = (t > float(t.iloc[tidx])) & (ll > 0.5 * ll0)
+                        tr = first_time(recov)
+                        if tr:
+                            soe.append((tr, f"Vessel level recovers to 50% initial ({0.5*ll0:.2f} m)"))
+
+                    # Peak fuel temperature
+                    if "Hot Pin Fuel Temp (K)" in df.columns:
+                        thf = df["Hot Pin Fuel Temp (K)"] - 273.15
+                        soe.append((float(t.iloc[thf.idxmax()]),
+                                    f"Peak hot pin fuel temperature — {thf.max():.0f} °C"))
+
+                    # Peak clad temperature
+                    if "Hot Pin Clad Temp (K)" in df.columns:
+                        thc = df["Hot Pin Clad Temp (K)"] - 273.15
+                        soe.append((float(t.iloc[thc.idxmax()]),
+                                    f"Peak hot pin clad temperature — {thc.max():.0f} °C"))
+                    elif "Clad Surface Temp (K)" in df.columns:
+                        tc3 = df["Clad Surface Temp (K)"] - 273.15
+                        soe.append((float(t.iloc[tc3.idxmax()]),
+                                    f"Peak average clad temperature — {tc3.max():.0f} °C"))
+
+                    # Pressurizer level min
+                    if "Pressurizer Level (m)" in df.columns:
+                        pzl = df["Pressurizer Level (m)"].replace(0, np.nan)
+                        if pzl.notna().any() and pzl.min() < float(pzl.iloc[0]) * 0.9:
+                            soe.append((float(t.iloc[pzl.idxmin()]),
+                                        f"Minimum pressurizer level — {pzl.min():.2f} m"))
+
+                    # End of simulation
+                    soe.append((float(t.iloc[-1]), "End of simulation"))
+
+                    # Sort and deduplicate (remove identical times keeping first)
+                    soe.sort(key=lambda x: x[0])
+                    seen = set()
+                    soe_dedup = []
+                    for ts, desc in soe:
+                        key = round(ts, 1)
+                        if key not in seen:
+                            seen.add(key)
+                            soe_dedup.append((ts, desc))
+                    soe = soe_dedup
+
+                    # Filter for Brief mode
+                    if filter_keywords:
+                        soe = [(ts, desc) for ts, desc in soe
+                               if any(kw.lower() in desc.lower()
+                                      for kw in filter_keywords)]
+
+                    # Build markdown table
+                    table  = "\n\n---\n\n**Sequence of Events**\n\n"
+                    table += "| Time (s) | Event |\n"
+                    table += "|---:|:------|\n"
+                    for ts, desc in soe:
+                        table += f"| {ts:.1f} | {desc} |\n"
+                    return table
+                    table += "|---:|:------|\n"
+                    for ts, desc in soe:
+                        table += f"| {ts:.1f} | {desc} |\n"
+                    return table
+
+                _narrative_key = f"narrative_{run_case}"
+                _tables_key    = f"tables_{run_case}"
+                _tables_only_key = f"tables_only_{run_case}"
+                if _narrative_key not in st.session_state:
+                    st.session_state[_narrative_key] = None
+                if _tables_key not in st.session_state:
+                    st.session_state[_tables_key] = None
+                if _tables_only_key not in st.session_state:
+                    st.session_state[_tables_only_key] = False
+
+                # Put the expensive AI action in a form so the detail slider,
+                # Build Tables Only button, and Generate click are submitted as
+                # one coherent snapshot. This mirrors the UA tool pattern: do
+                # not use submit callbacks or a deferred rerun.  On submit,
+                # read the widget's session-state value directly and recompute
+                # every detail-dependent quantity from that submitted value.
+                with st.form("pwr_ai_generate_form", clear_on_submit=False):
+                    _detail_val = st.slider(
+                        "Detail level", min_value=0.0, max_value=1.0, value=0.5,
+                        step=0.05,
+                        key="pwr_ai_detail",
+                        help=(
+                            "Controls AI Event Narrative length and scope. The slider has 21 detents; "
+                            "each 0.05 increment maps to a distinct target word count, from ~300 words "
+                            "at 0.00 to ~5300 words at 1.00."
+                        ),
+                    )
+                    _detail_level = _narrative_detail_level(_detail_val)
+                    _word_target = _narrative_detail_word_target(_detail_val)
+                    _word_lo, _word_hi = _narrative_detail_word_range(_detail_val)
+                    _detail_label = _narrative_detail_descriptor(_detail_val)
+                    st.caption(
+                        f"**{_detail_label}** — detent {_detail_level:.2f}, "
+                        f"target ~{_word_target:,} words "
+                        f"(acceptable range {_word_lo:,}–{_word_hi:,})."
+                    )
+
+                    _btn_col1, _btn_col2 = st.columns([1, 1])
+                    with _btn_col1:
+                        _gen_narrative = st.form_submit_button(
+                            "Generate narrative",
+                            type="primary",
+                            help="Submits the current narrative settings as a stable snapshot. Requires Anthropic API key.",
+                        )
+                    with _btn_col2:
+                        _gen_tables = st.form_submit_button(
+                            "Build tables only",
+                            help="No API key needed — builds IC, SOE and Word download locally using the current settings.",
+                        )
+
+                # Same strategy as the working UA Assistant: the form submit is
+                # the atomic snapshot.  Read the submitted slider value from
+                # session_state immediately after submit and then recompute all
+                # dependent quantities before building tables or the AI prompt.
+                if _gen_narrative or _gen_tables:
+                    try:
+                        _detail_val = float(st.session_state.get("pwr_ai_detail", _detail_val))
+                    except Exception:
+                        _detail_val = float(_detail_val)
+
+                    _detail_level = _narrative_detail_level(_detail_val)
+                    _detail_val = _detail_level
+                    _word_target = _narrative_detail_word_target(_detail_val)
+                    _word_lo, _word_hi = _narrative_detail_word_range(_detail_val)
+                    _detail_label = _narrative_detail_descriptor(_detail_val)
+
+                    st.session_state["pwr_ai_last_submitted_detail"] = _detail_val
+                    st.caption(
+                        f"AI request snapshot: detail {_detail_level:.2f}, "
+                        f"{_detail_label}, target ~{_word_target:,} words "
+                        f"(acceptable range {_word_lo:,}–{_word_hi:,})."
+                    )
+
+                # API response budget, timeout, and prompt word instruction all
+                # scale from the same submitted 21-level detent.
+                _max_tokens = _narrative_max_tokens(_detail_val)
+                _timeout_s = _narrative_timeout_s(_detail_val)
+                _word_instruction = (
+                    f"Target approximately {_word_target:,} words; acceptable range "
+                    f"{_word_lo:,}–{_word_hi:,} words."
+                )
+
+                # Instruction scales continuously — more topics added as detail increases
+                _topics = [
+                    (0.00, "the initiating event and immediate plant response"),
+                    (0.20, "the thermal-hydraulic progression"),
+                    (0.40, "safety system performance (ECCS, PORV, RPS)"),
+                    (0.55, "fuel and cladding thermal response with peak values"),
+                    (0.65, "reactivity feedback and kinetics behaviour"),
+                    (0.75, "acceptance criteria evaluation and regulatory significance"),
+                    (0.85, "specific parameter values and times for all key events"),
+                    (0.92, "uncertainty considerations and sensitivity to key assumptions"),
+                ]
+                _active = [t for thresh, t in _topics if _detail_val >= thresh]
+                if len(_active) == 1:
+                    _instruction = f"Focus on {_active[0]}. Omit minor details."
+                else:
+                    _instruction = ("Cover the following in order: "
+                                    + "; ".join(f"({i+1}) {t}" for i, t in enumerate(_active)) + ".")
+
+                # SOE filter: brief mode only includes key events
+                _soe_filter = ({"scram", "trip", "inject", "DNB", "peak", "End", "start"}
+                                if _detail_val < 0.25 else None)
+
+                def _build_ic_final(df, use_english=False):
+                        """Build a list of (parameter, initial, final, units) rows."""
+                        t   = df["Time (s)"]
+                        rows = []
+
+                        def ic_fin(col, label, units, scale=1.0, fmt=".1f", offset=0.0):
+                            if col in df.columns:
+                                s = df[col].dropna()
+                                if len(s) < 2:
+                                    return
+                                ic  = (float(s.iloc[0])  + offset) * scale
+                                fin = (float(s.iloc[-1]) + offset) * scale
+                                rows.append((label,
+                                             f"{ic:{fmt}}",
+                                             f"{fin:{fmt}}",
+                                             units))
+
+                        if use_english:
+                            ic_fin("RCS Pressure (kPa)",       "RCS Pressure",          "psia", scale=0.145038, fmt=".1f")
+                            if "RCS Temperature (K)" in df.columns:
+                                _s = df["RCS Temperature (K)"].dropna()
+                                if len(_s) >= 2:
+                                    rows.append(("RCS Temperature", f"{((float(_s.iloc[0])-273.15)*9/5+32):.1f}", f"{((float(_s.iloc[-1])-273.15)*9/5+32):.1f}", "°F"))
+                        else:
+                            ic_fin("RCS Pressure (kPa)",       "RCS Pressure",          "kPa",  fmt=".0f")
+                            ic_fin("RCS Temperature (K)",      "RCS Temperature",       "°C",   offset=-273.15, fmt=".1f")
+                        ic_fin("RK Total Power (MW)",      "Core Power",            "MW",   fmt=".1f")
+                        ic_fin("Core Power (MW)",          "Heat to Coolant",       "MW",   fmt=".1f")
+                        ic_fin("Total Mass Scaled",        "RCS Inventory (scaled)","—",    fmt=".4f")
+                        ic_fin("Vessel Level (m)",         "Vessel Level",          "ft" if use_english else "m",    scale=(3.28084 if use_english else 1.0), fmt=".2f")
+                        ic_fin("Pump Mass Flow (kg/s)",    "RCP Mass Flow",         "lb/s" if use_english else "kg/s", scale=(2.20462 if use_english else 1.0), fmt=".0f")
+                        ic_fin("Pump Speed (rpm)",         "RCP Speed",             "rpm",  fmt=".0f")
+                        if use_english:
+                            # Temperature table values are kept in selected display units; Fahrenheit conversion is handled explicitly.
+                            for _col, _label in [("Clad Surface Temp (K)", "Avg Clad Temp"), ("Hot Pin Clad Temp (K)", "Hot Pin Clad Temp"), ("Hot Pin Fuel Temp (K)", "Hot Pin Fuel Temp")]:
+                                if _col in df.columns:
+                                    _s = df[_col].dropna()
+                                    if len(_s) >= 2:
+                                        rows.append((_label, f"{((float(_s.iloc[0])-273.15)*9/5+32):.1f}", f"{((float(_s.iloc[-1])-273.15)*9/5+32):.1f}", "°F"))
+                        else:
+                            ic_fin("Clad Surface Temp (K)",    "Avg Clad Temp",         "°C",   offset=-273.15, fmt=".1f")
+                            ic_fin("Hot Pin Clad Temp (K)",    "Hot Pin Clad Temp",     "°C",   offset=-273.15, fmt=".1f")
+                            ic_fin("Hot Pin Fuel Temp (K)",    "Hot Pin Fuel Temp",     "°C",   offset=-273.15, fmt=".1f")
+                        ic_fin("DNBR",                     "DNBR",                  "—",    fmt=".3f")
+                        ic_fin("Equilibrium Quality (-)",  "Equilibrium Quality",   "—",    fmt=".4f")
+                        ic_fin("Void Fraction (-)",        "Void Fraction",         "—",    fmt=".4f")
+                        ic_fin("SG Heat Removal (MW)",     "SG Heat Removal",       "MW",   fmt=".1f")
+                        ic_fin("Pressurizer Level (m)",    "Pressurizer Level",     "ft" if use_english else "m", scale=(3.28084 if use_english else 1.0), fmt=".2f")
+                        ic_fin("RCS Boron (ppm)",          "RCS Boron",             "ppm",  fmt=".0f")
+                        ic_fin("Accumulator Level (m)",    "Accumulator Level",     "ft" if use_english else "m", scale=(3.28084 if use_english else 1.0), fmt=".2f")
+                        ic_fin("Reactivity net (pcm)",     "Net Reactivity",        "pcm",  fmt=".1f")
+                        return rows
+
+                # Tables-only path (no API call)
+                if _gen_tables:
+                    _soe_tbl   = _build_sequence_of_events(df, filter_keywords=None)
+                    _ic_r      = _build_ic_final(df, use_english=_use_english)
+                    st.session_state[_tables_key] = {"soe": _soe_tbl, "ic": _ic_r, "tables_only": True}
+
+                # Full narrative path (section-by-section API calls)
+                if _gen_narrative:
+                    # Place progress and the live narrative outside st.status so Streamlit
+                    # renders section-by-section updates visibly while each API call runs.
+                    # After completion we rerun once, which clears the live placeholder and
+                    # leaves only the stored final narrative below.
+                    _ai_progress = st.progress(0, text="Preparing AI narrative request…")
+                    _pwr_ai_live_box = st.empty()
+                    with st.status("Preparing AI event narrative…", expanded=True) as _ai_status:
+                        _ai_status.update(label="Collecting FLARE/FLARECON results and event-sequence data…", state="running")
+                        _ai_progress.progress(5, text="Collecting FLARE/FLARECON results and event-sequence data…")
+                        time.sleep(0.05)
+                        _data_summary = _build_narrative_prompt(df, run_case, detail_level=_detail_val, use_english=_use_english)
+                        _soe_table    = _build_sequence_of_events(
+                            df, filter_keywords=_soe_filter
+                        )
+
+                        def _pwr_ai_section_plan(detail_level: float):
+                            """Return ordered narrative sections and relative word weights.
+
+                            The plan is deterministic so progress is available before any
+                            long API call.  More sections are added as narrative detail
+                            increases; each section is generated by a separate API call.
+                            """
+                            d = float(np.clip(detail_level, 0.0, 1.0))
+                            sections = [
+                                {
+                                    "title": "Event Sequence and Plant Response",
+                                    "focus": (
+                                        "Describe the initiating event, major thermal-hydraulic progression, "
+                                        "plant trips, inventory changes, and the cause-and-effect sequence that "
+                                        "leads to the safety-related figures of merit."
+                                    ),
+                                    "weight": 0.42,
+                                },
+                                {
+                                    "title": "Regulatory Figures of Merit and GDC Bottom Line",
+                                    "focus": (
+                                        "Compare the important safety-related figures of merit to the supplied "
+                                        "regulatory criteria and state whether the results support the relevant "
+                                        "GDC safety functions."
+                                    ),
+                                    "weight": 0.58,
+                                },
+                            ]
+                            if d >= 0.15:
+                                sections.insert(1, {
+                                    "title": "Safety System and Thermal-Hydraulic Response",
+                                    "focus": (
+                                        "Explain ECCS, accumulator, HPSI/LPSI, CVCS, PORV, RCP coastdown, SG heat "
+                                        "removal, pressure, level, and inventory behavior to the extent relevant."
+                                    ),
+                                    "weight": 0.22,
+                                })
+                            if d >= 0.25:
+                                sections.insert(-1, {
+                                    "title": "Fuel Integrity and Core Thermal Response",
+                                    "focus": (
+                                        "Discuss PCT, ECR, hydrogen generation, DNBR/dryout, fuel temperature, "
+                                        "rod-failure diagnostics, and applicable LOCA/non-LOCA fuel design limits."
+                                    ),
+                                    "weight": 0.24,
+                                })
+                            if d >= 0.40:
+                                sections.insert(-1, {
+                                    "title": "Containment Response and Combustible Gas Control",
+                                    "focus": (
+                                        "Discuss FLARECON containment pressure/temperature, sump and heat removal "
+                                        "behavior, hydrogen concentration, flammability, and 10 CFR 50.44 context if data are present."
+                                    ),
+                                    "weight": 0.18,
+                                })
+                            if d >= 0.55:
+                                sections.insert(-1, {
+                                    "title": "Source Term and Radiological Consequences",
+                                    "focus": (
+                                        "Discuss source-term selection, radionuclide release implications, NOTBADTRAD dose, "
+                                        "iodine-spike dose, and the relevant 10 CFR 50.34(a)(1), 50.67, 100.11, and 100.21(c)(2) criteria if data are present."
+                                    ),
+                                    "weight": 0.18,
+                                })
+                            if d >= 0.75:
+                                sections.insert(-1, {
+                                    "title": "Review Observations and Model Caveats",
+                                    "focus": (
+                                        "Identify notable modeling assumptions, diagnostic limitations, and interpretation caveats apparent from the supplied data only."
+                                    ),
+                                    "weight": 0.12,
+                                })
+                            total = sum(s["weight"] for s in sections) or 1.0
+                            for s in sections:
+                                s["weight"] = s["weight"] / total
+                            return sections
+
+                        def _anthropic_section_request(section_title, section_focus, section_words, completed_titles):
+                            section_hi = max(90, int(round(section_words * 1.10)))
+                            section_lo = max(60, int(round(section_words * 0.85)))
+                            section_tokens = int(min(3500, max(500, round(section_hi * 1.55 + 250))))
+                            section_timeout = int(min(_timeout_s, max(90, round(60 + section_hi * 0.18))))
+                            prior = "; ".join(completed_titles) if completed_titles else "none"
+                            prompt = (
+                                "You are a PWR safety analysis engineer reviewing the output of a FLARE transient simulation. "
+                                "Generate one section of a larger technical narrative. "
+                                f"Write only this section and begin with exactly this heading on its own line: ### {section_title}. "
+                                "Then insert one blank line before the body text. "
+                                f"Section target: about {section_words} words. Hard maximum: {section_hi} words. "
+                                "Stop at or before the hard maximum even if additional details could be discussed. Do not write other sections. Body text must be ordinary paragraph text only; do not put body text on the same line as the heading; do not use markdown heading markers or full-line bold for body paragraphs. "
+                                f"Completed prior section titles: {prior}. Avoid repeating prior-section material except as needed for continuity. "
+                                f"This section focus: {section_focus} "
+                                f"Overall narrative setting: {_detail_label}, detent {_detail_val:.2f}; total target about {_word_target} words and total hard maximum {_word_hi} words. "
+                                + _ai_unit_policy_text(_use_english) + " "
+                                + f"General scope instruction: {_instruction} "
+                                + NARRATIVE_QUALITY_GUIDANCE + " "
+                                "Maintain the narrative balance requested by the user: explain the accident sequence of events, "
+                                "then connect that sequence to safety-related figures of merit and regulatory criteria. "
+                                "Use only supplied data; do not invent values. If a data category is absent, say only that it was not available and move on.\n\n"
+                                "Simulation data summary:\n" + _data_summary
+                            )
+                            resp = requests.post(
+                                "https://api.anthropic.com/v1/messages",
+                                headers={
+                                    "x-api-key":         _current_api_key,
+                                    "anthropic-version": "2023-06-01",
+                                    "content-type":      "application/json",
+                                },
+                                json={
+                                    "model":      _ANTHROPIC_MODEL,
+                                    "max_tokens": section_tokens,
+                                    "messages":   [{"role": "user", "content": prompt}],
+                                },
+                                timeout=section_timeout,
+                            )
+                            resp.raise_for_status()
+                            resp_json = resp.json()
+                            text_blocks = [
+                                block.get("text", "")
+                                for block in resp_json.get("content", [])
+                                if block.get("type") == "text" and block.get("text")
+                            ]
+                            section_text = "\n".join(text_blocks).strip()
+                            if not section_text:
+                                section_text = f"### {section_title}\n\n⚠️ API returned no narrative text for this section."
+                            stop_reason = resp_json.get("stop_reason")
+                            if stop_reason == "max_tokens":
+                                section_text += (
+                                    f"\n\n⚠️ Section may be incomplete because it reached its per-section budget ({section_tokens} tokens)."
+                                )
+                            elif stop_reason and stop_reason not in {"end_turn", "stop_sequence"}:
+                                section_text += f"\n\n⚠️ Section stopped with API stop_reason: {stop_reason}."
+                            section_text = _narrative_trim_to_word_limit(section_text.strip(), section_hi)
+                            return _normalize_ai_section_markdown(section_text, section_title)
+
+                        try:
+                            _ai_status.update(label="Planning narrative sections from requested detail level…", state="running")
+                            _sections = _pwr_ai_section_plan(_detail_val)
+                            _n_sections = max(1, len(_sections))
+                            _ai_progress.progress(8, text=f"Planned {_n_sections} narrative sections.")
+                            time.sleep(0.05)
+                            _live_box = _pwr_ai_live_box
+                            _section_texts = []
+                            _completed_titles = []
+                            st.session_state[_narrative_key] = ""
+
+                            for _idx, _section in enumerate(_sections, start=1):
+                                _pct_start = int(10 + ((_idx - 1) / _n_sections) * 85)
+                                _pct_done  = int(10 + (_idx / _n_sections) * 85)
+                                _sec_words = max(80, int(round(_word_target * float(_section.get("weight", 1.0 / _n_sections)))))
+                                _title = _section["title"]
+                                _ai_progress.progress(
+                                    _pct_start,
+                                    text=f"Generating section {_idx}/{_n_sections}: {_title}…",
+                                )
+                                _ai_status.update(
+                                    label=f"Generating section {_idx}/{_n_sections}: {_title}…",
+                                    state="running",
+                                )
+                                time.sleep(0.05)
+                                _section_text = _anthropic_section_request(
+                                    _title,
+                                    _section.get("focus", "Write the requested technical section."),
+                                    _sec_words,
+                                    _completed_titles,
+                                )
+                                _section_texts.append(_section_text)
+                                _completed_titles.append(_title)
+                                _partial = "\n\n".join(_section_texts).strip()
+                                st.session_state[_narrative_key] = _partial
+                                _live_box.markdown(_partial)
+                                _ai_progress.progress(
+                                    _pct_done,
+                                    text=f"Completed section {_idx}/{_n_sections}: {_title}.",
+                                )
+                                time.sleep(0.05)
+
+                            _narrative_text = _normalize_ai_section_markdown(
+                                _narrative_trim_to_word_limit("\n\n".join(_section_texts).strip(), _word_hi)
+                            )
+                            _live_box.empty()
+                            st.session_state[_narrative_key] = _narrative_text + _soe_table
+                            st.session_state[_tables_key] = {
+                                "soe": _soe_table,
+                                "ic":  _build_ic_final(df, use_english=_use_english),
+                                "tables_only": False,
+                            }
+                            _ai_progress.progress(100, text="AI narrative complete.")
+                            _ai_status.update(label="AI narrative complete.", state="complete")
+                            time.sleep(0.25)
+                            st.rerun()
+                        except Exception as _ne:
+                            try:
+                                _ai_progress.progress(100, text="AI narrative failed.")
+                                _ai_status.update(label=f"AI narrative failed: {_ne}", state="error")
+                            except Exception:
+                                pass
+                            st.session_state[_narrative_key] = f"⚠️  API error: {_ne}"
+
+                # ── Display: narrative (if generated) then tables ─────────────
+                if st.session_state.get(_narrative_key):
+                    st.markdown(st.session_state[_narrative_key])
+
+                # Tables come from either path. The Initial Conditions & Final State
+                # table is intentionally displayed only for the explicit
+                # "Build tables only" path; generated narratives keep the run view concise.
+                _stored_tables = st.session_state.get(_tables_key)
+                _tables_only_active = bool(_stored_tables and _stored_tables.get("tables_only"))
+                _ic_rows = (_stored_tables.get("ic", [])
+                            if (_stored_tables and _tables_only_active) else [])
+
+                # SOE — render explicitly when no narrative (tables-only path)
+                if _stored_tables and not st.session_state.get(_narrative_key):
+                    _soe_md = _stored_tables.get("soe", "")
+                    if _soe_md:
+                        st.markdown(_soe_md)
+
+                if _tables_only_active:
+                    if not _ic_rows:
+                        _ic_rows = _build_ic_final(df)
+                    if _ic_rows:
+                        st.markdown("---\n**Initial Conditions & Final State**")
+                        import pandas as _pd2
+                        _ic_df = _pd2.DataFrame(
+                            _ic_rows, columns=["Parameter", "Initial", "Final", "Units"]
+                        )
+                        st.dataframe(_ic_df, hide_index=True, width="stretch")
+
+                # ── Download as Word document (available from either button) ─
+                if _stored_tables or st.session_state.get(_narrative_key):
+                    def _narrative_to_docx(text, case_name, ic_rows=None, report_tables=None):
+                        """Convert narrative markdown + SOE/source-term/dose tables to a .docx bytes buffer."""
+                        try:
+                            from docx import Document as DocxDocument
+                            from docx.shared import Pt, RGBColor, Inches
+                        except ImportError:
+                            return None   # python-docx not installed
+
+                        import re, io
+                        from datetime import date
+
+                        doc = DocxDocument()
+
+                        # Page margins
+                        for section in doc.sections:
+                            section.top_margin    = Inches(1)
+                            section.bottom_margin = Inches(1)
+                            section.left_margin   = Inches(1.25)
+                            section.right_margin  = Inches(1.25)
+
+                        # Title
+                        title = doc.add_heading(f"Event Narrative — {case_name}", level=1)
+                        title.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+
+                        # Date line
+                        from datetime import date
+                        dp = doc.add_paragraph(f"Generated: {date.today().isoformat()}")
+                        dp.runs[0].font.size = Pt(9)
+                        dp.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+                        doc.add_paragraph()   # spacer
+
+                        # Split narrative from SOE table
+                        parts = text.split("\n\n---\n\n")
+                        narrative_text = parts[0].strip()
+                        soe_text = parts[1].strip() if len(parts) > 1 else None
+
+                        # Write narrative paragraphs
+                        for para in narrative_text.split("\n\n"):
+                            para = para.strip()
+                            if not para:
+                                continue
+                            # Bold inline (**text**)
+                            p = doc.add_paragraph()
+                            p.paragraph_format.space_after = Pt(6)
+                            # Simple inline bold parse
+                            segments = re.split(r'\*\*(.*?)\*\*', para)
+                            for i, seg in enumerate(segments):
+                                run = p.add_run(seg)
+                                run.bold = (i % 2 == 1)
+                                run.font.size = Pt(11)
+
+                        # SOE table
+                        if soe_text:
+                            doc.add_paragraph()
+                            h = doc.add_heading("Sequence of Events", level=2)
+                            h.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+
+                            # Parse markdown table rows
+                            rows = [r for r in soe_text.split("\n")
+                                    if r.startswith("|") and "---" not in r]
+                            if rows:
+                                # Extract cells
+                                parsed = [[c.strip() for c in r.strip("|").split("|")]
+                                          for r in rows]
+                                tbl = doc.add_table(rows=len(parsed), cols=2)
+                                tbl.style = "Table Grid"
+                                for ri, row_data in enumerate(parsed):
+                                    cells = tbl.rows[ri].cells
+                                    for ci, val in enumerate(row_data[:2]):
+                                        cells[ci].text = val
+                                        run = cells[ci].paragraphs[0].runs
+                                        if run:
+                                            run[0].font.size = Pt(10)
+                                            if ri == 0:   # header row
+                                                run[0].bold = True
+
+                        # IC / Final State table
+                        if ic_rows:
+                            doc.add_paragraph()
+                            h2 = doc.add_heading("Initial Conditions & Final State", level=2)
+                            h2.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+                            border = {"style": "single", "size": 1, "color": "CCCCCC"}
+                            from docx.oxml.ns import qn
+                            from docx.oxml import OxmlElement
+                            tbl2 = doc.add_table(rows=1 + len(ic_rows), cols=4)
+                            tbl2.style = "Table Grid"
+                            # Header row
+                            hdr_cells = tbl2.rows[0].cells
+                            for ci, hdr in enumerate(["Parameter", "Initial", "Final", "Units"]):
+                                hdr_cells[ci].text = hdr
+                                run = hdr_cells[ci].paragraphs[0].runs
+                                if run:
+                                    run[0].bold = True
+                                    run[0].font.size = Pt(10)
+                            # Data rows
+                            for ri, (param, ic, fin, units) in enumerate(ic_rows):
+                                row_cells = tbl2.rows[ri + 1].cells
+                                for ci, val in enumerate([param, ic, fin, units]):
+                                    row_cells[ci].text = val
+                                    run = row_cells[ci].paragraphs[0].runs
+                                    if run:
+                                        run[0].font.size = Pt(10)
+
+
+                        # Source-term and dose tables exactly as displayed in Results panel
+                        if report_tables:
+                            current_section = None
+                            for item in report_tables:
+                                section = item.get("section", "")
+                                title_txt = item.get("title", "")
+                                df_tbl = item.get("df")
+                                if df_tbl is None or getattr(df_tbl, "empty", True):
+                                    continue
+                                if section != current_section:
+                                    doc.add_paragraph()
+                                    h3 = doc.add_heading(section, level=2)
+                                    h3.runs[0].font.color.rgb = RGBColor(0x2E, 0x75, 0xB6)
+                                    current_section = section
+                                if title_txt:
+                                    p_title = doc.add_paragraph()
+                                    r_title = p_title.add_run(title_txt)
+                                    r_title.bold = True
+                                    r_title.font.size = Pt(10)
+                                cols = [str(c) for c in df_tbl.columns]
+                                tblx = doc.add_table(rows=1 + len(df_tbl), cols=len(cols))
+                                tblx.style = "Table Grid"
+                                for ci, hdr in enumerate(cols):
+                                    cell = tblx.rows[0].cells[ci]
+                                    cell.text = hdr
+                                    runs = cell.paragraphs[0].runs
+                                    if runs:
+                                        runs[0].bold = True
+                                        runs[0].font.size = Pt(8)
+                                for ri, (_, row) in enumerate(df_tbl.iterrows(), start=1):
+                                    for ci, col in enumerate(cols):
+                                        cell = tblx.rows[ri].cells[ci]
+                                        cell.text = str(row.get(col, ""))
+                                        runs = cell.paragraphs[0].runs
+                                        if runs:
+                                            runs[0].font.size = Pt(8)
+                                doc.add_paragraph()
+
+                        buf = io.BytesIO()
+                        doc.save(buf)
+                        buf.seek(0)
+                        return buf.read()
+
+                    _docx_text = (st.session_state.get(_narrative_key) or
+                                  (_stored_tables.get("soe", "") if _stored_tables else ""))
+                    _docx_report_tables = build_source_term_dose_report_tables(run_case, run_dir=_run_dir)
+                    _docx_bytes = _narrative_to_docx(
+                        _docx_text, run_case,
+                        ic_rows=_ic_rows,
+                        report_tables=_docx_report_tables,
+                    )
+                    if _docx_bytes is not None:
+                        st.download_button(
+                            label="⬇  Download narrative (.docx)",
+                            data=_docx_bytes,
+                            file_name=f"{run_case}_narrative.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="dl_narrative_docx",
+                        )
+                    else:
+                        st.info("Install **python-docx** to enable Word download: "
+                                "`pip install python-docx`")
 

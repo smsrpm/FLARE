@@ -98,7 +98,7 @@ def _load_model():
             or os.environ.get("ANTHROPIC_MODEL")
             or "claude-sonnet-4-5")
 
-def _anthropic_text(system_prompt, user_prompt, max_tokens=4000):
+def _anthropic_text(system_prompt, user_prompt, max_tokens=4000, timeout_s=90):
     """Call Claude and return (text, stop_reason).
 
     Raises RuntimeError on API / HTTP errors. The stop_reason lets callers
@@ -121,7 +121,7 @@ def _anthropic_text(system_prompt, user_prompt, max_tokens=4000):
             "system": system_prompt,
             "messages": [{"role": "user", "content": user_prompt}],
         },
-        timeout=90,
+        timeout=timeout_s,
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:600]}")
@@ -132,6 +132,195 @@ def _anthropic_text(system_prompt, user_prompt, max_tokens=4000):
     ).strip()
     stop_reason = data.get("stop_reason", "")
     return text, stop_reason
+
+
+
+# ── AI narrative detail / section-generation helpers ─────────────────────────
+def _risk_detail_level(detail):
+    """Snap a narrative detail slider value to one of 21 detents."""
+    try:
+        return max(0.0, min(1.0, round(float(detail) / 0.05) * 0.05))
+    except Exception:
+        return 0.55
+
+
+def _risk_detail_word_target(detail):
+    """Return the intended whole-report word target for the 21 detail levels."""
+    detail = _risk_detail_level(detail)
+    targets = {
+        0.00: 300, 0.05: 400, 0.10: 500, 0.15: 650, 0.20: 800,
+        0.25: 1000, 0.30: 1200, 0.35: 1450, 0.40: 1700, 0.45: 2000,
+        0.50: 2300, 0.55: 2600, 0.60: 2900, 0.65: 3200, 0.70: 3500,
+        0.75: 3800, 0.80: 4100, 0.85: 4400, 0.90: 4700, 0.95: 5000,
+        1.00: 5300,
+    }
+    return targets.get(round(detail, 2), 2600)
+
+
+def _risk_detail_word_range(detail):
+    target = _risk_detail_word_target(detail)
+    lo = max(250, int(round(target * 0.85)))
+    hi = int(round(target * 1.15))
+    return lo, hi
+
+
+def _risk_detail_descriptor(detail):
+    detail = _risk_detail_level(detail)
+    if detail <= 0.10:
+        return "abstract-level"
+    if detail <= 0.30:
+        return "executive-summary"
+    if detail <= 0.55:
+        return "moderate technical"
+    if detail <= 0.80:
+        return "detailed technical"
+    return "full technical report"
+
+
+def _risk_narrative_max_tokens(word_max):
+    """Generous but bounded token budget for a section or full narrative."""
+    try:
+        return int(min(12000, max(900, round(float(word_max) * 2.8 + 300))))
+    except Exception:
+        return 2500
+
+
+def _risk_narrative_timeout_s(word_target):
+    try:
+        return int(min(420, max(90, 60 + float(word_target) * 0.06)))
+    except Exception:
+        return 180
+
+
+def _risk_word_count(text):
+    import re as _re
+    return len(_re.findall(r"\b[\w./%+\-×⁻]+\b", str(text or "")))
+
+
+def _risk_clamp_words(text, max_words):
+    """Softly clamp excessive section text at a paragraph boundary."""
+    import re as _re
+    s = str(text or "").strip()
+    if not s or _risk_word_count(s) <= max_words:
+        return s
+    words = _re.findall(r"\S+", s)
+    clipped = " ".join(words[:max_words]).rstrip()
+    # Prefer ending at the last sentence terminator in the final 25% of the clipped text.
+    tail_start = max(0, int(len(clipped) * 0.75))
+    last = max(clipped.rfind(". ", tail_start), clipped.rfind("; ", tail_start))
+    if last > 0:
+        clipped = clipped[:last + 1]
+    return clipped.rstrip() + "\n\n*[Narrative shortened to match the selected detail level.]*"
+
+
+def _risk_sanitize_markdown(text, fallback_title="Risk Narrative Section"):
+    """Normalize AI markdown so only actual section headings render as headings."""
+    import re as _re
+    s = str(text or "").replace("\r\n", "\n").strip()
+    if not s:
+        return f"### {fallback_title}\n\n"
+    # Convert '# Title Body starts here' into a title line plus body paragraph.
+    lines = []
+    for line in s.split("\n"):
+        raw = line.rstrip()
+        stripped = raw.strip()
+        m = _re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if m:
+            content = m.group(2).strip()
+            # Split at the first sentence-like boundary after a compact title.
+            # Handles model output such as '### Summary The case results...'.
+            title_body = _re.match(r"^([A-Z][A-Za-z0-9/\-–—&,() ]{3,80}?)(\s+(?:A|An|The|This|These|In|For|Overall|Across)\b.+)$", content)
+            if title_body:
+                title = title_body.group(1).strip(" :-–—")
+                body = title_body.group(2).strip()
+                lines.append(f"### {title}")
+                lines.append("")
+                lines.append(body)
+            else:
+                lines.append(f"### {content.lstrip('# ').strip()}")
+            continue
+        # Demote accidental heading-like bold paragraphs.
+        stripped = _re.sub(r"^\*\*(.{40,})\*\*$", r"\1", stripped)
+        lines.append(stripped)
+    out = "\n".join(lines)
+    out = _re.sub(r"\n{3,}", "\n\n", out).strip()
+    return out
+
+
+def _risk_section_plan(detail):
+    """Build a deterministic report plan from the 21-level detail setting."""
+    detail = _risk_detail_level(detail)
+    target = _risk_detail_word_target(detail)
+    if target <= 500:
+        titles = [
+            "Risk Summary and Boundary Margin",
+            "Regulatory Interpretation and Conclusions",
+        ]
+    elif target <= 1000:
+        titles = [
+            "Risk Summary and Boundary Margin",
+            "Dominant Contributors and Event Categories",
+            "Regulatory Interpretation and Conclusions",
+        ]
+    elif target <= 2000:
+        titles = [
+            "Risk Summary and Boundary Margin",
+            "Event Category Review",
+            "Dose Contributors and Margins",
+            "Regulatory Interpretation and Conclusions",
+        ]
+    elif target <= 3500:
+        titles = [
+            "Risk Summary and Boundary Margin",
+            "Event Category Review",
+            "Dominant Dose Contributors",
+            "Cases Near or Beyond Limits",
+            "Uncertainty, Frequency Sensitivity, and Conclusions",
+        ]
+    else:
+        titles = [
+            "Risk Summary and Boundary Margin",
+            "Frequency-Consequence Framework",
+            "Event Category Review",
+            "Dominant Dose Contributors",
+            "Cases Near or Beyond Limits",
+            "Uncertainty, Frequency Sensitivity, and Conclusions",
+        ]
+    base = target // len(titles)
+    remainder = target - base * len(titles)
+    plan = []
+    for i, title in enumerate(titles):
+        words = int(base + (remainder if i == len(titles) - 1 else 0))
+        plan.append({"title": title, "target_words": words, "max_words": int(round(words * 1.18))})
+    return plan
+
+
+def _risk_build_common_ai_context(sum_df, detail):
+    """Prepare compact risk context shared by all section-generation calls."""
+    _table_csv = sum_df.to_csv(index=False)
+    _n_fail = int((sum_df["Status"].astype(str).str.upper() == "FAIL").sum()) if "Status" in sum_df else 0
+    _n_cases = len(sum_df)
+    _max_row = None
+    try:
+        _tmp = sum_df.copy()
+        _tmp["_dose_num"] = pd.to_numeric(_tmp["EAB TEDE Total (rem)"].replace("< 1e-6", "0"), errors="coerce")
+        _max_row = _tmp.sort_values("_dose_num", ascending=False).head(1).to_dict("records")
+    except Exception:
+        _max_row = None
+    _detail = _risk_detail_level(detail)
+    _word_target = _risk_detail_word_target(_detail)
+    _lo, _hi = _risk_detail_word_range(_detail)
+    return {
+        "detail": _detail,
+        "detail_label": _risk_detail_descriptor(_detail),
+        "word_target": _word_target,
+        "word_low": _lo,
+        "word_high": _hi,
+        "n_cases": _n_cases,
+        "n_fail": _n_fail,
+        "max_row": _max_row,
+        "table_csv": _table_csv,
+    }
 
 # ── Constants (must be defined before sidebar) ─────────────────────────────────
 _DEFAULT_FREQ  = 1e-3
@@ -232,6 +421,35 @@ section[data-testid="stSidebar"] input {
     color: #ffffff !important;
     border: 1px solid var(--dark-border) !important;
 }
+
+
+/* Sidebar secondary/default buttons: keep Load Previous Run buttons readable on dark theme. */
+section[data-testid="stSidebar"] div.stButton > button,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button,
+section[data-testid="stSidebar"] button[kind="secondary"] {
+    background: #263142 !important;
+    color: #ffffff !important;
+    border: 1px solid #f97316 !important;
+    border-radius: 6px !important;
+    opacity: 1 !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:hover,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover,
+section[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: #f97316 !important;
+    color: #ffffff !important;
+    border-color: #fb923c !important;
+}
+section[data-testid="stSidebar"] div.stButton > button:disabled,
+section[data-testid="stSidebar"] div[data-testid="stButton"] > button:disabled,
+section[data-testid="stSidebar"] button[kind="secondary"]:disabled,
+section[data-testid="stSidebar"] button[disabled] {
+    background: #374151 !important;
+    color: #d1d5db !important;
+    border: 1px solid #6b7280 !important;
+    opacity: 1 !important;
+}
+
 section[data-testid="stSidebar"] button[kind="primary"] {
     background: var(--danger) !important;
     color: white !important;
@@ -1508,91 +1726,153 @@ if st.session_state.risk_results:
             )
         st.caption(
             "Generate a technical narrative of the F-C chart, dominant contributors, "
-            "dose-limit margins, and any cases that challenge the NEI 18-04 target."
+            "dose-limit margins, and any cases that challenge the NEI 18-04 target. "
+            "The selected detail level uses the same 21-level report-length scale as the "
+            "PWR Simulator and UA tools."
         )
-        _risk_detail = st.slider(
-            "Narrative detail", 0.0, 1.0, 0.55, 0.05,
-            key="risk_ai_detail",
-            help="Lower values produce a short executive summary; higher values produce a more detailed technical discussion.",
-        )
-        _risk_cols = st.columns([1, 1, 3])
-        with _risk_cols[0]:
-            _gen_risk_ai = st.button("Generate narrative", key="risk_ai_generate")
-        with _risk_cols[1]:
-            if st.button("Clear", key="risk_ai_clear"):
-                st.session_state.pop("risk_ai_narrative", None)
-                st.rerun()
+
+        with st.form("risk_ai_generate_form", clear_on_submit=False):
+            _risk_detail = st.slider(
+                "Narrative detail", 0.0, 1.0, 0.55, 0.05,
+                key="risk_ai_detail",
+                help=(
+                    "Twenty-one detents from 0.00 to 1.00. 0.00 is an abstract-level "
+                    "summary of roughly 300 words; 1.00 is a full technical discussion "
+                    "of roughly 5,300 words."
+                ),
+            )
+            _risk_detail = _risk_detail_level(_risk_detail)
+            _risk_word_target = _risk_detail_word_target(_risk_detail)
+            _risk_word_lo, _risk_word_hi = _risk_detail_word_range(_risk_detail)
+            st.caption(
+                f"Detail {_risk_detail:.2f}: {_risk_detail_descriptor(_risk_detail)} narrative; "
+                f"target ~{_risk_word_target:,} words, expected range {_risk_word_lo:,}–{_risk_word_hi:,} words."
+            )
+            _risk_cols = st.columns([1, 1, 3])
+            with _risk_cols[0]:
+                _gen_risk_ai = st.form_submit_button("Generate narrative")
+            with _risk_cols[1]:
+                _clear_risk_ai = st.form_submit_button("Clear")
+
+        if _clear_risk_ai:
+            st.session_state.pop("risk_ai_narrative", None)
+            st.session_state.pop("risk_ai_narrative_sections", None)
+            st.rerun()
 
         if _gen_risk_ai:
             try:
-                _table_csv = sum_df.to_csv(index=False)
-                _n_fail = int((sum_df["Status"].astype(str).str.upper() == "FAIL").sum()) if "Status" in sum_df else 0
-                _n_cases = len(sum_df)
-                _max_row = None
-                try:
-                    _tmp = sum_df.copy()
-                    _tmp["_dose_num"] = pd.to_numeric(_tmp["EAB TEDE Total (rem)"].replace("< 1e-6", "0"), errors="coerce")
-                    _max_row = _tmp.sort_values("_dose_num", ascending=False).head(1).to_dict("records")
-                except Exception:
-                    _max_row = None
+                _risk_detail = float(st.session_state.get("risk_ai_detail", _risk_detail))
+                _risk_detail = _risk_detail_level(_risk_detail)
+                _ctx = _risk_build_common_ai_context(sum_df, _risk_detail)
+                _plan = _risk_section_plan(_risk_detail)
+                _total_sections = len(_plan)
+                _total_target = sum(int(s["target_words"]) for s in _plan)
+                _progress = st.progress(0.0, text="Planning AI risk narrative sections…")
+                _status = st.empty()
+                _live = st.empty()
+                _status.info(
+                    "Section plan: " + "; ".join(
+                        f"{i+1}. {s['title']} (~{s['target_words']} words)"
+                        for i, s in enumerate(_plan)
+                    )
+                )
+
                 _system = (
                     "You are FLARE's risk-assessment narrative writer for nuclear safety analysis. "
-                    "Write continuous, flowing prose — not bullet points, not numbered lists. "
-                    "Every response must read as a cohesive technical narrative in the style "
-                    "of a safety analysis report: full sentences, logical transitions between ideas, "
-                    "conclusions drawn from evidence. "
-                    "Structure the narrative with a concise title heading at the top, section "
-                    "headings (using Markdown ## syntax) wherever there is a clear pivot in subject "
-                    "matter — for example between overall acceptability, dominant contributors, "
-                    "and margin discussion — and a final ## Conclusions section that states the key "
-                    "findings and margin to the NEI 18-04 design-objective boundary in plain, "
-                    "defensible language. "
-                    "All numeric measures must be stated explicitly with their value and abbreviated "
-                    "unit — for example '24.7 rem', '0.31 rem', '1.2×10⁻⁵/yr' — never as a vague "
-                    "relative statement such as 'elevated' or 'approaches the limit' without the number. "
-                    "Do not invent data; use only the supplied table and summaries. "
-                    "Emphasize total dose, which includes accident dose plus iodine-spike "
-                    "pre-existing coolant activity where available."
+                    "Write continuous, flowing prose in the style of a safety analysis report. "
+                    "Use the supplied data only; do not invent values. "
+                    "All numeric measures must be stated explicitly with value and abbreviated unit, "
+                    "for example '24.7 rem', '0.31 rem', or '1.2×10⁻⁵/yr'. "
+                    "Use Markdown only as follows: start with exactly one level-three heading line "
+                    "in the form '### Section Title', then a blank line, then ordinary body paragraphs. "
+                    "Do not use bullet lists, numbered lists, tables, block quotes, or bold whole paragraphs. "
+                    "Do not place body text on the same line as the heading."
                 )
-                _max_tokens = int(1500 + _risk_detail * (8000 - 1500))
-                _length = ("short, 2–3 prose paragraphs" if _risk_detail < 0.34
-                           else ("moderate, 4–6 prose paragraphs" if _risk_detail < 0.67
-                                 else "thorough, 7–10 prose paragraphs"))
-                _user = f"""
-Write a {_length} risk-assessment narrative for the FLARE Frequency-Consequence results. \
-Write entirely in continuous prose — no bullet points, no headers, no numbered lists. \
-Cover in flowing paragraphs: overall acceptability against the NEI 18-04 design-objective \
-boundary; the dominant dose contributors and which event categories they fall in; cases \
-nearest to or beyond the limits with explicit dose and frequency values; the meaning of \
-no-release or screened cases; and cautions about frequency assignments or failed simulations.
-
-Context:
-- Number of cases: {_n_cases}
-- Number of FAIL cases: {_n_fail}
-- Dose plotted in the F-C chart is EAB TEDE Total = accident dose + iodine-spike dose.
-- NEI 18-04 categories: AOO, DBE, BDBE, Screened.
-- The plotted target is the FLARE/NEI 18-04 design-objective boundary.
-
+                _prior_sections = []
+                _completed_texts = []
+                _stop_reasons = []
+                _context_header = f"""
+Overall report detail setting: {_ctx['detail']:.2f} ({_ctx['detail_label']}).
+Whole-report target: about {_ctx['word_target']} words; acceptable whole-report range {_ctx['word_low']} to {_ctx['word_high']} words.
+Number of cases: {_ctx['n_cases']}.
+Number of FAIL cases: {_ctx['n_fail']}.
+Dose plotted in the F-C chart is EAB TEDE Total = accident dose + iodine-spike dose.
+NEI 18-04 categories: AOO, DBE, BDBE, Screened.
+The plotted target is the FLARE/NEI 18-04 design-objective boundary.
 Highest-dose row, if available:
-{_max_row}
+{_ctx['max_row']}
 
 Results table CSV:
-{_table_csv}
-"""
-                with st.spinner("Generating AI risk narrative…"):
-                    _narrative_text, _stop_reason = _anthropic_text(
-                        _system, _user, max_tokens=_max_tokens)
-                    st.session_state.risk_ai_narrative = _narrative_text
-                if _stop_reason == "max_tokens":
-                    st.warning(
-                        f"⚠️  The narrative was truncated at the token limit "
-                        f"({_max_tokens} tokens). Increase the Narrative detail "
-                        f"slider to allocate more tokens."
+{_ctx['table_csv']}
+""".strip()
+
+                for _idx, _section in enumerate(_plan, start=1):
+                    _title = _section["title"]
+                    _target_words = int(_section["target_words"])
+                    _max_words = int(_section["max_words"])
+                    _progress.progress((_idx - 1) / _total_sections, text=f"Generating section {_idx}/{_total_sections}: {_title}")
+                    _status.info(f"Submitting section {_idx}/{_total_sections}: **{_title}** (~{_target_words} words).")
+                    _already = "\n\n".join(_prior_sections[-2:])
+                    _section_prompt = f"""
+Prepare only this section of the FLARE Risk narrative.
+
+Section title: {_title}
+Section position: {_idx} of {_total_sections}
+Section target length: about {_target_words} words.
+Hard maximum section length: {_max_words} words.
+
+Formatting requirements:
+- First line must be exactly: ### {_title}
+- Second line must be blank.
+- Then write normal body paragraph text only.
+- Do not use '#', '##', bullets, numbered lists, or bold paragraph formatting.
+- Do not repeat sections already written.
+- Keep this section self-contained but consistent with prior sections.
+
+Prior completed section excerpts, for continuity:
+{_already if _already else '(none yet)'}
+
+Shared risk context:
+{_context_header}
+""".strip()
+                    _tokens = _risk_narrative_max_tokens(_max_words)
+                    _timeout = _risk_narrative_timeout_s(_target_words)
+                    _section_text, _stop_reason = _anthropic_text(
+                        _system, _section_prompt, max_tokens=_tokens, timeout_s=_timeout
                     )
+                    _stop_reasons.append(_stop_reason)
+                    _section_text = _risk_sanitize_markdown(_section_text, fallback_title=_title)
+                    _section_text = _risk_clamp_words(_section_text, _max_words)
+                    _completed_texts.append(_section_text)
+                    _prior_sections.append(_section_text)
+                    _combined_live = "\n\n".join(_completed_texts).strip()
+                    _live.markdown(_combined_live)
+                    _progress.progress(_idx / _total_sections, text=f"Completed section {_idx}/{_total_sections}: {_title}")
+
+                _final_text = "\n\n".join(_completed_texts).strip()
+                _final_text = _risk_sanitize_markdown(_final_text, fallback_title="FLARE Risk Narrative")
+                _final_text = _risk_clamp_words(_final_text, int(round(_ctx['word_high'] * 1.05)))
+                st.session_state.risk_ai_narrative = _final_text
+                st.session_state.risk_ai_narrative_sections = [s["title"] for s in _plan]
+                _live.empty()
+                _progress.progress(1.0, text="AI risk narrative complete.")
+                _status.success(
+                    f"AI risk narrative complete: {_total_sections} section(s), "
+                    f"{_risk_word_count(_final_text):,} words."
+                )
+                if any(sr == "max_tokens" for sr in _stop_reasons):
+                    st.warning(
+                        "One or more narrative sections reached its token budget. The displayed report was retained, "
+                        "but consider reducing the detail level if the prose appears incomplete."
+                    )
+                st.rerun()
             except Exception as _ai_e:
                 st.error(f"AI narrative failed: {_ai_e}")
 
         if st.session_state.get("risk_ai_narrative"):
+            _sections = st.session_state.get("risk_ai_narrative_sections") or []
+            if _sections:
+                st.caption("Report sections: " + "; ".join(_sections))
             st.markdown(st.session_state.risk_ai_narrative)
             st.download_button(
                 "⬇  Download narrative (Markdown)",
