@@ -1,1063 +1,627 @@
 FLARE Code Theory Manual
-
-**FLARE**
-
 Fast Licensing Accident Response Engine
+Revision 1 — June 2026
+Robert P. Martin
 
-**Code Theory Manual**
 
-*Revision 2 — 2026*
+# PURPOSE AND SCOPE
 
-**Robert P. Martin**
+FLARE (Fast Licensing Accident Response Engine) is a reduced-order reactor safety analysis code for rapid evaluation of design-basis and selected beyond-design-basis transients in pressurized-water reactors and small modular reactors. It is not a replacement for production licensing codes such as RELAP5, TRACE, CATHARE, or ATHLET. Its purpose is to provide a transparent, computationally affordable, single-node analytical framework for understanding the dominant mass, energy, power, fuel-temperature, source-term, and containment-response trends governing light-water reactor accident progression.
 
-*PWR / SMR Safety Analysis*
+FLARE supports the following transient and accident categories: large-break and small-break LOCA, reactivity-initiated accidents (rod ejection, rod withdrawal), anticipated transients without scram (ATWS), loss of forced circulation, and scenarios involving containment response to mass, energy, and hydrogen releases.
 
-# **Preface**
+The principal calculated figures of merit are:
+- Peak cladding temperature (PCT) — compared against the 10 CFR 50.46 limit of 1204 deg C
+- Maximum local oxidation (MLO) — equivalent cladding reacted fraction from Baker-Just
+- Core-wide hydrogen generation — total zirconium-steam reaction, used for containment assessment
+- RCS pressure and inventory — overpressure and depressurization trends
+- FLARECON containment pressure and temperature — dry-containment margin
+- Radiological dose at EAB, LPZ, and control room — source-term and dose screening
 
-FLARE (Fast Licensing Accident Response Engine) is a single-node, point-kinetics-based reactor safety analysis code developed for the rapid evaluation of design-basis transients and accidents in pressurized water reactors (PWRs) and small modular reactors (SMRs). The code is implemented as a single Python module (flare_sim.py) and is designed for use in both interactive (Streamlit) and batch computing environments.
 
-This Code Theory Manual documents the mathematical models, constitutive relations, and numerical methods that underlie the FLARE simulation engine. The document is organized to parallel the structure of standard nuclear safety analysis code documentation, beginning with the regulatory context and scope, proceeding through the governing equations and closure models for each physical domain, and concluding with the numerical solution strategy and code architecture.
+# CODE ARCHITECTURE
 
-The development of FLARE draws on the same phenomenological foundations as established industry codes such as RELAP5-3D, TRACE, and CATHARE. Where FLARE departs from those codes — principally in its use of a single-node, homogeneous equilibrium mixture approximation for the bulk coolant — the basis and limitations of that departure are explicitly described. The code is intended for scoping calculations, sensitivity studies, and Monte Carlo uncertainty analysis where computational throughput is of primary importance.
+The FLARE code system consists of:
+- flare_sim.py — primary RCS simulation engine; function pwr_sim() reads an Excel input workbook and produces Excel and CSV output
+- flarecon_sim.py — containment response engine; run_flarecon() and run_integrated_flarecon() driven by FLARE RCS output
+- flare_ui.py — PWR Simulator user interface
+- flare_ua.py / flare_ua_worker.py — uncertainty analysis interface and durable worker
+- flare_risk.py — risk assessment tool
+- flare_model_editor.py, flare_analyzer.py — pre/post-processing tools
 
-# **Chapter 1 — Introduction and Regulatory Context**
+The simulation uses an operator-split strategy: thermal-hydraulics, kinetics, and cladding temperature are solved in sequence within each time step with one-step lagging at coupling interfaces.
 
-## **1.1  Purpose and Scope**
 
-Design-basis accident (DBA) analysis in the United States is governed by Title 10 of the Code of Federal Regulations (10 CFR), Parts 50 and 52, and supported by Regulatory Guide 1.203, Transient and Accident Analysis Methods [NRC, 2005]. For each postulated accident, the licensee must demonstrate that the principal fission-product barriers — the fuel cladding, the reactor coolant system (RCS) pressure boundary, and the containment — remain intact or fail within prescribed limits. The quantitative acceptance criteria most relevant to FLARE applications are specified in 10 CFR 50.46 and are summarized in Table 1-1.
+# THERMAL-HYDRAULIC SYSTEM MODEL
 
-| **Criterion** | Limit | FLARE Output Variable |
-| --- | --- | --- |
-| Peak Cladding Temperature (PCT) | 1204°C (2200°F) | T_hot_clad_arr |
-| Maximum Local Oxidation (MLO) | 17% of pre-accident cladding thickness | Computed from Baker-Just integral |
-| Core-wide oxidation | 1% of total cladding reacting with water | N_pins × MLO fraction |
-| Coolable core geometry | No criteria exceeded | Implicit in PCT < 1204°C |
-| Long-term cooling | Core can be cooled indefinitely | RCS level, ECCS flow |
+## Modeling Basis
 
-FLARE is designed to support the following transient and accident categories:
+The thermal-hydraulic model uses the homogeneous equilibrium model (HEM). Liquid and vapor share a common velocity and temperature. The RCS is treated as a single well-mixed control volume with uniform pressure P and specific enthalpy h. Water and steam properties come from the IAPWS-IF97 formulation via XSteamPython.
 
-- Large-Break Loss-of-Coolant Accident (LBLOCA) — double-ended guillotine breaks in the cold leg or hot leg
+## Mass Balance
 
-- Small-Break Loss-of-Coolant Accident (SBLOCA) — spectrum of break sizes up to 10-inch equivalent diameter
+dM/dt = m_in - m_break - m_PORV - m_letdown
 
-- Reactivity-Initiated Accidents (RIA) — rod ejection and rod withdrawal at power and at zero power
+M is updated explicitly each time step. Equilibrium quality x_eq = (h - h_f) / h_fg drives property selection and heat-transfer regime.
 
-- Anticipated Transients Without Scram (ATWS) — loss of feedwater, loss of flow, with failed reactor trip
+## Energy and Pressure-Enthalpy Update
 
-- Steam Generator Tube Rupture (SGTR) and Main Steam Line Break (MSLB)
+The energy and volume conservation equations form a coupled 2x2 linear system in the pressure and enthalpy increments. The coefficient matrix A contains partial derivatives of specific internal energy e and specific volume v with respect to P and h evaluated by finite differences. The system is solved by numpy.linalg.solve() at each time step. This semi-implicit approach avoids iterative nonlinear solution while providing good numerical stability.
 
-- Loss of Forced Circulation and transition to natural circulation
+## Break Flow Model
 
-## **1.2  Code Architecture**
+Break area: A_break = pi * d_break^2 / 4
 
-FLARE is organized as follows. The simulation engine is contained in a single Python module, flare_sim.py, which accepts an Excel-format input file and produces Excel and CSV output. The Streamlit-based user interface (flare_ui.py) provides interactive case setup, parameter overrides, simulation execution, and graphical post-processing. The uncertainty analysis module (flare_ua.py) wraps the simulation engine in a Monte Carlo sampling loop to support Best-Estimate Plus Uncertainty (BEPU) applications consistent with the statistical methodology of 10 CFR 50.46(b).
+For subcooled conditions: Bernoulli model, G = sqrt(2 * rho_l * (P_RCS - P_back))
 
-The core simulation function is pwr_sim(), which reads the input command block, initializes all state variables, and advances the solution forward in time using an operator-split strategy. Post-processing is performed by the post_processing() function, which generates plots and writes the output workbook.
+For saturated/flashing conditions: Moody-type equilibrium critical-flow model. The critical mass flux G_crit is found by maximizing G over throat pressure P_c. Three slip options are supported: homogeneous equilibrium (S=1), Moody slip (S = (v_g/v_f)^(1/3)), Fauske slip (S = (v_g/v_f)^(1/2)). Fauske is the default for LOCA.
 
-## **1.3  Single-Node Approximation**
+The actual break flow is: m_break = C_d * A_break * G_crit
 
-FLARE applies a lumped-parameter, single-node (0-D) representation of the primary system. The entire reactor coolant system inventory — vessel, hot leg, cold leg, pressurizer steam space, and loop volumes — is represented as a single well-mixed control volume with uniform pressure and specific enthalpy. This is the same homogeneous equilibrium model (HEM) used in the original FLASH code [Margolis and Redfield, 1966] and remains the basis of the FLASH modeling heritage that informs FLARE.
+Separate discharge coefficients C_d,sub and C_d,sat are used for subcooled and two-phase conditions (default 0.9 for both). When P_back/P_RCS exceeds the critical pressure ratio (default 0.55), flow transitions to subcritical.
 
-The single-node approximation is justified for the phenomena of primary interest in FLARE applications: system pressure history, bulk coolant enthalpy, break mass flow rate, and integrated heat input to the coolant. For spatial distributions of temperature and void fraction within the reactor vessel — which require multi-node or sub-channel treatment — FLARE relies on the hot-channel model described in Chapter 4.
+## PORV Model
 
-# **Chapter 2 — Thermal-Hydraulic System Model**
+The PORV opens when RCS pressure exceeds its setpoint. Relief flow uses the same ERM critical-flow model as the break. A predictor-corrector method pins pressure at the setpoint by adjusting the PORV flow fraction. Pressure is updated with under-relaxation factor P_relax to damp oscillations.
 
-The thermal-hydraulic model in FLARE is based on the homogeneous equilibrium mixture (HEM) approximation, in which the liquid and vapor phases of the coolant are assumed to move together at the same velocity and to be in local thermodynamic equilibrium. This reduces the two-fluid conservation equations to a single set of mixture equations. The governing equations are closed by the IAPWS-IF97 steam tables, implemented via the XSteamPython library.
+## Steam Generator Model
 
-## **2.1  Conservation of Mass**
+Two options selected by sg_table_flag:
+- sg_table_flag = 0 (default): Q_SG = UA_eff * (T_primary - T_secondary). UA_eff scales with primary flow rate.
+- sg_table_flag = 1: Q_SG prescribed from column D of the time-series table. Positive = normal heat removal; negative = overcooling (e.g. MSLB).
 
-The global mass balance for the RCS control volume is:
+## RCP Coastdown
 
-dMdt=min−mbreak−mPORV 2.1
+Pump speed decays as omega(t) = omega_rated * exp(-t / tau_pump). Core coolant velocity v_core = m_pump / (rho_core * A_flow_core), where A_flow_core = N_pins * (pitch^2 - pi*d_pin^2/4).
 
-where M is the total fluid mass [kg] in the control volume, m_in is the mass flow rate from ECCS injection sources (primarily the accumulator) [kg/s], m_break is the break mass flow rate [kg/s], and m_PORV is the PORV relief valve mass flow rate [kg/s]. This equation is integrated explicitly in time:
+## Collapsed Level Diagnostic
 
-Mt+Δt=Mt+min−mbreak−mPORVΔt 2.2
+V_liquid = (1 - x_eq) * M / rho_f. Level = V_liquid / A_vessel. Used to identify core uncovery, reflood, and dry-core transitions.
 
-The specific volume of the mixture is determined from the equation of state at each time step, closing the volume conservation equation:
 
-Vsys=M vP,h 2.3
+# ACCUMULATOR AND ECCS MODELS
 
-where V_sys is the total system volume [m³], held constant throughout the transient, and v(P,h) is the specific volume [m³/kg] from the steam tables at the current pressure P and mixture specific enthalpy h.
+## Accumulator
 
-## **2.2  Conservation of Energy**
+Gas pressure follows a polytropic law: P_g = P_g0 * (V_g0 / V_g)^n. Injection begins when P_g exceeds RCS pressure plus check-valve pressure drop. Flow: m_acc = C_d * A_line * sqrt(2 * rho_w * (P_g - P_RCS - delta_P_check)).
 
-The mixture energy equation, written in terms of specific enthalpy, is derived from the first law of thermodynamics for an open control volume. In the formulation adopted by FLARE, following the FLASH code tradition [Margolis and Redfield, 1966], the conservation equations are cast as a coupled 2×2 linear system in the pressure and enthalpy increments. The right-hand side (b vector) of that system contains the net energy and volume source terms:
+## Pumped Safety Injection (HPSI and LPSI)
 
-b0=minhin−e−mbreakhb−e−mPORVhp−e+Qnet−QSG 2.4
+Each pump train delivers flow degraded linearly with RCS back-pressure from rated flow at favorable pressure to zero at shutoff head. Flow is available only after ESFAS actuation plus injection delay.
 
-b1=−vmin−mbreak−mPORV 2.5
+## CVCS Makeup/Letdown
 
-where e is the specific internal energy [J/kg], h_in is the enthalpy of the injected water [J/kg], h_b is the stagnation enthalpy at the break [J/kg], h_p is the PORV discharge enthalpy [J/kg], Q_net is the net thermal power delivered to the coolant [W], and Q_SG is the steam generator heat removal rate [W].
+Activated by cvcs_kgs > 0. Net RCS mass effect is zero (balanced makeup and letdown). Net boron effect per timestep: d(m_B)/dt|_CVCS = cvcs_kgs * (cvcs_boron_ppm - C_RCS) * 1e-6. Used for boron dilution cases; set cvcs_boron_ppm = 0 for unborated (worst-case dilution) and si_fill_threshold = 1.0 to disable ECCS pump degradation in intact-RCS conditions.
 
-The 2×2 coefficient matrix A is formed from the partial derivatives of specific internal energy and specific volume with respect to pressure and enthalpy:
 
-A=M∂e∂P∂e∂h∂v∂P∂v∂h 2.6
+# CORE AND FUEL MODELS
 
-The pressure and enthalpy at the next time step are obtained from the solution of the linear system:
+## Rod-Bundle Geometry
 
-Pt+Δtht+Δt=Ptht+Δt A−1b 2.7
+Key defaults (user-overridable via input file — N_pins is not hardwired):
+- N_pins = 18,200 fuel pins (default; read from input parameter N_pins)
+- d_pin = 9.5 mm outer diameter
+- pitch_pin = 12.6 mm square pitch
+- L_heated = 2.4 m active length
+- delta_clad = 0.57 mm cladding thickness
+- r_fuel = 4.18 mm fuel pellet radius
 
-The temperature T(t+Δt) is then recovered from the steam tables as T = f(P, h). This implicit formulation provides numerical stability without iteration, following the semi-implicit method described by Liles and Reed [1978].
+Derived: SurfArea = N_pins * pi * d_pin * L_heated; D_h = 4 * A_flow / (N_pins * pi * d_pin); q_avg'' = Q_core / SurfArea; q_hot'' = F_r * F_z * q_avg''.
 
-## **2.3  Equation of State and Fluid Properties**
+## Cladding Heat Structure
 
-All thermodynamic and transport properties of water and steam are evaluated using the IAPWS-IF97 formulation as implemented in XSteamPython. The following properties are evaluated at each time step:
+Implicit finite-difference scheme on a 1-D planar slab across cladding thickness delta_clad. Inner surface: prescribed heat flux from Q_total/SurfArea. Outer surface: convective boundary condition with coolant-side HTC alpha. Solves a tridiagonal system at each time step (unconditionally stable).
 
-- Saturation temperature T_sat(P) and saturation pressure P_sat(T)
+## Fuel Temperature
 
-- Saturated liquid and vapor specific volume, enthalpy, entropy, and density
+Quasi-steady thermal resistance chain: T_fuel_center - T_coolant = q_hot'' * (R_fuel + R_gap + R_clad + R_conv). R_fuel = r_fuel / (4*k_fuel) for a solid cylinder with uniform heat generation. First-order thermal lag with time constant tau_fuel = rho_fuel * cp_fuel * r_fuel^2 / (4 * k_fuel) captures stored fuel energy.
 
-- Subcooled liquid specific volume v(P,h) and temperature T(P,h)
+## Hot-Channel Model
 
-- Mixture quality x_eq from equilibrium flash at (P,h)
+T_hot_clad = T_avg_clad + (F_r * F_z - 1) * q_avg'' / alpha. PCT = max over time of T_hot_clad. The composite peaking factor F_hot = F_r * F_z sets the limiting local rod state.
 
-- Specific heat cp, thermal conductivity k, and dynamic viscosity μ for liquid and vapor
+## Convective Heat Transfer
 
-The equilibrium quality is determined at each step and drives the selection of critical flow models, break stagnation state, and heat transfer regime:
+Forced convection: Dittus-Boelter, Nu = 0.023 * Re^0.8 * Pr^0.4. Laminar fallback (Nu=3.66 at Re<2300) is suppressed for liquid-phase core HTC to prevent spurious natural-convection dominance during pump coastdown; it is retained for steam post-CHF cooling.
 
-xeq=h−hfhfg,  hf≤h≤hg 2.8
+Natural convection (when flow is absent or degraded): Churchill-Chu correlation, Nu = [0.825 + 0.387*Ra^(1/6) / (1 + (0.492/Pr)^(9/16))^(8/27)]^2.
 
-Subcooled conditions (x_eq < 0) and superheated conditions (x_eq > 1) are handled as limiting cases.
+Controlling HTC: h_c = max(h_DB, h_NC) * f_HTC.
 
-## **2.4  Break Flow Model**
+Post-CHF (film boiling): Simplified Bromley model, h_FB = C_B^(4/3) * q_avg''^(1/3). Three post-CHF model options via post_chf_model:
+- bromley (default): direct Bromley HTC, effectively uncapped
+- cold_leg: htc_post_chf capped at 50 W/m2K with under-relaxation; activates on DNBR<1, core uncovery, or at scram time when x_eq >= 0
+- hot_leg: direct Bromley, no under-relaxation
 
-The break mass flow rate is one of the most important quantities in LOCA analysis, controlling the rate of inventory loss from the RCS. FLARE implements three models for critical (choked) flow at the break plane, selected automatically based on the thermodynamic state of the stagnation fluid at the break.
+Uncertainty scaling: htc_core_mult scales forced-convection HTC; htc_fb_mult scales film-boiling HTC.
 
-### **2.4.1  Equilibrium Rate Model (ERM)**
+Dry-core model (when vessel level falls below film_boiling_level_m): h_dry = h_gas + epsilon*sigma*(T_clad^4 - T_gas^4)/(T_clad - T_gas).
 
-The Equilibrium Rate Model (ERM), based on Moody [1965], is the primary critical flow model for LOCA blowdown. It assumes that the fluid at the break throat is in thermodynamic equilibrium and that flashing is complete at the throat. The critical mass flux is obtained by maximizing the mass flux G with respect to the throat pressure P_c:
+## Critical Heat Flux and DNBR
 
-G=ρ3 2ho−hc 2.9
+DNBR = q_CHF'' / q_hot''. CHF is the Biasi (1967) correlation blended with the modified Zuber pool boiling model. Biasi is primary at G > 200 kg/m2s; pure Zuber below 100 kg/m2s; linear blend between. Bowring (1972) is available as an alternative for high-pressure regime (P > ~13 MPa). DNBR < 1 triggers film boiling. Minimum DNBR (MDNBR) is tracked and reported.
 
-where the mixture density ρ at the throat depends on the slip ratio S between phases. FLARE supports three slip models: Homogeneous Equilibrium (S=1), Moody slip (S = (v_g/v_f)^(1/3)), and Fauske slip (S = (v_g/v_f)^(1/2)). The Fauske slip model is the default for LOCA applications.
 
-The throat quality x_c is related to the stagnation quality x_o through isentropic flashing:
+# STATISTICAL ROD-STATE MODEL, HOT PIN, AND MEAN OXIDIZING ROD
 
-xc=xosfg,osfg,c+sf,o−sf,csfg,c 2.10
+FLARE supplements its lumped-parameter core model with a statistical rod-state reconstruction to estimate regulatory figures-of-merit that depend on local fuel-rod conditions.
 
-The critical throat pressure P_c is found by Newton-Raphson iteration to locate the maximum of G(P_c). The ERM is valid for stagnation pressures representative of PWR full-power operating conditions (~15-16 MPa) where h_fg is large. Near the thermodynamic critical point, h_fg collapses and the ERM becomes non-physical. FLARE blends the ERM toward a subcooled Bernoulli model above approximately 16.4 MPa:
+## Rod-State Distribution
 
-Gblend=1−wGERM+wGBernoulli 2.11
+The population of N_rod fuel rods is modeled with a normal distribution in the peaking multiplier F_r*:
+  F_r* ~ N(1, sigma_F^2)
 
-where the blending weight w increases linearly from 0 at h_fg = 900 kJ/kg to 1 at h_fg = 150 kJ/kg. The Bernoulli subcooled orifice model is:
+sigma_F = (F_hot - 1) / k_sigma, where F_hot = F_r * F_z and k_sigma (default 3.0) is the number of standard deviations between the average rod and the hot pin. At k_sigma = 3.0, the hot pin is at the 99.87th percentile.
 
-GBernoulli=2ρP−Pcontainment 2.12
+## Temperature Mapping
 
-### **2.4.2  Henry-Fauske Subcooled Critical Flow**
+For a rod with multiplier F_r*, its cladding temperature is:
+  T_clad(F_r*, t) = T_c(t) + F_r* * (T_clad(t) - T_c(t))
 
-For subcooled stagnation conditions (x_eq < 0), FLARE uses the ERM blended model with the subcooled liquid density evaluated from the steam tables. This provides a continuous transition from subcooled to two-phase flow as the bulk coolant inventory depletes and the stagnation state approaches saturation.
+The hot-pin cladding temperature is T_hot(t) = T_c(t) + F_hot * (T_clad(t) - T_c(t)).
 
-### **2.4.3  Break Discharge Coefficient**
+PCT = max over time of T_hot(t).
 
-The actual break mass flow rate is:
+## Failed-Rod Fractions
 
-mbreak=CdAbreakGcritical 2.13
+For a failure threshold T_fail, the critical peaking multiplier is:
+  F_crit(t) = (T_fail - T_c(t)) / (T_clad(t) - T_c(t))
 
-where A_break = π d_break² / 4 is the break orifice area [m²] and C_d is the discharge coefficient. FLARE uses separate discharge coefficients for subcooled (C_d,sub) and two-phase (C_d,sat) conditions, reflecting the different vena contracta behavior of subcooled and flashing flows. Default values are C_d = 0.9 for both, consistent with the range 0.84–0.95 recommended in NRC validation studies.
+The instantaneous failed fraction: f_fail(t) = P(F_r* >= F_crit(t)) = 1 - Phi((F_crit(t) - 1) / sigma_F)
 
-### **2.4.4  Break Stagnation State Transition**
+Failed fractions are latched (never decrease). Two thresholds are tracked:
+- Gap release: T_gap = 800 deg C (input: T_gap_release_C)
+- Early in-vessel: T_EIV = 1204 deg C (input: T_early_iv_C)
 
-As RCS inventory depletes, the stagnation state at the break transitions through three tiers based on the normalised mass scaled parameter M_scaled = M(t)/M(t=0) and the equilibrium steam quality x_eq. The selection logic is applied independently in both the subcooled (x_eq < 0) and two-phase (x_eq ≥ 0) branches:
+## Mean Oxidizing Rod
 
-•  M_scaled > 1.0: The RCS is overfilled (ECCS has added more than the initial inventory). The break is submerged in cold injected liquid; h_stag = h_L(P), the saturated liquid enthalpy at the current pressure.
+The mean oxidizing rod represents the conditional mean temperature of rods above the oxidation threshold T_ox (default 800 deg C). The critical multiplier for oxidation is Fox_crit(t) = (T_ox - T_c(t)) / (T_clad(t) - T_c(t)). The oxidizing fraction is f_ox(t) = 1 - Phi(z_ox(t)) where z_ox = (Fox_crit - 1) / sigma_F.
 
-•  x_eq < 0.01 (trace quality, essentially liquid-filled core): h_stag = h_L(P). This tier correctly captures the late reflood phase when ECCS water occupies most of the vessel but a tiny steam fraction keeps x_eq marginally positive.
+The conditional mean multiplier of oxidizing rods:
+  F_ox(t) = 1 + sigma_F * phi(z_ox(t)) / (1 - Phi(z_ox(t)))
 
-•  All other conditions: a latching flag (flag_stagnation_break) selects between the mixture enthalpy h_mix (when M_scaled > transition_mixture_mass, default 0.41) and saturated vapor h_g (when M_scaled ≤ 0.41, representing steam venting from a largely voided vessel). The vapor latch resets when M_scaled rises back above the threshold and x_eq drops below 0.01, preventing historically latched steam enthalpy from persisting incorrectly into the reflood phase.
+Mean oxidizing rod temperature: T_mean_ox(t) = T_c(t) + F_ox(t) * (T_clad(t) - T_c(t))
 
-Dynamic choking is evaluated at each time step. When the ratio P_containment / P_RCS falls below the critical pressure ratio (default 0.55), the flow is choked and the ERM is applied. When this ratio is exceeded (near-atmospheric RCS pressure), the flow transitions to a subcritical orifice model: G = C_d √(2 ρ ΔP), which correctly drives break flow to zero as P_RCS approaches P_containment. The break stagnation enthalpy is recorded in the output as the Break Enthalpy (kJ/kg) column.
+The mean oxidizing rod is used for population-integrated oxidation and source-term escalation. The hot pin is used for peak local oxidation (MLO). These are distinct quantities and must not be confused.
 
-## **2.5  PORV and Safety Relief Valve Model**
+## Figures-of-Merit from the Rod-State Model
 
-The Pilot-Operated Relief Valve (PORV) opens when the RCS pressure exceeds its setpoint P_PORV. The relief mass flow rate is calculated using the same ERM critical flow model as the break:
+PCT = max_t [T_hot(t)]
+MLO = max_t [ECR_hot(t)]   (maximum local oxidation, hot-pin ECR)
+ECR_mean_ox_max = max_t [ECR_mean_ox(t)]
+f_gap_max = max_t [f_gap(t)]
+f_EIV_max = max_t [f_EIV(t)]
+M_H2_max = max_t [M_H2(t)]
 
-mPORV=Cd,PORVAPORVGERMP,hstag 2.14
 
-where h_stag is the stagnation enthalpy at the PORV connection point. Because the PORV is physically located at the top of the pressurizer, h_stag is selected based on the normalised pressurizer liquid level ζ = pzr_level / pzr_height rather than the vessel level. When ζ > transition_mixture_mass (default 0.41), the pressurizer contains significant liquid and h_stag = h_mix (the bulk mixture enthalpy), reflecting liquid-phase relief. When ζ ≤ 0.41, the pressurizer is mostly empty or steam-space dominant and h_stag = h_g (saturated vapour), reflecting steam venting. This formulation correctly captures the transition to a water-solid condition (pressurizer empty, RCS overfilled) where the PORV relieves subcooled liquid rather than steam.
+# ZIRCONIUM OXIDATION AND HYDROGEN GENERATION
 
-A predictor-corrector method is used to determine the PORV flow fraction that pins the pressure at its setpoint. An under-relaxation factor P_relax is applied to the pressure update to damp numerical oscillations near the setpoint:
+## Zirconium-Steam Reaction
 
-Pt+1=1−PrelaxPt+PrelaxPcomputed 2.15
+Zr + 2 H2O -> ZrO2 + 2 H2 + Q_rxn
 
-## **2.6  Pressurizer Model**
+Stoichiometry: delta_m_Zr = delta_m_O * M_Zr / (2 * M_O); delta_m_H2 = delta_m_O * M_H2 / M_O.
 
-The pressurizer is modeled as a lumped-parameter surge volume connected to the RCS via the surge line. When the pressurizer has liquid (level between 0 and pzr_level_hi), it maintains the RCS at the rated operating pressure P_operating by absorbing volume changes through surge line flow. The surge line mass flow rate is back-calculated from the volume conservation equation:
+## Baker-Just Parabolic Oxidation Law
 
-msurge=ΔVvfΔt 2.16
+dW/dt = K_BJ(T_clad) / W, where K_BJ(T) = A_BJ * exp(-B_BJ / T). W is oxygen areal weight gain. This gives parabolic behavior: oxidation slows as the oxide layer thickens.
 
-where ΔV is the change in RCS specific volume multiplied by total mass. During blowdown (when a break is open), the pressure hold is disabled and the pressurizer drains via two mechanisms. In the PORV-open branch, liquid in the pressurizer steam space flashes to replace the steam vented through the PORV; the pressurizer level drops at a rate proportional to the PORV steam flow divided by the liquid density, and an insurge of RCS liquid flows up the surge line to thermally support the flashing. In the steam-expansion branch (no PORV flow), the steam bubble expands as pressure falls, pushing liquid down the surge line into the RCS as an outsurge. When the pressurizer level reaches zero (empty pressurizer, water-solid RCS condition), surge flow is set to zero in both branches — there is no liquid remaining to flash or to transfer via the surge line. The pressurizer model supports startup, ATWS, and LOHS transient modeling where the pressurizer plays a primary pressure-control role.
+Time-step update: W_n+1 = sqrt(W_n^2 + 2 * K_BJ(T^(n+1/2)) * delta_t)
 
-## **2.7  Accumulator Injection Model**
+Oxidation is suppressed below threshold temperature T_ox (modeling guard, not a physical statement).
 
-Each accumulator is represented as a gas-pressurized water tank. Nitrogen gas occupies the upper portion of the tank and expands polytropically as the water level drops during injection. The gas pressure and temperature evolve as:
+## Equivalent Cladding Reacted Fraction
 
-Pgast=Pgast−1−baaae−aaΔt+baaa 2.17
+ECR_s (%) = 100 * W_s * M_Zr / (2 * M_O * rho_Zr * delta_clad)
 
-where a_a accounts for the polytropic expansion rate and b_a accounts for heat transfer from the tank walls to the nitrogen. Injection flow begins when the accumulator gas pressure (accounting for the liquid head above the injection nozzle) exceeds the RCS pressure:
+Three rod states are integrated separately: hot pin (for MLO), mean oxidizing rod (for core-wide hydrogen and source-term escalation), and core average.
 
-macc=Anozzle2Pgas+ρwgz−PRCSρw,  Pgas+ρwgz>PRCS 2.18
+## Core-Wide Hydrogen Generation
 
-The accumulator liquid volume, gas volume, gas pressure, and gas temperature are tracked at each time step. Default geometry represents a typical large PWR accumulator: 66.63 ft² cross-section, 10.5 ft length, with approximately 630 ft³ of initial water inventory.
+Number of oxidizing rods: N_ox(t) = f_ox(t) * N_rod
+Oxidizing cladding area per rod: A_clad = pi * d_pin * L_heated
+Incremental hydrogen mass per step: delta_M_H2 = N_ox^(n+1/2) * A_clad * delta_W_mean_ox * M_H2 / M_O
 
-### **2.7.2  ECCS Boron Injection Model**
+The hydrogen source is passed to FLARECON as a containment gas source.
 
-Both the accumulator and the pumped SI sources (HPSI and LPSI) inject borated water into the RCS. The accumulator boron concentration is specified by acc_boron_ppm [ppm] and the SI boron concentration by si_boron_ppm [ppm]; these are independent parameters to allow modelling of boron dilution scenarios (e.g. si_boron_ppm = 0 for unborated SI). Default values are 2300 ppm for both, representative of a typical PWR RWST. The RCS boron mass is tracked by a first-order mass balance at each time step:
+## Coupling to Source Term
 
-*d(m_B)/dt = ṁ_acc × C_acc + ṁ_SI × C_SI − ṁ_break × C_RCS*
+Severe-event source-term escalation uses E_mean = max_t [ECR_mean_ox(t)] / 100 (expressed as a fraction). Release fractions interpolate between DBA values and severe-event targets using E_mean.
 
-where m_B is the total boron mass in the RCS [kg], C_acc and C_SI are the accumulator and SI boron concentrations [mass fraction], and C_RCS = m_B / M_total is the instantaneous RCS boron concentration. The RCS boron concentration in ppm is output as the RCS Boron (ppm) column. The reactivity worth of the injected boron is:
 
-*ρ_boron = α_boron [pcm/ppm] × (C_RCS [ppm] − C_init [ppm])*
+# POINT KINETICS AND REACTIVITY MODELS
 
-where α_boron = alpha_boron_pcm_ppm (default −10 pcm/ppm) is the differential boron worth and C_init = rcs_boron_ppm_init (default 0 ppm, representing EOC conditions) is the initial RCS boron concentration. The boron reactivity is included in ρ_net at every time step and is also added to the SLCS reactivity in the Reactivity Boron (pcm) output column.
+## Point-Kinetics Equations
 
-### **2.7.3  SI Pump Degradation Model**
+dP_n/dt = ((rho_net - beta) / Lambda) * P_n + sum_i [lambda_i * C_i]
+dC_i/dt = (beta_i / Lambda) * P_n - lambda_i * C_i   (i = 1 to 6 groups)
 
-As the reactor vessel refills during ECCS injection, the static back-pressure on the SI pumps increases, reducing delivered flow. FLARE models this effect through a vessel fill-fraction degradation factor applied to both HPSI and LPSI flow rates. The volumetric fill fraction is defined as:
+Q_fission = P_n * Q_rated
 
-*f_fill = ves_ll(t) / (R5_lowCV_height + R5_highCV_height)*
+## Reactivity Feedback
 
-The onset of degradation is controlled by the user input si_fill_threshold (default 0.5). The degradation factor is unity for f_fill ≤ si_fill_threshold and decreases linearly to zero at f_fill = 1.0 (pump fully shut off when the vessel is completely filled):
+rho_net = rho_ext(t) + rho_D + rho_M + rho_v + rho_scram + rho_boron
 
-*f_SI = max(0, 1 − max(0, f_fill − si_fill_threshold) / max(1 − si_fill_threshold, ε))*
+Doppler: rho_D = alpha_D * (T_fuel - T_fuel,0)   [alpha_D negative, typically -2 to -4 pcm/deg C]
 
-This degradation model prevents unbounded inventory accumulation during reflood and produces a smooth, physically motivated reduction in SI flow rather than the abrupt cutoff that would result from the si_mass_ceiling hard limit alone. The hard cutoff (si_mass_ceiling, default 1.60) is retained as a backstop. Setting si_fill_threshold = 1.0 disables degradation entirely, which is appropriate for intact-RCS scenarios such as boron dilution where column E (cvcs_mdot) represents normal-operation CVCS makeup/letdown flow rather than emergency injection.
+Moderator temperature: rho_M = alpha_M * (T_coolant - T_coolant,0) * (1 - alpha_void)^3
 
-## **2.7.4  Chemical and Volume Control System (CVCS) Makeup/Letdown Model**
+Void: rho_v = alpha_M_void * x_eq * 100   [per % mass steam quality]
 
-The CVCS makeup/letdown model represents the chemical and volume control system that continuously circulates RCS coolant through a letdown path and returns it via a makeup path at a controlled boron concentration. The model is activated by setting cvcs_kgs [kg/s] to a nonzero value; it runs from cvcs_start_time_s (default 0 s) onwards. The net mass effect on the RCS is zero — makeup and letdown flows are equal and opposite. The net boron effect per timestep is:
+Boron: rho_boron = alpha_boron_pcm_ppm * (C_RCS - C_init)
 
-*d(m_B)/dt|_CVCS = cvcs_kgs × (cvcs_boron_ppm − C_RCS) × 10⁻⁶*
+Scram: ramp insertion of trip_rod_worth_pcm over trip_rod_insertion_time_s
 
-where cvcs_boron_ppm is the boron concentration of the makeup water [ppm] (default 0, representing unborated makeup — the worst-case dilution scenario) and C_RCS is the instantaneous RCS boron concentration [ppm]. Setting cvcs_boron_ppm = C_RCS_init produces a neutral baseline with no dilution or boration effect. Column E of the time-series input table (cvcs_mdot [kg/s]) acts as an imbalance adder on top of the baseline: positive values represent extra makeup injection at cvcs_boron_ppm (adding mass and boron to the RCS), while negative values represent extra letdown (removing mass and boron at the current RCS concentration). For a boron dilution design-basis event, the recommended input settings are: cvcs_kgs = 5 (typical CVCS flow rate), cvcs_boron_ppm = 0 (unborated makeup), cvcs_start_time_s = time of dilution initiation, si_fill_threshold = 1.0 (to disable ECCS pump degradation in the intact-RCS condition), and ria_flag = 1 with appropriate kinetics parameters.
+External (RIA cases): rho_ext(t) from column F of the time-series table.
 
-## **2.8  Steam Generator Heat Removal**
+## Scram Model
 
-The steam generator (SG) heat removal rate Q_SG can be specified in one of two ways, selected by the sg_table_flag input parameter.
+Five RPS setpoints monitored: high neutron flux (trip_power_frac, default 110%), low RCS pressure (trip_P_lo_kPa, default 90% of initial P), high RCS pressure (disabled by default), low coolant flow (disabled by default), timed manual trip (trip_time_s, default never). Signal processing delay trip_delay (default 1.5 s) before scram executes.
 
-### **2.8.1  UA Model (sg_table_flag = 0)**
+Post-scram power: six-group delayed neutron decay curve using actual rod worth in dollars (trip_rod_worth_pcm / beta_eff).
 
-When the pump is operating (sg_flag = 1, sg_table_flag = 0), the SG heat removal is calculated from the overall heat transfer coefficient-area product UA_SG and the log-mean temperature difference between the primary and secondary fluids:
+## Prompt Jump and Nordheim-Fuchs
 
-QSG=UASGTprimary−Tsecondary 2.19
+Prompt Jump Approximation: P_new = P_old * (beta_eff - rho_prev) / (beta_eff - rho_net). Applied when both reactivities are sub-critical and the time step would under-resolve the power change.
 
-where UA_SG is the overall heat transfer coefficient-area product [W/K] and T_secondary is the saturation temperature of the secondary steam at P_sec. The UA model is scaled with pump mass flow rate to account for the reduction in primary-side convective resistance as flow decreases during coastdown. The Q_SG is bounded above by the maximum heat that the primary flow can surrender to the secondary:
+For prompt-supercritical excursions (rho_net > beta_eff), the Nordheim-Fuchs analytic model integrates over N_sub = 1000 sub-steps within each master time step. The burst self-terminates when Doppler feedback consumes the excess reactivity.
 
-QSG≤mpumphprimary−hsecondary,sat 2.20
+## Decay Heat
 
-### **2.8.2  Table-Driven Model (sg_table_flag = 1)**
+ANS-5.1-1979 standard: Q_decay(t_rel) / Q_0 = sum_i [a_i * lambda_i * exp(-lambda_i * t_rel) * (1 - exp(-lambda_i * T_irr))] summed over 23 nuclide groups for U-235, U-238, and Pu-239 fission products. Actinide contributions (U-239, Np-239) added separately.
 
-When sg_table_flag = 1, column D of the time-series input table is used as a prescribed Q_SG boundary condition [MW vs time], evaluated by linear interpolation at each time step. Positive values indicate normal heat removal (primary to secondary). Negative values indicate heat addition to the primary, representing overcooling events such as a main steam line break (MSLB). The interpolated value is scaled by the fractional RCP mass flow rate relative to rated flow (pump_mdot(t) / pump_mdot_rated), reflecting the reduction in primary-side convective resistance as the pump coasts down. This scaling gives the correct limiting behaviour: Q_SG → 0 as the pump trips, consistent with natural circulation transition.
 
-## **2.9  Reactor Coolant Pump Model**
+# TRIP AND PROTECTION SYSTEM MODELS
 
-The RCP coastdown is modeled using a first-order exponential decay in pump speed:
+Reactor trip is latched when any enabled condition becomes true (high flux, high P, low P, low flow, manual, high T_clad). Once latched it remains active. Scram rod insertion follows the ramp model in the reactivity section.
 
-ωt=ωratede−t/τpump 2.21
+ESFAS actuation: I_ESFAS = I_low_P OR I_high_containment_P OR I_manual_SI. Each injection source becomes available after t_ESFAS plus its specified delay.
 
-where ω_rated is the rated pump speed [rpm] and τ_pump is the coastdown time constant [s] (typical PWR: 25–40 s). The coastdown begins at t_break (for LOCA cases) or at the time of the pump trip signal. When pump_scram_trip = 1, the pump is held at rated speed until the reactor scram fires, then coasts.
+Trips, SI actuation, PORV opening, accumulator start, and containment spray actuation are all recorded with their first-occurrence time (latched event reporting). These form the sequence-of-events output.
 
-The pump mass flow rate, velocity, and hydraulic head at each coastdown speed are determined from four-quadrant homologous pump curves based on the Westinghouse model, implemented in the pump_module. The operating point on the homologous curves is determined by solving for the intersection of the pump head curve with the system resistance curve, represented by the orifice area parameter.
 
-The core coolant velocity is derived from the pump mass flow rate:
+# FLARECON CONTAINMENT RESPONSE MODEL
 
-vcore=mpumpρcoreAflow,core 2.22
+## Physical Scope
 
-where A_flow_core is the total coolant flow area through the core [m²], calculated from the pin geometry as A_flow_core = N_pins × (pitch² - π d_pin² / 4).
+FLARECON is a single-node dry-containment response model. The containment free volume contains a well-mixed gas mixture of dry air, steam, and hydrogen. Tracked quantities: gas pressure, gas temperature, gas composition (air, steam, hydrogen), wall/liner heat removal, floor/sump level, condensation, spray heat removal, optional sump cooling, and hydrogen flammability status.
 
-# **Chapter 3 — Core Heat Transfer Model**
+State vector: [M_air, M_steam, M_H2, U_gas, T_wall, T_floor, M_sump]
 
-The core heat transfer model calculates the cladding surface temperature, fuel centerline temperature, heat transfer coefficient, and critical heat flux at each time step. The model applies to the average pin in the core, with a hot-channel correction applied to estimate the peak (hot-pin) temperatures relevant to the 10 CFR 50.46 acceptance criteria.
+Driven by FLARE RCS output: break mass flow, break enthalpy, hydrogen generation rate.
 
-## **3.1  Fuel Rod Geometry**
+## Species Mass Balances
 
-The default FLARE fuel rod geometry is based on the mPower SMR, with 18,200 Zircaloy-4 clad fuel pins in a square pitch array. Key geometric parameters are summarized in Table 3-1.
+Dry air: dM_air/dt = 0 (constant unless leakage activated)
+Steam: dM_s/dt = m_s,in - m_cond + m_spray,evap - m_leak,s
+Hydrogen: dM_H2/dt = m_H2,in - m_leak,H2
+Sump: dM_sump/dt = m_l,in + m_cond - m_spray,evap - m_drain
 
-| **Parameter** | Symbol | Default Value | Units |
-| --- | --- | --- | --- |
-| Number of fuel pins | N_pins | 18,200 | — |
-| Pin outer diameter | d_pin | 9.5 | mm |
-| Square pitch | pitch_pin | 12.6 | mm |
-| Heated length | L_heated | 2.4 | m |
-| Cladding thickness | δ_clad | 0.57 | mm |
-| Fuel pellet radius | r_fuel | 4.18 | mm |
-| Total heat transfer area | SurfArea | π d_pin L_heated N_pins | m² |
-| Hydraulic diameter | D_h | pitch²/(π d_pin/4) - d_pin | m |
+## Gas Equation of State
 
-## **3.2  Cladding Temperature — Slab Heat Conduction**
+Air and hydrogen: ideal gas. P_air = M_air * R_air * T_g / V_g; P_H2 = M_H2 * R_H2 * T_g / V_g.
+Steam partial pressure limited by saturation: P_s <= P_sat(T_g). Excess steam condenses.
+Total pressure: P_tot = P_air + P_s + P_H2.
 
-The cladding is modeled as a 1-D planar slab with N computational nodes across its thickness δ_clad. The transient heat conduction equation is discretized using an implicit finite-difference scheme:
+## Energy Balance
 
-ρcladcp,clad∂T∂t=λclad∂2T∂x2 3.1
+dU_g/dt = H_in - Q_wall - Q_floor - Q_spray - Q_LHSI - H_leak
 
-Boundary conditions: at the inner cladding surface (x = 0), the heat flux from fission and decay heat Q_total/SurfArea [W/m²] is applied. At the outer cladding surface (x = δ_clad), convective heat transfer to the coolant is specified:
+H_in = m_break * h_break (source enthalpy from RCS)
 
-−λcladdTdxouter=αTouter−Tcoolant 3.2
+## Cooling Models
 
-where α is the coolant-side heat transfer coefficient [W/m²K]. The implicit Crank-Nicolson discretization produces a tridiagonal system solved at each time step. The solution yields the cladding outer surface temperature TTwall[t] — the primary figure of merit for cladding integrity assessment.
+Wall/liner: Q_wall = h_wall * A_wall * (T_g - T_wall). Wall thermal mass modeled with 1-D conduction into concrete.
+Wall condensation: m_cond = K_cond * A_wall * max(0, P_s - P_sat(T_wall)); Q_cond = m_cond * h_fg
+Spray: Q_spray = eta_spray * m_spray * cp_w * (T_g - T_spray)
+Sump cooling: Q_LHSI = prescribed function of time
 
-## **3.3  Fuel Temperature Model**
+## Hydrogen Flammability Assessment
 
-The fuel centerline and average temperatures are calculated from the quasi-steady-state thermal resistance chain, corrected for fuel thermal inertia using a first-order exponential lag:
+Nonflammable: y_H2 < 0.04 or y_steam >= 0.55
+Deflagration region: 0.04 <= y_H2 <= 0.75 and y_steam < 0.55
+Detonation screening: 0.18 <= y_H2 <= 0.59 and y_steam < 0.35
 
-### **3.3.1  Thermal Resistance Chain (Average Pin)**
+FLARECON reports flammability status as a screening indicator only. It does not simulate ignition, flame acceleration, combustion pressure spikes, or deflagration-to-detonation transition.
 
-The temperature rise through the average pin is decomposed into four resistances in series:
+## Coupling Limitation
 
-ΔTclad=qavg′′δcladλclad 3.3
+One-way coupling: FLARE RCS output drives FLARECON. Containment back-pressure does not feed back into the RCS break-flow calculation (P_back,RCS = P_back,0 throughout). This is a known limitation.
 
-ΔTgap=Qpinhgap2πrfuelLheated 3.4
 
-ΔTfuel=Qpin8πkfuelLheated  [average] 3.5
+# UNCERTAINTY ANALYSIS
 
-ΔTfuel=Qpin4πkfuelLheated  [centerline] 3.6
+## Framework
 
-where q"_avg = Q_total/SurfArea is the average surface heat flux [W/m²], Q_pin = Q_total/N_pins is the average pin power [W], h_gap is the fuel-clad gap conductance [W/m²K], and k_fuel is the UO₂ thermal conductivity [W/mK].
+The UA module (flare_ua.py) performs a Monte Carlo sampling loop. N statistically independent FLARE simulations are executed, each with a different realization of selected uncertain inputs. For a scalar figure of merit Y = g(x), the N samples Y_i = g(x_i) are collected and sorted.
 
-### **3.3.2  Fuel Thermal Inertia**
+For Wilks use, samples must be independent realizations from a fixed model with a fixed uncertainty catalogue. Changing the model or catalogue during the run invalidates the non-parametric interpretation.
 
-The quasi-steady fuel temperature is approached with a first-order lag characterized by the fuel thermal time constant:
+## Sampling
 
-τfuel=ρfuelcp,fuelrfuel24kfuel 3.7
+Uniform[a, b]: x = a + (b - a) * U, U ~ Uniform(0,1)
+Normal(mu, sigma): x = mu + sigma * Z, Z ~ N(0,1)
+Lognormal: x = exp(mu + sigma * Z)
+Triangular(a, b, mode): via numpy.random.triangular
 
-The actual fuel temperature at each step is computed as:
+Invalid parameters (lower >= upper for uniform; sigma <= 0 for normal) are caught before the run. Variables with invalid parameters are held constant at their base value and a warning is printed to the log.
 
-Tfuelt=Tfuel,sst+Tfuelt−1−Tfuel,sste−Δt/τfuel 3.8
+## Order Statistics and Wilks Tolerance Limit
 
-This lag captures the stored energy in the fuel pellet, which is important for the correct timing of Doppler feedback during power transients and for the adiabatic temperature rise in RIA events.
+Sorted outputs: Y_1 <= Y_2 <= ... <= Y_N. The m-th largest value (m=1 is the maximum) provides a one-sided tolerance limit.
 
-## **3.4  Hot-Channel Model**
+Wilks confidence beta for the m-th largest of N independent samples at coverage gamma:
+  beta = 1 - I_gamma(m, N - m + 1)   [incomplete beta function ratio; distribution-free]
 
-The hot-pin cladding and fuel temperatures are estimated by applying the combined peaking factor F = F_r × F_z to the average pin quantities:
+## First-Order Wilks (m=1)
 
-Thot clad,ss=TTwall+F−1qavg′′α 3.9
+beta = 1 - gamma^N. For a 95/95 tolerance limit (gamma=0.95, beta=0.95): N >= 59.
+The maximum of 59 independent samples is a one-sided 95/95 upper tolerance limit.
 
-Thot fuel=Thot clad+FΔTclad+ΔTgap+ΔTfuel,cl 3.10
+## Higher-Order Wilks
 
-where F_r is the radial (inter-pin) peaking factor and F_z is the axial peaking factor (ratio of peak to average axial heat flux for a chopped-cosine distribution, typically F_z ≈ 1.55 for a fresh core). Both the hot-pin cladding and hot-pin fuel temperatures are tracked with the same first-order thermal inertia model as the average pin.
+For m=2 and 95/95: N=93. For m=3: N=124. For m=10: N=311.
+The choice of m must be made before the analysis to avoid selection bias.
 
-## **3.5  Coolant-Side Heat Transfer Coefficient**
+## Testing Method for Fixed Acceptance Limits
 
-The coolant-side heat transfer coefficient α is evaluated at each time step by taking the maximum of the forced convection and natural convection values, providing a smooth transition between the two regimes as pump flow decays.
+If all 59 cases pass simultaneously (all figures of merit below their regulatory limits), the joint pass probability is at least 95% with 95% confidence. This is the Wallis-Nutt testing method. A limited-failure variant uses the binomial formula to accommodate m > 0 allowed failures.
 
-### **3.5.1  Dittus-Boelter Forced Convection**
+## FLARE UA Results Tab — Three Sub-Tabs
 
-The Dittus-Boelter [1930] correlation for turbulent forced convection in a rod bundle channel:
+FOM Distribution: time-series overlay for all N samples, histogram of the scalar FOM, top-10 ordered values table, Wilks confidence summary for m = 1 through 10 at gamma = 95%, empirical CDF. When FLARECON outputs are present: containment time-series overlays and scalar summary tiles with H2 colour coding at 4 vol% LFL and 8 vol% detonable threshold.
 
-Nu=0.023 Re0.8Pr0.4 3.11
+Importance Analysis: stepwise multiple-regression decomposition of output variance (see below). Student-t threshold control, four KPI tiles (sigma_o, sqrt(Sum Var), ratio, residual sigma), stepwise regression table, tornado bar chart, correlation bar chart, per-contributor scatter plots. FLARECON importance analysis appears below when containment results are present.
 
-α=Nu kfDh 3.12
+Ordered Statistic: top-20 ordered values plot with selectable m, three summary tiles (m-th value, Wilks beta with pass/fail colour, maximum), beta vs m curve, minimum-n reference table. FLARECON ordered statistics appear below when containment results are present.
 
-where Re = ρ v D_h / μ and Pr = μ c_p / k are the Reynolds and Prandtl numbers evaluated using subcooled liquid properties at the local pressure and temperature. The laminar limit Nu = 3.66 is applied when Re < 2300. All fluid properties are evaluated at the XSteam library for the local P and T, with temperature clipped at 0.9999 T_sat to ensure subcooled properties are returned.
 
-### **3.5.2  Churchill-Chu Natural Convection**
+## Importance Analysis (Section 8.10 — Martin, 2011)
 
-The Churchill-Chu [1975] correlation for vertical natural convection from a heated surface:
+### Purpose
 
-Nu=0.825+0.387Ra1/61+0.492/Pr9/168/272 3.13
+Identifies which sampled input parameters drive the calculated output uncertainty by decomposing the total output variance into contributions from individual uncertainty contributors.
 
-where Ra = Gr Pr is the Rayleigh number and the thermal expansion coefficient β is evaluated from a cubic polynomial fit to water properties. This correlation is applied simultaneously with Dittus-Boelter and the larger of the two HTC values is used, providing a continuous natural circulation capability as pump speed approaches zero.
+Theory reference: R.P. Martin, "Quantifying Phenomenological Importance in Best-Estimate Plus Uncertainty Analyses," Nuclear Technology, Vol. 175, pp. 652-662, September 2011.
 
-### **3.5.3  Film Boiling — Bromley Correlation**
+### Variance Decomposition Framework
 
-When the DNBR drops below 1.0, the code switches to the Bromley [1950] pool film boiling correlation for the post-CHF heat transfer coefficient. The implicit form used in FLARE eliminates the requirement to know the wall superheat ΔT_sat explicitly:
+Under ANOVA assumptions (independently sampled inputs):
+  Var[x_o] = sum_{i=1}^{n} Var[x_{o,i}]
 
-hfb=CB4/3qavg′′1/3 3.14
+where x_{o,i} is the component of the output that varies with the i-th uncertainty contributor. This is a special case of the Sobol/Saltelli generalized variance decomposition.
 
-where C_B is the Bromley coefficient:
+### Sample Correlation Coefficient
 
-CB=0.62λv3ρvρL−ρvghfgμvDh0.25 3.15
+r_xy = sum[(x - mu_x)(y - mu_y)] / [sqrt(sum[(x-mu_x)^2]) * sqrt(sum[(y-mu_y)^2])]
 
-Film boiling replaces Dittus-Boelter once activated. Three post-CHF model options are available via the post_chf_model parameter: bromley (default, Bromley throughout post-CHF); cold_leg (conservative ad-hoc model for cold-leg LOCA, described below); and hot_leg (direct Bromley HTC applied immediately on CHF detection). For bromley and hot_leg models, the Bromley HTC is applied directly each time step with no under-relaxation; the HTC cap htc_post_chf defaults to 1×10⁶ W/m²K (effectively uncapped). For the cold_leg model, htc_post_chf is automatically set to 50 W/m²K (the Leidenfrost floor) and under-relaxation (htc_relax, default 0.3) is applied to produce a physically reasonable gradual transition from the high nucleate-boiling HTC to the 50 W/m²K film boiling floor, modelling the ad-hoc assumption of immediate flow stagnation and film boiling at the break. Film boiling is activated by two independent triggers: (a) DNBR falling below 1.0, and (b) vessel liquid level dropping below film_boiling_level_m. For the cold_leg model, a third trigger (a2) activates film boiling immediately when the equilibrium quality x_eq ≥ 0 and the pump has tripped (i.e. at scram time), representing the conservative assumption of immediate DNB from flow reversal in the cold leg. The pump-trip gate on trigger (a2) prevents spurious film boiling activation during the RPS signal processing delay while the pump is still delivering rated flow. Two multiplicative bias parameters allow independent scaling of the core HTC in uncertainty analysis: htc_core_mult (default 1.0) scales the forced-convection HTC before the post-CHF transition; htc_fb_mult (default 1.0) scales all film boiling HTC values after the transition.
+Positive r: output increases with input. Negative r: output decreases with input (e.g. a negative correlation between post-CHF HTC and PCT means better cooling reduces temperature, as physically expected).
 
-## **3.6  Departure from Nucleate Boiling Ratio**
+### Student-t Stopping Threshold
 
-The departure from nucleate boiling ratio (DNBR) is evaluated at each time step when dnbr_flag = 1 and represents the margin between the actual heat flux and the critical heat flux at which nucleate boiling breaks down:
+t_p = r * sqrt(n - 2) / sqrt(1 - r^2)
+r_min = t_p / sqrt(n - 2 + t_p^2)
 
-DNBR=qCHF′′qhot′′ 3.16
+FLARE default: two-sided 97.5% confidence (equivalent in breadth to one-sided 95%, consistent with the Wilks tolerance level). At t_{0.975} = 2.00 and n = 59: r_min = 0.256.
 
-where q"_hot = F_r × F_z × q"_avg is the hot-pin heat flux [W/m²]. A DNBR below 1.0 indicates that DNB has occurred and the rod is in film boiling. The minimum DNBR over the transient (MDNBR) is tracked and reported.
+The regression terminates when max|r| < r_min among all remaining inputs. The parameter that caused the stop is reported as a terminal diagnostic row (not an accepted contributor).
 
-### **3.6.1  Biasi / Zuber CHF Correlation**
+### Stepwise Multiple-Regression Algorithm
 
-The critical heat flux is calculated using the Biasi [1967] correlation blended with the modified Zuber [1959] pool boiling CHF model, following the RELAP5/MOD2 and TRACE convention.
+At each step k:
+1. Identify input x_k with largest |r| to current residual output
+2. Fit polynomial (degree 1 or 2) to {x_k, residual} by least squares
+3. Variance contribution: Var[x_{o,k}]|est = variance of fitted values at step k
+4. Update residual by subtracting fitted values
+5. Repeat until max|r| < r_min
 
-The Biasi correlation is expressed in CGS input units (D in cm, G in g/cm²s, P in bar):
+Polynomial degree selected by adjusted R^2 (penalizes extra parameters, prevents overfitting with small samples). Delta_sigma_k = sqrt(Var[x_{o,k}]|est) reported in physical units of the figure of merit.
 
-FP=0.7249+0.099Pe−0.032P 3.17
+### Convolution Estimate and Ratio to Actual
 
-HP=−1.159+0.149Pe−0.019P+9P10+P2 3.18
+sigma_o|est = sqrt( sum_{i=1}^{m} Var[x_i]|est )   [Eq. 11 of Martin 2011]
+Ratio = sigma_o|est / sigma_o                        [Eq. 12 of Martin 2011]
 
-qlo′′=1.5027×107Dcm0.6Gcgs−1/6H−xeq 3.19
+Ratio >= 0.90 is satisfactory. Ratio < 0.90 suggests additional contributors below the stopping threshold or nonlinear interactions. Increasing n or lowering the confidence level may reveal them.
 
-For G > 300 g/cm²s (3000 kg/m²s), the high-flux form is also evaluated:
+### Validation
 
-qhi′′=2.764×107Dcm0.6Gcgs−0.4F−xeq 3.20
+Martin (2011) validated against the AREVA NP RLBLOCA three-loop PWR 59-calculation sample problem. Dominant contributors identified: break area, power shape, post-CHF dispersed-flow film-boiling HTC, global peaking factor. Convolution estimate 218.6 deg F vs actual sigma 239.5 deg F; ratio 0.912. Consistent with TPG expert PIRT rankings.
 
-and q"_Biasi = max(q"_lo, q"_hi). The Zuber pool boiling CHF is:
 
-qpb′′=0.14hfgρgσgρf−ρgρg20.25 3.21
+# SOURCE-TERM AND RADIOLOGICAL DOSE MODELS (NOTBADTRAD)
 
-qZuber′′=qpb′′1+0.1ρfρg0.75cp,fΔTsubhfg 3.22
+## Purpose
 
-The two models are blended linearly between G = 100 kg/m²s (pure Zuber) and G = 200 kg/m²s (pure Biasi).
+NOTBADTRAD is FLARE's reduced-order source-term and radiological consequence module providing transparent screening-level dose estimates. It is not RADTRAD, MACCS, HABIT, or ARCON96.
 
-### **3.6.2  Bowring CHF Correlation**
+## Radionuclide Group Structure (9 groups, aligned with RG 1.183 / NUREG-1465)
 
-The Bowring [1972] correlation is used as an alternative for the high-pressure regime (P > ~13 MPa) where the Biasi H(P) function approaches zero and the correlation loses validity. The Bowring correlation uses a pressure-normalized form following Tong and Tang [1997]:
+- Noble gases (Xe, Kr): cloud dose only, no removal credit
+- Halogens (I, Br): thyroid and TEDE; filtration/deposition may be credited
+- Alkali metals (Cs, Rb): aerosol
+- Tellurium group (Te, Sb, Se): semi-volatile aerosol
+- Barium/strontium (Ba, Sr): lower-volatility aerosol
+- Noble metals (Ru, Rh, Pd, Mo, Tc, Co): low-volatility aerosol
+- Cerium group (Ce, Pu, Np): refractory
+- Lanthanides (La, Zr, Nd, Eu, Nb, Pm, Pr, Sm, Y, Cm, Am): refractory
+- Uranium/actinides: very low-volatility refractory (severe-event table only)
 
-n=2.0−0.5pr,  pr=P6.895 MPa 3.23
+## DBA Release Fractions (RG 1.183 / NUREG-1465 aligned)
 
-qCHF′′=hfgGHbow−xeq+Δhsub/hfg4Clen 4L/D+1 3.24
+Group            Gap release    Early in-vessel    Total
+Noble gases      0.05           0.95               1.0000
+Halogens         0.05           0.35               0.4000
+Alkali metals    0.05           0.25               0.3000
+Tellurium        0.00           0.05               0.0500
+Ba/Sr            0.00           0.02               0.0200
+Noble metals     0.00           0.0025             0.0025
+Cerium group     0.00           0.0005             0.0005
+Lanthanides      0.00           0.0002             0.0002
 
-where H_bow and C_len are pressure-dependent coefficients. The Bowring correlation is valid in the range P = 7–17 MPa, G = 200–6000 kg/m²s, D = 2–45 mm.
+Released inventory: I_rel_g(t) = I_g,0 * (R_gap * f_gap(t) + R_EIV * f_EIV(t))
 
-## **3.7  Cladding Oxidation**
+## Severe Core-Melt Release Fractions
 
-Zircaloy cladding oxidation by steam is calculated using the Baker-Just [1962] parabolic rate law, applicable to the high-temperature steam oxidation regime (T > 1000°C) relevant to severe LOCA conditions:
+Interpolated between DBA and severe-event targets using E_mean (mean oxidizing rod ECR as a fraction):
+  R_severe,g = R_DBA,g + E_mean * (R_BDBE,g - R_DBA,g)
 
-dδ2dt=Ae−Q/RTclad 3.25
+Severe-event targets: noble gases 1.000, halogens 0.750, alkali metals 0.750, tellurium 0.300, Ba/Sr 0.120, noble metals 0.005, cerium 0.005, lanthanides 0.005, uranium/actinides 0.001.
 
-where δ is the oxide layer thickness [m], A = 33.3 × 10⁻³ m²/s is the pre-exponential factor, Q = 45,500 cal/mol is the activation energy, and R is the universal gas constant. The maximum local oxidation fraction (MLO) is evaluated as the ratio of the reacted cladding thickness to the pre-accident cladding wall thickness and is compared against the 10 CFR 50.46 limit of 17%.
+## Transport and Dose
 
-# **Chapter 4 — Reactor Kinetics Model**
+Single-compartment: dA_g/dt = S_g(t) - (lambda_leak + lambda_decay + lambda_dep + lambda_spray + lambda_filter) * A_g
 
-Reactor power is calculated using a point kinetics model with six groups of delayed neutrons and net reactivity feedback from fuel temperature (Doppler), moderator temperature, and — for RIA cases — an externally prescribed reactivity insertion. The point kinetics model is valid for spatial modes that are stable (fundamental mode dominance), which is the appropriate assumption for the azimuthally symmetric accidents within FLARE’s scope.
+Atmospheric dispersion factor chi/Q applied per receptor. TEDE = sum_g [Q_leaked,g * (chi/Q)_r * (BR * DCF_inh,g + DCF_cloud,g)].
 
-## **4.1  Point Kinetics Equations**
+Default: no decay credit, no deposition credit (conservative regulatory basis).
 
-The time-dependent reactor power P(t) and the six delayed neutron precursor concentrations C_i(t) are governed by:
+## Iodine Spike Model
 
-dPdt=ρnet−βeffΛ*P+i​λiCi 4.1
+Equilibrium spike (scram or PORV opening): Q_equil = 500 * a_coolant * M_primary
+Accident spike (DNB or gap release): Q_accid = 335 * a_coolant * M_primary
+Combined: f_ISP = min[(Q_equil + Q_accid) / I_Halogens, 1.0]
 
-dCidt=βiΛ*P−λiCi,  i=1,…,6 4.2
+## Source-Term Inventory Model
 
-where ρ_net is the net reactivity [dimensionless], β_eff is the effective delayed neutron fraction, Λ* is the prompt neutron generation time, β_i and λ_i are the delayed neutron yield fraction and decay constant for group i. For standard PWR U-235 fuel, the six-group data from the fission_scram() function are used:
+Group inventories scale from fuel geometry using fission-product yield data calibrated to NUREG-1465 Table 2 EOC inventory. The rod count used for inventory is controlled by nbt_n_fuel_rods, which defaults to N_pins (the thermal-hydraulic rod count). If nbt_n_fuel_rods is explicitly set to a value different from N_pins, a warning is printed. All group inventories can be overridden individually via nbt_inv_{Group}_Ci parameters.
 
-| **Group i** | Yield β_i | Decay constant λ_i (s⁻¹) |
-| --- | --- | --- |
-| 1 (shortest) | 0.038 | 2.2138E-01... (22.1) |
-| 2 | 0.213 | 5.1587E-01... (0.516) |
-| 3 | 0.188 | 1.9594E-01... (0.196) |
-| 4 | 0.407 | 1.0314E-01... (0.103) |
-| 5 | 0.128 | 3.3656E-02... (0.034) |
-| 6 (longest) | 0.026 | 1.1681E-02... (0.012) |
+## Dose Screening Limits
 
-The single-group prompt kinetics approximation used for Euler stepping employs a modified generation time:
+EAB: 25 rem TEDE (10 CFR 50.34 / 50.67)
+LPZ: 25 rem TEDE
+Control room: 5 rem TEDE
 
-Λ*=Λprompt1−ρnet/βeff,  ρnet<βeff 4.3
 
-## **4.2  Reactivity Feedback Models**
+# RISK ASSESSMENT TOOL
 
-### **4.2.1  Doppler (Fuel Temperature) Coefficient**
+The Risk Tool maps FLARE cases onto a Frequency-Consequence (F-C) chart. Event frequency is user-assigned; consequence is EAB TEDE from NOTBADTRAD. The F-C boundary follows NEI 18-04 Rev. 1 LMP-style design objectives.
 
-The Doppler reactivity feedback is proportional to the change in average fuel temperature from its initial value:
+F-C boundary (log-log interpolated):
+  EAB dose [rem]  /  Frequency [events/yr]
+  0.01            /  10           (screening region)
+  0.1             /  1            (AOO to DBE transition)
+  1.0             /  0.1          (DBE upper range)
+  1.0             /  0.01         (DBE lower range)
+  25              /  1e-4         (BDBE upper range)
+  1000            /  5e-7         (BDBE lower range)
 
-ρD=αDTfuel−Tfuel,0  αD in pcm/∘C 4.4
+Logarithmic margin M_i = log10(F_lim(C_i) / F_i). Positive = below boundary.
 
-where α_D is negative (typically −2 to −4 pcm/°C for PWR conditions), providing prompt negative feedback during power excursions. The Doppler coefficient is specified as an input parameter (alpha_D_pcm) and is applied linearly over the full range of fuel temperatures encountered in the simulation.
+The F-C chart is a screening tool, not a substitute for a full PRA. Both deterministic acceptance criteria and F-C screening must be satisfied in a complete safety evaluation.
 
-### **4.2.2  Moderator Temperature Coefficient**
+An AI Risk Narrative can be generated. It uses the same section-by-section generation approach as the PWR Simulator, with the same 21-level detail slider.
 
-The moderator temperature coefficient provides feedback from changes in bulk coolant temperature:
 
-ρM=αMTcoolant−Tcoolant,0  αM in pcm/∘C 4.5
+# AI EVENT NARRATIVE
 
-where α_M must be negative at power (typically −20 to −40 pcm/°C for PWR full-power conditions) to satisfy the inherent stability requirements of 10 CFR 50. The temperature term is weighted by the cubed liquid fraction (1−α_void)³ to capture the physical reduction in moderating effectiveness as the core voids. A separate void reactivity term using the mass steam quality x_eq provides additional negative feedback during LOCA blowdown:
+Narrative generation is section-by-section: each section is a separate API call displayed as it completes. A progress bar and status indicator are shown; the page refreshes to the final stored report after completion.
 
-*ρ_M = α_M [pcm/°C] × (T_coolant − T_coolant,0) × (1 − α_void)³ + α_M_void [pcm/%] × x_eq × 100*
+The Narrative detail slider has 21 levels (0.00 to 1.00 in 0.05 increments). Target word count ranges from approximately 300 words at 0.00 to approximately 5,300 words at 1.00.
 
-where α_void is the volumetric void fraction computed from x_eq, ρ_L, and ρ_V at each time step; and α_M_void (alpha_M_void, default −150 pcm/% steam quality) is the void reactivity coefficient. The (1−α_void)³ weighting suppresses the temperature term rapidly as the core voids (at 70% volumetric void the term is reduced to ~2.7%), ensuring that the strong positive temperature feedback from cold coolant during LOCA blowdown does not dominate over the physically correct void-suppression effect. The temperature term correctly captures positive moderator feedback during MSLB cooldown (subcooled → positive ρ_M), while the void term provides negative feedback during blowdown voiding. The net reactivity in RIA cases is:
+Section plan by detail level:
+- 0.00: plant response overview only
+- 0.15: adds safety system and thermal-hydraulic response
+- 0.25: adds fuel integrity and core thermal response
+- 0.40: adds containment response (when FLARECON data present)
+- 0.55: adds source term and radiological consequences (when data present)
+- 0.75: adds review observations and model caveats
+- 1.00: all sections at maximum word target
 
-ρnet=ρextt+ρD+ρM 4.6
+For benign cases with no fuel damage, FLARE condenses to a short three-section structure regardless of the slider. Sections covering fuel integrity or source term are suppressed when their data are absent or zero.
 
-### **4.2.3  External Reactivity Insertion**
+The AI Uncertainty Narrative in the UA tool follows the same architecture and additionally draws on the stepwise regression table, Wilks order-statistic results for m = 1, 2, and 3, and the sampled input matrix.
 
-For reactivity-initiated accident (RIA) cases, a time-dependent external reactivity ρ_ext(t) [pcm] is read from column F of the time-series input table and evaluated by linear interpolation:
+API configuration in flare_config.txt:
+  ANTHROPIC_API_KEY = sk-ant-...
+  ANTHROPIC_MODEL = claude-sonnet-4-5   (optional; this is the default)
 
-ρextt=interpt,ttable,ρtable 4.7
 
-This table-driven approach allows representation of arbitrary reactivity insertion histories, including rod ejection pulses (step), rod withdrawal (ramp), and boron dilution (slow ramp).
+# KEY INPUT PARAMETERS
 
-## **4.3  Scram Model**
+Parameter              Default     Units      Description
+endtime                36000       s          Simulation end time
+total_power            575         MW         Rated thermal power
+pressure_kPa           14820       kPa        Initial RCS pressure
+temp_core_exit         312.8       deg C      Initial core exit coolant temperature
+diameter_break         0.1159      m          Break equivalent diameter
+Cd_sub / Cd_sat        0.9         --         Break discharge coefficient (subcooled / two-phase)
+F_r                    1.0         --         Radial hot-pin peaking factor
+F_z                    1.0         --         Axial peaking factor
+N_pins                 18200       --         Number of fuel pins (read from input; not hardwired)
+nbt_n_fuel_rods        = N_pins    --         Rod count for source-term inventory (defaults to N_pins; warning if different)
+k_sigma                3.0         --         Sigma distance, average rod to hot pin
+h_gap                  6000        W/m2K      Fuel-clad gap conductance
+r_fuel_m               0.00418     m          Fuel pellet radius
+delta_clad             0.00057     m          Cladding wall thickness
+alpha_D_pcm            -3          pcm/deg C  Doppler coefficient
+alpha_M_pcm            -35         pcm/deg C  Moderator temperature coefficient
+alpha_M_void           -150        pcm/%      Void reactivity coefficient (per % x_eq)
+trip_delay             1.5         s          RPS signal processing delay
+trip_power_frac        1.10        --         High-flux scram setpoint (fraction of rated)
+trip_rod_worth_pcm     -15000      pcm        Total scram rod worth (negative)
+pump_tau               30          s          RCP coastdown time constant
+T_gap_release_C        800         deg C      Gap release failure temperature
+T_early_iv_C           1204        deg C      Early in-vessel failure temperature
+post_chf_model         bromley     --         Post-CHF model: bromley / cold_leg / hot_leg
+htc_core_mult          1.0         --         Forced-convection HTC multiplier
+htc_fb_mult            1.0         --         Film-boiling HTC multiplier
+acc_boron_ppm          2300        ppm        Accumulator water boron concentration
+si_boron_ppm           2300        ppm        SI water boron concentration (set 0 for dilution)
+alpha_boron_pcm_ppm    -10         pcm/ppm    Differential boron worth
+rcs_boron_ppm_init     0           ppm        Initial RCS boron (0 = EOC, no boron)
+si_fill_threshold      0.50        --         SI pump degradation onset fill fraction; 1.0 to disable (intact-RCS/dilution cases)
+cvcs_kgs               0.0         kg/s       CVCS balanced makeup/letdown flow (0 = disabled)
+cvcs_boron_ppm         0           ppm        CVCS makeup boron (0 = unborated, worst-case dilution)
+cvcs_start_time_s      0.0         s          Time CVCS activates
 
-The Reactor Protection System (RPS) monitors five setpoints continuously when the reactor is at power (full_power_flag = 0 or ria_flag = 1). A trip signal is generated when any setpoint is exceeded:
 
-| **Setpoint** | Default Value | Parameter |
-| --- | --- | --- |
-| High neutron flux | 110% of rated | trip_power_frac |
-| Low RCS pressure | 90% of initial P | trip_P_lo_kPa |
-| High RCS pressure | 0 (disabled) | trip_P_hi_kPa |
-| Low coolant flow | 0 (disabled) | trip_flow_frac |
-| Timed manual trip | 1×10⁶ s (never) | trip_time_s |
+# MODEL FLAGS
 
-A signal processing and relay delay (trip_delay, default 1.5 s) is applied between the detection of a trip setpoint and the execution of the scram. This represents the hardware response time of conventional PWR reactor protection systems with hard-wired relays. When pump_trip_time is not specified, the RCP trips coincident with the reactor scram; the pump therefore continues to deliver rated flow throughout the trip_delay window. Film boiling triggers that depend on post-scram flow conditions (specifically the cold_leg Trigger a2, Section 3.5.3) are gated on the _pump_tripped flag to prevent activation at full pump flow during this delay. The total scram rod worth is specified by trip_rod_worth_pcm (default −15,000 pcm). The scram reactivity insertion follows the six-group delayed neutron decay model implemented in fission_scram(), which takes the actual rod worth in dollars (trip_rod_worth_pcm / β_eff) rather than a generic −20$ assumption, ensuring that the post-scram fission power decay curve correctly reflects the actual shutdown depth for the case under analysis:
+Flag                Default    Description
+core_flag           1          Cladding slab conduction, D-B HTC, hot-channel, DNBR, fuel integrity metrics
+pump_flag           1          RCP coastdown and primary-flow scaling
+sg_flag             1          Steam-generator heat removal
+sg_table_flag       0          Prescribed SG heat removal from table column D
+ria_flag            0          RIA mode with external reactivity table
+pja_flag            0          Prompt jump approximation (requires ria_flag=1)
+cond_flag           0          Generic heat structure from table column B
+full_power_flag     0          Hold power at rated; inhibit all automatic trips
+scram_on_PORV       0          Fire reactor trip when PORV first opens
+minimum_output      0          CSV-only output; skip Excel and figures (for batch/UA runs)
+si_enabled          True       Enable ECCS injection models
+pzr_control_enabled 0          Pressurizer heater/spray PI controller for steady-state initialization
+dnbr_flag           0          DNBR tracking (requires core_flag=1)
 
-PtrelP0=i​ββ−ρββie−λitreli​βi 4.8
 
-where t_rel is the time since scram, ρ = −20 is the scram reactivity insertion in units of β, and the sum is over the six delayed neutron groups. This function produces a rapid initial power drop followed by the characteristic delayed neutron tail.
+# PRINCIPAL OUTPUT COLUMNS (CSV / EXCEL)
 
-## **4.4  Prompt Jump Approximation**
+Time (s), RCS Pressure (kPa), RCS Temperature (K), Break Flow (kg/s), Break Enthalpy (kJ/kg), Accumulator Pressure (kPa), Accumulator Flow (kg/s), Accumulator Liquid Volume (m3), Accumulator Level (m), Vessel Level (m), Equilibrium Quality (--), Total Mass Scaled (--), Pump Speed (rpm), Pump Mass Flow (kg/s), Pump Velocity (m/s), Clad Surface Temp (K), Clad Surface Temp Hot Pin (K), Fuel Avg Temp (K), Fuel Hot Pin Temp (K), Clad HTC (W/m2-K), DNBR (--), PORV Mass Flow (kg/s), Pressurizer Level (m), Pressurizer Level (norm), Steam Generator Q (MW), Total Power (MW), Void Fraction (--), Reactivity scram (pcm), Reactivity Doppler (pcm), Reactivity Moderator (pcm), Reactivity Boron (pcm), Reactivity net (pcm), RCS Boron (ppm), HPSI Flow (kg/s), LPSI Flow (kg/s), CVCS Makeup (kg/s), CVCS Letdown (kg/s), Rod Failures DNB (est.), Rod Failures PCT (est.), Rod Failures Gap (est.), Rod Failures EarlyIV (est.)
 
-For subcritical RIA cases where the reactivity changes faster than the time step resolves, the Prompt Jump Approximation (PJA) is applied to capture the instantaneous prompt-neutron power adjustment:
 
-Pnew=Poldβeff−ρprevβeff−ρnet 4.9
+# PRINCIPAL REFERENCES
 
-This approximation is applied only when both ρ_prev and ρ_net are sub-critical (ρ < β_eff) and the time step would otherwise under-resolve the power change. It provides a significant improvement in accuracy for rod ejection simulations without requiring sub-millisecond time steps.
+ANSI/ANS-5.1 (1979). Decay Heat Power in Light Water Reactors.
+Baker, L. and Just, L.C. (1962). Studies of Metal-Water Reactions at High Temperatures. ANL-6548.
+Biasi, L. et al. (1967). Studies on burnout for flowing steam-water mixtures. Energia Nucleare, 14(9), 530-536.
+Bowring, R.W. (1972). Simple but accurate round tube dryout correlation. AEEW-R789.
+Bromley, L.A. (1950). Heat transfer in stable film boiling. Chem. Eng. Progress, 46(5), 221-227.
+Churchill, S.W. and Chu, H.H.S. (1975). Natural convection from a vertical plate. IJHMT, 18(11), 1323-1329.
+Dittus, F.W. and Boelter, L.M.K. (1930). Heat transfer in automobile radiators. UC Publications in Engineering, 2(13), 443-461.
+Fauske, H.K. (1962). Two-phase critical flow theory. ANL-6633.
+Liles, D.R. and Reed, W.H. (1978). Semi-implicit method for two-phase dynamics. J. Comp. Phys., 26(3), 390-407.
+Martin, R.P. (2011). Quantifying phenomenological importance in BEPU analyses. Nuclear Technology, 175(3), 652-662.
+Martin, R.P. and Nutt, W.T. (2011). Order-statistics in best-estimate plus uncertainty analysis. Nucl. Eng. Design, 241, 274-284.
+Moody, F.J. (1965). Maximum flow rate of a single-component two-phase mixture. ASME J. Heat Transfer, 87(1), 134-142.
+NEI (2019). NEI 18-04 Rev. 1: Risk-Informed Performance-Based Technology-Inclusive Guidance.
+NRC (2005). Regulatory Guide 1.203: Transient and Accident Analysis Methods.
+NRC (2012). Regulatory Guide 1.183: Alternative Radiological Source Terms for DBA Evaluation.
+NRC. NUREG-1465: Accident Source Terms for Light-Water Nuclear Power Plants.
+NRC. Regulatory Guide 1.195: Methods and Assumptions for Radiological Consequences of DBA.
+Nutt, W.T. and Wallis, G.B. (2004). Evaluation of nuclear safety from computer code outputs with uncertainties. Reliability Eng. System Safety.
+Tong, L.S. and Tang, Y.S. (1997). Boiling Heat Transfer and Two-Phase Flow, 2nd ed. Taylor and Francis.
+Wilks, S.S. (1941). Determination of sample sizes for setting tolerance limits. Ann. Math. Statistics, 12(1), 91-96.
+Zuber, N. (1959). Hydrodynamic aspects of boiling heat transfer. AECU-4439.
 
-## **4.5  Nordheim-Fuchs Prompt Supercritical Model**
 
-When ρ_net exceeds β_eff (prompt supercritical excursion), the standard Euler kinetics solver cannot stably resolve the sub-millisecond power pulse. FLARE applies the Nordheim-Fuchs [1946] analytic model for this regime. The excursion is governed by the coupled adiabatic equations:
-
-dPdt=δρ−αDE/CfΛpromptP 4.10
-
-dEdt=P 4.11
-
-where δρ = ρ_net - β_eff [pcm] is the initial excess reactivity above prompt critical, E [J] is the energy deposited since the burst began, C_f = ρ_fuel c_p,fuel V_fuel is the fuel heat capacity [J/K], and |α_D| is the magnitude of the Doppler coefficient [pcm/°C]. The burst self-terminates when the adiabatic Doppler feedback (|α_D| E/C_f) consumes all of the initial excess reactivity. FLARE integrates these equations over N_sub = 1000 sub-steps within each master time step, providing accurate resolution of the pulse shape without global time step reduction.
-
-The adiabatic temperature rise accumulated during the burst is added to the Doppler feedback state variable _nf_delta_T, which then decays with the fuel thermal time constant in subsequent steps.
-
-## **4.6  Decay Heat Model**
-
-Following a reactor scram, the fission product decay heat is calculated using the ANS-1979 standard [ANSI/ANS-5.1, 1979]. The decay heat power is expressed as a fraction of the rated thermal power:
-
-PdecaytrelQ0=isotopes​αiλie−λitrel1−e−λiTop 4.12
-
-where t_rel is the time since shutdown, T_op is the reactor operating time before shutdown, and the sums are over 23 nuclide groups for U-235, U-238, and Pu-239 fission products. Actinide contributions (U-239 and Np-239) are added separately via dhp_act(). A gamma multiplication factor G(t_rel) accounting for photon transport and capture is applied via tabulated values from the ANS standard.
-
-For non-standard fuel compositions, the decay heat can be overridden by a user-supplied time-series table (column C of the input table, activated by power_table_flag), which is added to the standard correlation result. This supports applications with unusual burnup histories or non-UO₂ fuel types.
-
-# **Chapter 5 — Rod Failure and Radiological Source Term Model**
-
-## **5.1  Statistical Rod Failure Model**
-
-FLARE tracks cladding failures using a statistical model based on the assumption that the radial power distribution across the N_pins fuel pins in the core follows a Gaussian distribution. The distribution is parametrized by the hot-pin peaking factor F_r and the number of standard deviations k_sigma separating the core-average pin (f = 1.0) from the hot pin (f = F_r):
-
-σr=Fr−1kσ 5.1
-
-The fraction of pins with power peaking factor above a threshold f_thresh is:
-
-Pf>fthresh=0.5 erfcfthresh−12σr 5.2
-
-The default k_sigma = 3.0 places the hot pin at the 99.87th percentile of the distribution. The absolute number of rods failing at each temperature threshold is:
-
-NfailTthresh=NpinsPThot cladf>Tthresh 5.3
-
-where T_hot_clad(f) is the hot-pin cladding temperature for a pin with peaking factor f. Two failure thresholds are tracked:
-
-- Gap release threshold: T_gap_release = 800°C — cladding rupture temperature under internal fission gas pressure
-
-- Early in-vessel threshold: T_early_iv = 1204°C — the 10 CFR 50.46 PCT limit
-
-In addition, rods experiencing DNBR < 1.0 are counted as failed for gap release purposes (conservative; assuming DNB leads to cladding failure). When film boiling is active, the rod failure count depends on the trigger: core uncovery (vessel level below film_boiling_level_m) sets N_fail_DNB = N_pins because all rods are physically uncovered; DNBR-only film boiling (no uncovery) applies the Gaussian statistical model with sf(0) = 0.5, representing the statistically hotter half of the radial distribution as the failed population.
-
-## **5.2  RG 1.183 Radiological Source Term**
-
-The radiological source term is estimated using the release fractions specified in NRC Regulatory Guide 1.183 [NRC, 2012], Alternative Radiological Source Terms for Evaluating Design Basis Accidents at Nuclear Power Reactors, Table 3. Release fractions are applied to the number of failed pins in each damage category:
-
-| **Nuclide Group** | Gap Release Fraction | Early In-Vessel Fraction |
-| --- | --- | --- |
-| Noble gases (Kr, Xe) | 5% | 20% |
-| Halogens (I) | 5% | 35% |
-| Alkali metals (Cs, Rb) | 5% | 25% |
-| Tellurium group | 0% | 5% |
-| Barium / Strontium | 0% | 2% |
-
-The total release fraction for each nuclide group is calculated as:
-
-Rgroup=fgap onlyFgap+fearly ivFearly iv 5.4
-
-where f_gap_only = (N_gap - N_early_iv) / N_pins is the fraction of rods that experienced gap release only (not early in-vessel), f_early_iv = N_early_iv / N_pins is the early in-vessel failed fraction, and F_gap, F_early_iv are the RG 1.183 release fractions from Table 5-1. These fractions represent the fraction of the total core inventory of each nuclide group released to the RCS.
-
-# **Chapter 6 — Numerical Solution Methods**
-
-## **6.1  Time Grid and Operator Splitting**
-
-FLARE uses a non-uniform time grid that provides fine resolution near the start of the transient (where pressure and temperature change most rapidly) and coarser steps at later times:
-
-- t = 0 to 0.1 s: Δt = 0.01 s (0.01-s steps, 10 per 0.1 s)
-
-- t = 0.1 to 2 s: Δt = 0.1 s
-
-- t = 2 s to end: Δt = 1 s
-
-The solution advances using an operator-split strategy in which the thermal-hydraulic state (P, h), the kinetics power, and the cladding temperature are solved in sequence within each time step, with one-step lagging at the coupling interfaces.
-
-## **6.2  Thermal-Hydraulic Solver**
-
-The pressure and enthalpy are advanced by solving the 2×2 linear system described in Chapter 2. The coefficient matrix A is formed from the partial derivatives of internal energy and specific volume, evaluated numerically using finite differences about the current state:
-
-∂e∂P≈eP+ΔP,h−eP−ΔP,h2ΔP 6.1
-
-The pressure increment is ΔP = 10 Pa and the enthalpy increment is Δh = 100 J/kg. The linear solve is performed using numpy.linalg.solve(). If the matrix is singular (which can occur near the critical point where the property derivatives become ill-conditioned), the code falls back to a direct enthalpy update with the pressure held constant.
-
-## **6.3  PORV Predictor-Corrector**
-
-The PORV mass flow rate enters the b vector as a nonlinear term (since G_ERM depends on the current pressure). A predictor-corrector method resolves this coupling: the pressure is first computed without PORV flow (predictor), then with maximum PORV flow. If the pressure remains above the PORV setpoint with maximum flow, the full PORV flow is used. If the pressure falls below the setpoint with maximum flow, the PORV flow fraction that exactly pins the pressure at the setpoint is determined by linear interpolation:
-
-f=Pnone−PsetpointPnone−Pmax PORV 6.2
-
-mPORV=f mPORV,max 6.3
-
-## **6.4  Kinetics Solver**
-
-For sub-critical conditions, the point kinetics equation (4.1) is advanced using a first-order explicit Euler step:
-
-Pt+Δt=Pt1+Δt ρnet10−5Λ* 6.4
-
-The prompt jump approximation (Section 4.4) is applied before this step to capture instantaneous power adjustments. For prompt-supercritical conditions (ρ_net > β_eff), the Nordheim-Fuchs analytic integration (Section 4.5) replaces the Euler step. Post-scram, the total reactor power is the sum of the fission_scram() baseline and an excess fission power term P_excess that captures re-criticalization when ρ_net rises above zero due to insufficient rod worth or cold-water moderator feedback. The quasi-static inhour approximation is used for the excess power:
-
-*dP_excess/dt = (ρ_net / Λ*) × P_seed*
-
-where P_seed = max(P_excess, P_base) and P_base = fission_scram(t_rel, ρ_$) × P_rated is the baseline fission power evaluated at the actual rod worth. This seeding ensures that re-criticalization can develop even after the precursor population has decayed, because the baseline decay curve provides a continuous neutron source. P_excess accumulates when ρ_net > 0 (delayed supercritical, growth time constant ρ_net/Λ*) and decays naturally when ρ_net < 0. It is bounded above at rated power and floored at zero.
-
-## **6.5  Heat Conduction Solver**
-
-The cladding slab is discretized with N uniformly-spaced nodes across thickness δ_clad. The implicit time integration produces a tridiagonal system:
-
-aiTi−1t+1+biTit+1+ciTi+1t+1=di 6.5
-
-where the coefficients are:
-
-ai=ci=−λcladΔx2  (internal nodes) 6.6
-
-bi=ρcladcp,cladΔt+2λcladΔx2 6.7
-
-Boundary conditions enter through the d_i vector. The inner surface heat flux and outer surface convective boundary conditions modify the first and last row of the tridiagonal system. The system is solved efficiently using numpy.linalg.solve() applied to the full N×N tridiagonal matrix.
-
-## **6.6  Numerical Stability Considerations**
-
-The semi-implicit pressure solver is stable with respect to the acoustic Courant limit, since sound wave propagation is not resolved in the single-node model. The explicit Euler kinetics step is stable for Δt < Λ* / |ρ_net| in sub-critical conditions, which is satisfied at 1-s steps for typical scram reactivity values. The Nordheim-Fuchs sub-cycling with N_sub = 1000 steps per master time step ensures accurate resolution of prompt supercritical bursts regardless of the master time step size. The implicit cladding slab solver is unconditionally stable by the von Neumann criterion.
-
-# **Chapter 7 — Code Input and Output**
-
-## **7.1  Input File Format**
-
-FLARE reads input from an Excel workbook with the naming convention CaseName_in.xlsx. The active worksheet must be named CaseName_in. Input is organized in a command block occupying column A of the worksheet, consisting of section headers (# comments), key=value assignment statements, and blank lines. The parser reads up to 120 rows of column A and evaluates each key=value pair using Python’s exec() function in a restricted namespace.
-
-Section headers must be preceded by a blank row. The banner (documentation block at the top of the file) consists of comment rows above the first key=value assignment. The Model Editor (flare_model_editor.py) provides an interactive interface for editing the command block while enforcing these formatting rules.
-
-Below the command block, a time-series input table provides transient boundary conditions. The table header row is identified by the presence of 'Time' in column A. Table columns are:
-
-| **Column** | Header | Units | Description |
-| --- | --- | --- | --- |
-| A | Time (s) | s | Simulation time |
-| B | Structure Q (MW) | MW | Heat from passive structures to coolant (cond_flag=1) |
-| C | Decay Heat (MW) | MW | Supplemental decay heat (added to ANS correlation) |
-| D | Steam Generator (MW) | MW | Prescribed SG heat removal (sg_table_flag=1) |
-| E | SI Flow (kg/s) | kg/s | ECCS safety injection flow (interpolated at each time step) |
-| F | rho_ext (pcm) | pcm | External reactivity insertion (ria_flag=1) |
-
-## **7.2  Key Input Parameters**
-
-| **Parameter** | Default | Units | Description |
-| --- | --- | --- | --- |
-| endtime | 36000 | s | Simulation end time |
-| total_power | 575 | MW | Rated thermal power |
-| pressure_kPa | 14820 | kPa | Initial RCS pressure |
-| temp_core_exit | 312.8 | °C | Initial core exit coolant temperature |
-| diameter_break | 0.1159 | m | Break equivalent diameter |
-| Cd_sub / Cd_sat | 0.9 | — | Break discharge coefficient (subcooled / two-phase) |
-| F_r | 1.52 | — | Radial hot-pin peaking factor |
-| F_z | 1.55 | — | Axial peaking factor |
-| h_gap | 6000 | W/m²K | Fuel-clad gap conductance |
-| alpha_D_pcm | −3 | α_D [pcm/°C] | Doppler coefficient |
-| alpha_M_pcm | −35 | α_M [pcm/°C] | Moderator temperature coefficient |
-| trip_delay | 1.5 | s | RPS signal processing delay |
-| trip_power_frac | 1.10 | — | High-flux scram setpoint (fraction of rated) |
-| trip_P_lo_kPa | 0.9×P_0 | kPa | Low-pressure scram setpoint |
-| pump_tau | 30 | s | RCP coastdown time constant |
-| UA_sg_rated | 100 | MW/K | Steam generator overall UA |
-| k_sigma | 3.0 | — | Sigma distance from average to hot pin |
-| T_early_iv_C | 1204 | °C | Rod failure threshold (10 CFR 50.46 PCT limit) |
-| T_gap_release_C | 800 | °C | Gap release cladding rupture temperature |
-| trip_rod_worth_pcm | −15000 | pcm | Total scram rod worth (negative) |
-| alpha_M_void | −150 | pcm / % x_eq | Void reactivity coefficient (per % mass steam quality) |
-| acc_boron_ppm | 2300 | ppm | Accumulator water boron concentration |
-| si_boron_ppm | 2300 | ppm | HPSI / LPSI water boron concentration (set 0 for dilution scenario) |
-| alpha_boron_pcm_ppm | −10 | pcm / ppm | Differential boron worth |
-| rcs_boron_ppm_init | 0 | ppm | Initial RCS boron concentration (0 = EOC, no boron) |
-| post_chf_model | bromley | — | Post-CHF model: bromley │ cold_leg │ hot_leg |
-| si_fill_threshold | 0.50 | — | SI pump degradation onset fill fraction. Set 1.0 to disable (use for intact-RCS / dilution cases) |
-| cvcs_kgs | 0.0 | kg/s | CVCS balanced makeup/letdown flow rate (0 = disabled) |
-| cvcs_boron_ppm | 0 | ppm | CVCS makeup water boron concentration (0 = unborated, worst-case dilution) |
-| cvcs_start_time_s | 0.0 | s | Time at which CVCS activates. Set > 0 for delayed-onset dilution. |
-
-## **7.3  Output Files**
-
-FLARE writes two output files:
-
-### **7.3.1  Excel Output Workbook (CaseName_out.xlsx)**
-
-The full time-series output is written to the CaseName_out sheet. Key output variables include RCS pressure, temperature, specific enthalpy, mixture quality (x_eq), volumetric void fraction, break mass flow rate, break stagnation enthalpy (Break Enthalpy kJ/kg), PORV flow, accumulator injection flow, accumulator liquid level (Accumulator Level m), CVCS flow (net column E imbalance), CVCS makeup flow, CVCS letdown flow, HPSI flow, LPSI flow, pump speed, SG heat removal, net power (fission + decay), cladding surface temperature (average and hot pin), fuel centerline temperature, DNBR, accumulator liquid volume, vessel liquid level, pressurizer level and normalised level, reactivity components (Doppler, moderator, boron, scram, net) for core cases, RCS boron concentration (RCS Boron ppm), and rod failure counts. Scalar summary results (peak values, failure counts, source term) are written to a separate Summary sheet.
-
-### **7.3.2  Minimal CSV Output (minimum_output = 1)**
-
-When minimum_output = 1, the code bypasses Excel and matplotlib and writes two lightweight CSV files: CaseName_out.csv (full time series, same columns as the xlsx output) and CaseName_fail.csv (rod failure and source term summary). This mode is used for batch Monte Carlo runs, iOS/mobile environments, and any context where the full post-processing infrastructure is unavailable.
-
-# **Chapter 8 — Uncertainty Analysis**
-
-## **8.1  Monte Carlo Framework**
-
-The FLARE uncertainty analysis module (flare_ua.py) implements a Monte Carlo sampling loop that drives the simulation engine (flare_sim.py) through N_samples independent runs, each with a different realization of the uncertain input parameters. The sampling uses the numpy random number generator with independent draws for each run and each parameter. Each run is executed as a subprocess and output files are collected in a timestamped run folder (ua_{case}_{YYYYMMDD_HHMMSS}). Previous run folders can be reloaded from the Results tab without re-running the analysis.
-
-## **8.2  Sampled Parameters and Distributions**
-
-The following parameters are available for uncertainty sampling, with their default distributions and ranges:
-
-| **Parameter** | Default Distribution | Default Range / Parameters |
-| --- | --- | --- |
-| Radial peaking F_r | Uniform | [1.20, 1.45] |
-| Axial peaking F_z | Uniform | [1.45, 1.65] |
-| Rated power [MW] | Normal | μ=575, σ=10 |
-| Core exit temp [°C] | Normal | μ=312.8, σ=3 |
-| Break diameter [m] | Uniform | [0.15, 0.25] |
-| Break Cd (subcooled) | Uniform | [0.85, 1.00] |
-| Fuel conductivity [W/mK] | Uniform | [2.5, 3.5] |
-| Gap conductance [W/m²K] | Uniform | [3000, 9000] |
-| Fuel pellet radius [m] | Uniform | [0.00390, 0.00440] |
-| Fuel density [kg/m³] | Uniform | [10000, 10800] |
-| Fuel Cp [J/kgK] | Uniform | [300, 360] |
-| Clad thickness [m] | Uniform | [0.00050, 0.00065] |
-| Clad conductivity [W/mK] | Uniform | [11, 15] |
-| Post-CHF HTC cap [W/m²K] | Uniform | [300, 600] |
-| Leidenfrost ΔT [K] | Uniform | [150, 300] |
-| Core HTC multiplier [—] | Uniform | [0.8, 1.2] |
-| Film boiling HTC multiplier [—] | Uniform | [0.5, 2.0] |
-
-## **8.3  Sample Generation**
-
-For each distribution type, samples are drawn as follows:
-
-- Uniform[a, b]: x = a + (b-a) U, where U ~ Uniform(0,1)
-
-- Normal(μ, σ): x = μ + σ Z, where Z ~ Normal(0,1)
-
-- Lognormal(μ, σ): x = exp(Z σ + μ), where Z ~ Normal(0,1)
-
-- Triangular(a, b, mode): x = triangular(a, b, mode) via numpy.random
-
-## **8.4  Output Statistics and 95/95 Criterion**
-
-For each scalar output variable (PCT, MDNBR, peak pressure, etc.), the following statistics are computed over the N_samples runs: mean, standard deviation, minimum, maximum, 5th percentile, 50th percentile (median), and 95th percentile.
-
-The one-sided 95/95 tolerance limit (95th percentile with 95% confidence) applicable under 10 CFR 50.46(b) requires a minimum sample size determined by the Wilks [1941] formula:
-
-N≥ln1−γlnβ  [one-sided, order statistic = N] 8.1
-
-where γ = 0.95 is the confidence level and β = 0.95 is the probability content. This gives N ≥ 59 samples for the one-sided case where the largest value is taken as the 95th percentile estimate. For the two-sided 95/95 case, N ≥ 93 samples are required.
-
-The Monte Carlo output includes envelope plots (minimum, mean, maximum, 95th percentile) and cumulative distribution functions for each output variable, generated by the Streamlit UA interface.
-
-# **Chapter 9 — Code Assessment**
-
-## **9.1  Conservation Checks**
-
-The global mass conservation residual is evaluated at each time step and can be monitored in the output. The normalized mass M_scaled = M(t)/M(0) tracks the total inventory. The energy residual is implicit in the 2×2 solver: the volume constraint (b[1] = 0 for a sealed system) exactly recovers the pressure change from thermal expansion, providing an internal energy balance check.
-
-## **9.2  Steady-State Initialization**
-
-For rated-power steady-state conditions, FLARE produces the following initial conditions for a 575 MWt PWR/SMR:
-
-- RCS pressure: 15,500 kPa (2250 psia) — matches typical SMR operating pressure
-
-- Core exit temperature: 312.8°C — consistent with 30°C subcooling at rated pressure
-
-- Rated pump speed: 3550 rpm with homologous curve operating point
-
-- Steam generator heat removal: UA × (T_primary - T_sat,secondary)
-
-- Initial cladding temperature: TTwall_ini set from the rated-power D-B HTC and heat flux
-
-## **9.3  Analytical Benchmarks**
-
-The following analytical benchmarks validate individual model components:
-
-### **9.3.1  Nordheim-Fuchs Analytic Solution**
-
-For a step external reactivity insertion δρ above prompt critical with initial power P_0, the Nordheim-Fuchs model predicts a peak power:
-
-Ppeak=P0+Cfδρ22αDΛprompt 9.1
-
-and a total energy release per unit fuel heat capacity:
-
-ΔT=δραD 9.2
-
-The FLARE sub-cycle integration of equations (4.10)–(4.11) reproduces these analytic results to within 0.5% for Δt = 1 s master steps with N_sub = 1000.
-
-### **9.3.2  Moody Critical Flow Benchmark**
-
-The ERM critical mass flux can be compared against the Moody [1965] charts for steam-water mixtures. For stagnation conditions of P_0 = 6.9 MPa (1000 psia) and x_0 = 0.1, the Moody slip model predicts G_cr ≈ 8000 kg/m²s. The FLARE Newton-Raphson solver reproduces this value to within 2% across the PWR pressure range.
-
-### **9.3.3  Baker-Just Oxidation**
-
-The Baker-Just parabolic rate law is integrated exactly by the trapezoidal rule in FLARE. For a constant cladding temperature of 1200°C for 60 s, the oxidation depth predicted by FLARE matches the Baker-Just analytic integral to within 0.1%.
-
-## **9.4  Limitations and Areas for Future Work**
-
-- Spatial resolution: FLARE’s single-node approximation cannot resolve axial temperature distributions, counter-current flow, or multi-dimensional effects in the reactor vessel. For applications where these phenomena are important (e.g., boron dilution, sump recirculation), a multi-node analysis is required.
-
-- Two-phase slip: The HEM assumption (S = 1) underestimates the void fraction at low mass flux, leading to potential over-prediction of system pressure during reflood. The Fauske slip model in the break flow calculation partially compensates by correctly representing the phase separation at the break plane.
-
-- Natural circulation: The current model provides a single flow path for natural circulation. Loop geometry, seal/loop-seal clearing, and multi-loop interactions require a multi-node nodalization.
-
-- Containment: FLARE does not currently include a dynamic containment model. The back-pressure at the break is held constant at P_containment (default 101 kPa). A containment energy balance model is planned for a future revision.
-
-# **Chapter 10 — Source Term and Radiological Dose Models**
-
-Following completion of the thermal-hydraulic and core damage calculation, FLARE computes the radiological source term and performs atmospheric dispersion dose screening using the NOTBADTRAD model. Results are written to the “Source Term,” “Dose,” and “Iodine Spike” sheets of the output workbook and are displayed in the Results tab of the PWR Simulator and Risk Assessment tools.
-
-## **10.1  Rod Failure Model (RG 1.183 Source Term)**
-
-FLARE estimates the fraction of fuel rods that experience cladding rupture using a Gaussian distribution model. The average cladding temperature T̅clad and the hot-pin cladding temperature Tₙclad are tracked throughout the transient. The hot-pin temperature is Tₙclad = T̅clad + kσ · σT, where σT is the standard deviation of the pin-to-pin temperature distribution:
-
-σT = (Thot − T̅clad) / kσ  (10.1)
-
-where kσ (default 3.0) represents the number of standard deviations between the average and hot pin. The cumulative fraction of pins exceeding a failure threshold temperature Tlim is given by the upper tail of the Gaussian:
-
-Nfail = Npins × [1 − Φ(z)]  (10.2)
-
-z = (Tlim − T̅clad) / σT  (10.3)
-
-where Φ(z) is the standard normal cumulative distribution function. This formulation is applied identically for both LOCA and non-LOCA cases with two temperature thresholds: Tlim = 800°C triggers gap release, and Tlim = 1204°C triggers early in-vessel release. DNB does not independently trigger RG 1.183 gap release; fuel damage from DNB is instead captured through the accident-initiated iodine spike model (Section 10.3).
-
-The gap and early in-vessel release fractions are applied to the NUREG-1465 Table 2 core inventory for each nuclide group using RG 1.183 Rev. 0 Table 3 release fractions. The combined source term entering containment for each group is:
-
-Qgroup = Igroup × (fgap × RGgap + feiv × RGeiv)  (10.4)
-
-where Igroup is the NUREG-1465 group inventory scaled to the reactor power rating, fgap and feiv are the peak gap and early in-vessel failure fractions from equations (10.2)–(10.3), and RGgap and RGeiv are the RG 1.183 Rev. 0 release fractions for each group.
-
-## **10.2  NOTBADTRAD Atmospheric Dispersion and Dose Model**
-
-NOTBADTRAD (Not A Bad Transient Radiological Dose) is FLARE’s integrated containment leakage and atmospheric dispersion dose screening model. It computes whole-body TEDE (Total Effective Dose Equivalent) at the Exclusion Area Boundary (EAB), Low Population Zone (LPZ), and Control Room (CR) for each nuclide group released to containment.
-
-## **10.2.1  Containment Transport Solver**
-
-For each nuclide group, the containment atmosphere inventory N(t) is governed by a first-order linear ODE with source (release from fuel), leakage to environment, radioactive decay, and spray removal:
-
-dNc/dt = S(t) − λc Nc  (10.5)
-
-where S(t) is the source rate [Ci/s] = Qgroup / release_duration, and the total removal coefficient λc [s⁻¹] is the sum of the leak rate, decay constant (if decay credit is taken), and spray removal coefficient (if deposition credit is taken):
-
-λc = λleak + λdecay × (credit_decay) + λrem × (credit_deposition)  (10.6)
-
-The default regulatory basis sets credit_decay = False and credit_deposition = False, yielding a conservative no-credit calculation. The ODE is solved numerically using a timestep that is at most half the release duration, ensuring accurate resolution of the source phase. When λc · Δt < 10⁻⁶, a linear approximation is used to avoid catastrophic cancellation in the exponential formula. The cumulative activity leaked to the environment over the analysis period [0, T] is:
-
-Qleaked = ∫₀ᵀ λleak Nc(t) dt  [Ci]  (10.7)
-
-## **10.2.2  Atmospheric Dispersion (χ/Q)**
-
-Atmospheric dispersion is characterized by the χ/Q factor [s/m³], the ratio of time-integrated air concentration to total release, evaluated using the Pasquill-Gifford Gaussian plume model for ground-level release:
-
-χ/Q = 1 / (2π σy σz u)  (10.8)
-
-where σy and σz are the horizontal and vertical dispersion coefficients [m] evaluated as power-law functions of downwind distance x for the selected Pasquill-Gifford stability class (default Class F), and u is the mean wind speed [m/s] (default 1.0 m/s). Stability class F with 1 m/s wind speed represents the bounding atmospheric conditions specified in Regulatory Guide 1.145 for EAB and LPZ dose calculations. The dispersion coefficients are capped at 5000 m for σz to avoid non-physical values at long distances.
-
-## **10.2.3  Dose Calculation**
-
-The TEDE at the EAB and LPZ receptor locations combines inhalation and cloud-shine (external immersion) contributions:
-
-TEDE = Qleaked × (χ/Q) × (BR × DCFinh + DCFcloud)  (10.9)
-
-where BR is the breathing rate [m³/s] (default 3.47 × 10⁻⁴ m³/s per RG 1.23), DCFinh is the inhalation dose conversion factor [rem per Ci·s/m³], and DCFcloud is the cloud-shine dose conversion factor [rem per Ci·s/m³]. Dose conversion factors are taken from EPA FGR-12 for the nine NUREG-1465 nuclide groups. For the Control Room, the cloud-shine term is excluded (workers are inside the building) and a filter decontamination factor DF is applied to the inhalation term:
-
-TEDECR = Qleaked × (χ/Q)CR / DFCR × BR × DCFinh  (10.10)
-
-The default decontamination factor for halogens is 100 (90% HEPA + 5% charcoal + 5% recirculation credit per NUREG-0570). Noble gases are not filtered (DF = 1). The dose limits applied for screening are: EAB 25 rem TEDE, LPZ 25 rem TEDE, and Control Room 5 rem TEDE, per 10 CFR 50.34 and 10 CFR 50.67.
-
-## **10.3  Iodine Spike Model**
-
-The iodine spike model accounts for the pre-existing coolant activity and its amplification during a reactor transient. It is computed independently of the rod-failure source term and applies to all cases — LOCA and non-LOCA alike — whenever a triggering event occurs. Only halogens (iodine and bromine) are released; noble gases and other groups are excluded from this pathway.
-
-## **10.3.1  Equilibrium Spike (500×)**
-
-Per Regulatory Guide 1.195 and Standard Review Plan 15.6.5, a reactor trip or PORV opening causes a rapid redistribution of dissolved iodine from the primary coolant to the containment atmosphere. The equilibrium spike inventory is modeled as 500 times the Technical Specification coolant activity limit (default 60 μi/g#x03BC;i/g DE I-131) applied to the full primary system mass:
-
-Qequil = 500 × acoolant × Mprimary  [Ci]  (10.11)
-
-where acoolant is the TS limit coolant activity [Ci/g] and Mprimary is the primary system mass [g]. This spike is triggered whenever a reactor scram or PORV opening is detected.
-
-## **10.3.2  Accident-Initiated Spike (335×)**
-
-When fuel damage occurs — defined as DNB on any rods, or average cladding temperature exceeding the 800°C gap release threshold — an additional accident-initiated iodine spike is computed per RG 1.195:
-
-Qaccid = 335 × acoolant × Mprimary  [Ci]  (10.12)
-
-The two spike contributions are additive. The combined halogen release fraction applied to the NUREG-1465 halogen inventory is:
-
-fISP = min[(Qequil + Qaccid) / IHalogens, 1.0]  (10.13)
-
-The iodine spike dose is computed by a dedicated NOTBADTRAD call using fISP applied to the halogen group only, with all other groups set to zero. The resulting TEDE is reported separately from the rod-failure source term dose in the “Iodine Spike” output sheet and Results tab display.
-
-## **10.4  Risk Assessment Dose Screening**
-
-The Risk Assessment tool (flare_risk.py) executes each case in the case library as a subprocess and reads the EAB TEDE from the Dose sheet of the output workbook. Cases are plotted on an NEI 18-04 Frequency-Consequence (F-C) chart with event frequency [events/yr] on the y-axis and EAB TEDE [rem] on the x-axis.
-
-Event categories and dose limits follow NEI 18-04 Rev. 1 Table 3-1:
-
-•  Anticipated Operational Occurrence (AOO): frequency ≥ 10⁻²/yr, dose limit 0.05 rem TEDE
-
-•  Design Basis Event (DBE): 10⁻⁴ ≤ frequency < 10⁻²/yr, dose limit 2.5 rem TEDE
-
-•  Beyond Design Basis Event (BDBE): 5 × 10⁻⁷ ≤ frequency < 10⁻⁴/yr, dose limit 25 rem TEDE
-
-Cases with EAB TEDE below the applicable dose limit for their frequency category are classified as PASS. Cases exceeding their limit are classified as EXCEEDS and displayed in red on the F-C chart. Cases with no fuel damage or release are classified as “no release” and plotted at a nominal dose below the left axis. The tool persists frequency assignments between sessions in a CSV file (flare_pra_table.csv) in the FLARE folder.
-
-## **10.5  Noble Gas Dose Conversion Factors**
-
-Noble gases contribute to EAB dose exclusively through cloud-shine (external immersion); inhalation dose is negligible for noble gases. The cloud-shine dose conversion factor for the NUREG-1465 noble gas group in NOTBADTRAD is 2.8 × 10⁻² rem per Ci·s/m³. This value reflects the activity-weighted mean of FGR-12 cloud-shine coefficients for the noble gas mixture at reactor shutdown composition (Xe-133, Xe-135, Kr-88, Kr-85m, and other isotopes), without credit for radioactive decay. The shutdown mix is the appropriate basis for a no-decay-credit conservative calculation because the short-lived high-energy emitters (Kr-88, t½ = 2.8 hr; Xe-135, t½ = 9.2 hr) are present at their full shutdown activity and contribute disproportionately to the immersion dose.
-
-The full-power equilibrium noble gas mix (dominated by very short-lived Xe-137, Xe-138, and Kr-89) would give a significantly higher activity-weighted DCF (~0.27 rem per Ci·s/m³), but these isotopes decay within seconds to minutes of shutdown and are not physically present at the receptor during any credible release scenario. The shutdown-composition DCF of 2.8 × 10⁻² rem per Ci·s/m³ is therefore the appropriate conservative basis for post-accident dose screening.
-
-# **Chapter 11 — AI Event Narrative**
-
-## **11.1  Overview**
-
-The FLARE Simulator Results tab includes an AI Event Narrative feature that generates a structured technical narrative of the completed transient using the Anthropic Claude API. The narrative is produced on demand by clicking the Generate narrative button in the AI Event Narrative expander at the bottom of the Results tab. It is cached in the Streamlit session state for the duration of the session and is regenerated only when the button is clicked again.
-
-## **11.2  Data Summary Passed to the API**
-
-Before calling the API, flare_ui.py constructs a plain-text data summary from the output CSV. The summary includes initial, peak, minimum, and final values with times for the following quantities: RCS pressure; RCS temperature; core power; vessel liquid level; pump mass flow rate; ECCS injection flow (if active); MDNBR and time of minimum; average and hot-pin cladding temperatures; hot-pin fuel temperature; core HTC; steam generator heat removal (if active); equilibrium quality range; and rod failure counts for each damage category. The model is instructed to base its narrative strictly on the provided data and not to invent values.
-
-## **11.3  Narrative Structure**
-
-The system prompt instructs the model to produce a 3–5 paragraph technical narrative organized as: (1) initiating event and immediate plant response; (2) thermal-hydraulic progression; (3) safety system performance; (4) final plant state and regulatory significance. Standard nuclear engineering terminology is required throughout.
-
-## **11.4  API Configuration**
-
-The API key and model string are read from flare_config.txt in the FLARE working directory. Two entries are recognized:
-
-ANTHROPIC_API_KEY = sk-ant-...
-
-ANTHROPIC_MODEL = claude-sonnet-4-5
-
-The ANTHROPIC_MODEL entry is optional; it defaults to claude-sonnet-4-5 if absent. Updating this entry to a newer model string when Anthropic releases a new version of Claude requires no code changes. The same configuration file is shared by the FLARE Assistant chat in flare_home.py. The narrative feature is disabled and shows a configuration message if the API key entry is absent from flare_config.txt.
-
-# **References**
-
-ANSI/ANS-5.1 (1979). American National Standard for Decay Heat Power in Light Water Reactors. American Nuclear Society, La Grange Park, IL.
-
-Baker, L. and Just, L.C. (1962). Studies of Metal-Water Reactions at High Temperatures. ANL-6548. Argonne National Laboratory.
-
-Biasi, L. et al. (1967). Studies on burnout for flowing steam-water mixtures. Energia Nucleare, 14(9), 530–536.
-
-Bowring, R.W. (1972). Simple but accurate round tube, uniform heat flux, dryout correlation over the pressure range 0.7 to 17 MN/m². AEEW-R789. Winfrith, UK.
-
-Bromley, L.A. (1950). Heat transfer in stable film boiling. Chemical Engineering Progress, 46(5), 221–227.
-
-Churchill, S.W. and Chu, H.H.S. (1975). Correlating equations for laminar and turbulent free convection from a vertical plate. International Journal of Heat and Mass Transfer, 18(11), 1323–1329.
-
-Dittus, F.W. and Boelter, L.M.K. (1930). Heat transfer in automobile radiators of the tubular type. University of California Publications in Engineering, 2(13), 443–461.
-
-Fauske, H.K. (1962). Contribution to the theory of two-phase, one-component critical flow. ANL-6633. Argonne National Laboratory.
-
-Henry, R.E. and Fauske, H.K. (1971). The two-phase critical flow of one-component mixtures in nozzles, orifices, and short tubes. ASME Journal of Heat Transfer, 93(2), 179–187.
-
-Liles, D.R. and Reed, W.H. (1978). A semi-implicit method for two-phase fluid dynamics. Journal of Computational Physics, 26(3), 390–407.
-
-Margolis, S.G. and Redfield, J.A. (1966). FLASH: A Program for Digital Simulation of the Loss-of-Coolant Accident. WAPD-TM-534. Bettis Atomic Power Laboratory.
-
-Moody, F.J. (1965). Maximum flow rate of a single component, two-phase mixture. ASME Journal of Heat Transfer, 87(1), 134–142.
-
-Nordheim, L.W. and Fuchs, E. (1946). The condition for a prompt criticality excursion. ANL-4405. Argonne National Laboratory.
-
-NRC (2005). Regulatory Guide 1.203: Transient and Accident Analysis Methods. U.S. Nuclear Regulatory Commission, Washington, DC.
-
-NRC (2012). Regulatory Guide 1.183: Alternative Radiological Source Terms for Evaluating Design Basis Accidents at Nuclear Power Reactors. U.S. Nuclear Regulatory Commission, Washington, DC.
-
-Tong, L.S. and Tang, Y.S. (1997). Boiling Heat Transfer and Two-Phase Flow, 2nd ed. Taylor & Francis, Washington, DC.
-
-U.S. Nuclear Regulatory Commission (2008). TRACE V5.0 Theory Manual. Office of Nuclear Regulatory Research, Washington, DC.
-
-U.S. Department of Energy (2015). RELAP5-3D Code Manual Volume I: Code Structure, System Models, and Solution Methods. INL/EXT-05-00752 Rev. 4.3.
-
-Wilks, S.S. (1941). Determination of sample sizes for setting tolerance limits. Annals of Mathematical Statistics, 12(1), 91–96.
-
-Zuber, N. (1959). Hydrodynamic aspects of boiling heat transfer. AECU-4439. U.S. Atomic Energy Commission.
-
-U.S. Nuclear Regulatory Commission (1995). Regulatory Guide 1.145: Atmospheric Dispersion Models for Potential Accident Consequence Assessments at Nuclear Power Plants. Rev. 1. NRC, Washington, DC.
-
-U.S. Nuclear Regulatory Commission (2000). Regulatory Guide 1.195: Methods and Assumptions for Evaluating Radiological Consequences of Design Basis Accidents at Light-Water Nuclear Power Reactors. NRC, Washington, DC.
-
-U.S. Environmental Protection Agency (1993). External Exposure to Radionuclides in Air, Water, and Soil. Federal Guidance Report No. 12, EPA-402-R-93-081. Washington, DC.
-
-U.S. Nuclear Regulatory Commission (1995). NUREG-1465: Accident Source Terms for Light-Water Nuclear Power Plants. NRC, Washington, DC.
-
-NEI (2019). NEI 18-04 Rev. 1: Risk-Informed Performance-Based Technology-Inclusive Guidance for Non-Light Water Reactor Licensing Basis Development. Nuclear Energy Institute, Washington, DC.
-
-# **Appendix A — Nomenclature**
-
-| **Symbol** | Description | Units |
-| --- | --- | --- |
-| A_break | Break orifice area | m² |
-| A_flow_core | Total core coolant flow area | m² |
-| C_d | Discharge coefficient | — |
-| C_f | Fuel heat capacity | J/K |
-| c_p | Specific heat | J/kg·K |
-| D_h | Hydraulic diameter | m |
-| E | Energy deposited (N-F model) | J |
-| F_r | Radial hot-pin peaking factor | — |
-| F_z | Axial peaking factor | — |
-| G | Mass flux | kg/m²·s |
-| g | Gravitational acceleration | m/s² |
-| h | Specific enthalpy | J/kg |
-| h_fg | Latent heat of vaporization | J/kg |
-| h_gap | Fuel-clad gap conductance | W/m²·K |
-| k | Thermal conductivity | W/m·K |
-| L_heated | Fuel heated length | m |
-| M | RCS fluid mass | kg |
-| m_dot | Mass flow rate | kg/s |
-| N_pins | Number of fuel pins | — |
-| Nu | Nusselt number | — |
-| P | Pressure | Pa or kPa |
-| Pr | Prandtl number | — |
-| Q | Thermal power | W or MW |
-| q″ | Heat flux | W/m² |
-| Re | Reynolds number | — |
-| S | Slip ratio (v_g/v_f) | — |
-| T | Temperature | K or °C |
-| t | Time | s |
-| v | Specific volume | m³/kg |
-| V_sys | RCS control volume | m³ |
-| x_eq | Equilibrium quality | — |
-| α | Heat transfer coefficient | W/m²·K |
-| α_D | Doppler coefficient | pcm/°C |
-| α_M | Moderator temperature coefficient | pcm/°C |
-| β_eff | Effective delayed neutron fraction | — |
-| δ_clad | Cladding wall thickness | m |
-| δρ | Excess reactivity above prompt critical | pcm |
-| λ | Thermal conductivity or decay constant | W/m·K or s⁻¹ |
-| Λ* | Modified prompt neutron lifetime | s |
-| μ | Dynamic viscosity | Pa·s |
-| ρ | Fluid density or reactivity | kg/m³ or — |
-| σ | Stefan-Boltzmann constant or surface tension | W/m²K⁴ or N/m |
-| τ | Time constant | s |
-| ω | Pump angular speed | rpm |
-
-# **Appendix B — Model Flags Reference**
-
-FLARE uses a set of binary flag parameters to activate optional model components. All flags default to 0 (inactive) for backward compatibility. Table B-1 summarizes all available flags.
-
-| **Flag** | Default | Activates |
-| --- | --- | --- |
-| core_flag | 0 | Cladding slab conduction, fuel temperature, D-B HTC, and hot-channel model |
-| dnbr_flag | 0 | DNBR tracking using Biasi/Zuber CHF correlation (requires core_flag=1) |
-| cond_flag | 0 | Generic heat structure model (structure Q from table column B) |
-| pump_flag | 1 | RCP coastdown model using homologous curves |
-| pump_scram_trip | 0 | Hold RCP at rated speed until reactor scram, then coast |
-| sg_flag | 1 | Steam generator heat removal (UA model or table) |
-| sg_table_flag | 0 | Use column D table for prescribed Q_SG (overrides UA model) |
-| ria_flag | 0 | RIA mode: point kinetics with rho_ext(t), PJA, and Nordheim-Fuchs |
-| pja_flag | 1 | Apply Prompt Jump Approximation (requires ria_flag=1) |
-| full_power_flag | 0 | Hold power at rated; inhibit all automatic trips (ATWS / SS cases) |
-| scram_on_PORV | 0 | Fire reactor scram when PORV first opens |
-| minimum_output | 0 | Write CSV only; skip Excel and matplotlib (for batch/iOS runs) |
-| si_fill_threshold | 0.5 | Vessel fill fraction above which SI pump flow begins to degrade. Default 0.5 (LOCA reflood). Set 1.0 to disable degradation (boron dilution / intact-RCS scenarios). |
-| cvcs_kgs | 0.0 | CVCS balanced makeup/letdown flow [kg/s]. Zero net RCS mass. Drives boron dilution via cvcs_boron_ppm vs C_RCS difference. |
-| cvcs_boron_ppm | 0 | CVCS makeup water boron [ppm]. 0 = unborated (dilution). Set to C_RCS for neutral baseline. |
-| cvcs_start_time_s | 0.0 | Time at which CVCS activates [s]. Set > 0 for delayed-onset dilution scenario. |
-| R5_plot | 1 | DEPRECATED — R5 reference overlay removed from all figures in Rev 2. |
-| post_chf_model | bromley | Post-CHF heat transfer model. bromley (default): direct Bromley HTC, uncapped. cold_leg: htc_post_chf = 50 W/m²K with under-relaxation, Trigger (a2) at scram. hot_leg: direct Bromley, no under-relaxation. |
-
-FLARE · Proprietary — R.P. Martin
+FLARE -- R.P. Martin -- Proprietary
