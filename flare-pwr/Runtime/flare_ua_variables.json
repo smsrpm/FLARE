@@ -63,22 +63,6 @@
     "p2": 9000.0,
     "help": "Fuel-clad gap conductance — the largest single contributor to fuel temperature uncertainty. Depends on gap size, fill gas, and contact pressure. Wide uniform range reflects as-fabricated variation."
   },
-  "r_fuel_m": {
-    "label": "Fuel radius [m]",
-    "distribution": "uniform",
-    "base": 0.00418,
-    "p1": 0.0039,
-    "p2": 0.0044,
-    "help": "Fuel pellet outer radius. Manufacturing tolerance ~±0.025 mm. Affects fuel heat capacity, stored energy, and gap conductance area."
-  },
-  "rho_fuel": {
-    "label": "Fuel density [kg/m³]",
-    "distribution": "uniform",
-    "base": 10400.0,
-    "p1": 10000.0,
-    "p2": 10800.0,
-    "help": "UO₂ pellet density (theoretical ~10 960 kg/m³). Affects fuel heat capacity and total stored energy in the core."
-  },
   "cp_fuel": {
     "label": "Fuel Cp [J/kg·K]",
     "distribution": "uniform",
@@ -86,14 +70,6 @@
     "p1": 300.0,
     "p2": 360.0,
     "help": "UO₂ specific heat capacity. Increases with temperature. Controls the rate of fuel temperature rise during a transient."
-  },
-  "delta_clad": {
-    "label": "Clad thickness [m]",
-    "distribution": "uniform",
-    "base": 0.00057,
-    "p1": 0.0005,
-    "p2": 0.00065,
-    "help": "Zircaloy cladding wall thickness. Manufacturing tolerance ~±0.05 mm. Affects conduction resistance between fuel and coolant."
   },
   "lambda_clad": {
     "label": "Clad conductivity [W/m·K]",
@@ -134,5 +110,50 @@
     "p1": 150.0,
     "p2": 300.0,
     "help": "Maximum cladding superheat above T_sat at which rewetting (return to nucleate boiling) is permitted. Higher values delay rewetting and produce higher PCT."
+  },
+  "condensation_multiplier": {
+    "label": "Condensation model multiplier",
+    "distribution": "uniform",
+    "base": 1.0,
+    "p1": 0.5,
+    "p2": 1.5,
+    "help": "Multiplier on the wall condensation heat flux — applied uniformly to whichever model is selected (Uchida 1965 or DLM-FM). For Uchida, this scales the empirical HTC directly; for DLM-FM it scales the final mass-transfer-derived heat flux. Accounts for uncertainty in non-condensable suppression of steam condensation, surface wetting behaviour, and condensate film effects. Range 0.5–1.5 per GRS HDR T31.5 validation study and AREVA NP U.S. EPR containment UA (ICAPP 2010, Table V). Values < 1 are conservative (reduce heat removal, raise peak pressure).",
+    "sheet": "FLARECON"
+  },
+  "conc_k": {
+    "label": "Concrete conductivity [W/m·K]",
+    "distribution": "uniform",
+    "base": 1.6,
+    "p1": 1.0,
+    "p2": 2.5,
+    "help": "Thermal conductivity of the reinforced concrete biological shield behind the steel liner. Controls the rate of long-term heat absorption into the concrete mass and therefore the rate of pressure decay after peak. Typical range for structural concrete: 1.0–2.5 W/(m·K) depending on aggregate type, moisture content, and temperature. Lower values are conservative (less long-term heat removal, slower pressure decay).",
+    "sheet": "FLARECON"
+  },
+  "gap_thick_m": {
+    "label": "Liner–concrete gap [m]",
+    "distribution": "uniform",
+    "base": 0.001,
+    "p1": 0.0,
+    "p2": 0.003,
+    "help": "Thickness of the air gap between the steel liner inner surface and the concrete wall behind it. This gap resistance is the largest single uncertainty in the liner-to-concrete thermal path. A well-bonded liner has near-zero gap; construction imperfections or thermal cycling can open gaps up to ~3 mm. Larger gaps reduce heat conduction to the concrete and raise peak pressure. Conservative direction: larger values.",
+    "sheet": "FLARECON"
+  },
+  "pcc_fraction": {
+    "label": "PCC/outer cooling fraction",
+    "distribution": "uniform",
+    "base": 0.0,
+    "p1": 0.0,
+    "p2": 0.0,
+    "help": "Fraction of wall area with active outer-surface cooling (passive containment cooling system or equivalent). Set p1 = p2 = 0 for conventional dry containments with no credited outer cooling (variable is then inactive). For AP1000-type designs set p1 = 0.3, p2 = 1.0. For B&W mPower PCCT uncertainty per MPWR-TECR-005062 Table 5-1, set p1 = 0.0, p2 = 0.367 (dome fraction).",
+    "sheet": "FLARECON"
+  },
+  "T_outer_C": {
+    "label": "Outer wall temperature [°C]",
+    "distribution": "uniform",
+    "base": 40.6,
+    "p1": 20.0,
+    "p2": 65.0,
+    "help": "Temperature of the outer containment surface boundary condition, used when pcc_fraction > 0. For mPower-type passive containment cooling tanks (PCCT), the B&W uncertainty study (MPWR-TECR-005062, Table 5-1) uses 105°F (40.6°C) as the nominal value, ranging from ambient (~20°C) to near-adiabatic (~65°C). Has no effect when pcc_fraction = 0.",
+    "sheet": "FLARECON"
   }
 }

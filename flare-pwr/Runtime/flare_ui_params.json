@@ -5,6 +5,11 @@
     "help": "Simulation end time in seconds. The engine uses a fine grid (0.01 s steps) near t=0 and 1 s steps thereafter, so runtime scales roughly linearly."
   },
   {
+    "key": "total_power",
+    "label": "Rated power [MW]",
+    "help": "Rated thermal power of the reactor [MW]. Used to normalise decay heat, set the initial heat flux for core temperatures, and scale rod-failure counts."
+  },
+  {
     "key": "F_r",
     "label": "Radial peaking F_r",
     "help": "Radial hot-channel factor: ratio of peak-to-average pin power across the core. Multiplied by F_z to give the combined hot-pin heat flux used in DNBR and PCT."
@@ -18,26 +23,6 @@
     "key": "h_gap",
     "label": "Gap conductance [W/m²K]",
     "help": "Fuel-clad gap conductance. Controls the temperature drop across the as-fabricated He-filled gap. Lower values raise fuel centreline temperature; typical BOL range 3000–9000 W/m²K."
-  },
-  {
-    "key": "trip_delay",
-    "label": "Trip delay [s]",
-    "help": "Signal processing and relay delay applied to every reactor protection system trip. The scram fires this many seconds after the setpoint is first exceeded. Typical hard-wired PWR RPS: 1.5 s."
-  },
-  {
-    "key": "trip_power_frac",
-    "label": "High-power trip frac",
-    "help": "High-flux scram setpoint as a fraction of rated power (e.g. 1.10 = trip at 110%). Applies to both the RPS evaluation and the point-kinetics high-power check in RIA cases."
-  },
-  {
-    "key": "trip_P_lo_kPa",
-    "label": "Low-P trip [kPa]",
-    "help": "Low-pressure scram setpoint [kPa]. The reactor trips when RCS pressure falls below this value. Set to 0 to disable. Default is 90% of the initial RCS pressure."
-  },
-  {
-    "key": "total_power",
-    "label": "Rated power [MW]",
-    "help": "Rated thermal power of the reactor [MW]. Used to normalise decay heat, set the initial heat flux for core temperatures, and scale rod-failure counts."
   },
   {
     "key": "pressure_kPa",
@@ -60,9 +45,19 @@
     "help": "Moderator temperature coefficient [pcm/°C]. Must be negative at power for inherent stability. Typical PWR full-power value: −20 to −40 pcm/°C."
   },
   {
-    "key": "k_sigma",
-    "label": "k_sigma (failure dist.)",
-    "help": "Number of standard deviations between the core-average pin power (f=1) and the hot pin (f=F_r) in the Gaussian radial power distribution used to estimate failed-rod counts. Default 3.0 places F_r at the 99.87th percentile."
+    "key": "trip_delay",
+    "label": "Trip delay [s]",
+    "help": "Signal processing and relay delay applied to every reactor protection system trip. The scram fires this many seconds after the setpoint is first exceeded. Typical hard-wired PWR RPS: 1.5 s."
+  },
+  {
+    "key": "trip_power_frac",
+    "label": "High-power trip frac",
+    "help": "High-flux scram setpoint as a fraction of rated power (e.g. 1.10 = trip at 110%). Applies to both the RPS evaluation and the point-kinetics high-power check in RIA cases."
+  },
+  {
+    "key": "trip_P_lo_kPa",
+    "label": "Low-P trip [kPa]",
+    "help": "Low-pressure scram setpoint [kPa]. The reactor trips when RCS pressure falls below this value. Set to 0 to disable. Default is 90% of the initial RCS pressure."
   },
   {
     "_note": "─── FLARECON containment parameters (only shown when FLARECON sheet exists) ───"
