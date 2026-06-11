@@ -1,6 +1,6 @@
 FLARE Code Theory Manual
 Fast Licensing Accident Response Engine
-Revision 2 — June 2026
+Revision 1 — June 2026
 Robert P. Martin
 
 
