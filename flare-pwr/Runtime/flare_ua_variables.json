@@ -111,13 +111,16 @@
     "p2": 300.0,
     "help": "Maximum cladding superheat above T_sat at which rewetting (return to nucleate boiling) is permitted. Higher values delay rewetting and produce higher PCT."
   },
+  "_section_flarecon": {
+    "_note": "─── FLARECON containment parameters (only shown when FLARECON sheet exists) ───"
+  },
   "condensation_multiplier": {
     "label": "Condensation model multiplier",
     "distribution": "uniform",
     "base": 1.0,
     "p1": 0.5,
     "p2": 1.5,
-    "help": "Multiplier on the wall condensation heat flux — applied uniformly to whichever model is selected (Uchida 1965 or DLM-FM). For Uchida, this scales the empirical HTC directly; for DLM-FM it scales the final mass-transfer-derived heat flux. Accounts for uncertainty in non-condensable suppression of steam condensation, surface wetting behaviour, and condensate film effects. Range 0.5–1.5 per GRS HDR T31.5 validation study and AREVA NP U.S. EPR containment UA (ICAPP 2010, Table V). Values < 1 are conservative (reduce heat removal, raise peak pressure).",
+    "help": "Multiplier on the wall condensation heat flux — applied uniformly to whichever model is selected (Uchida 1965 or DLM-FM). For Uchida, this scales the empirical HTC directly; for DLM-FM it scales the final mass-transfer-derived heat flux. Accounts for uncertainty in non-condensable suppression of steam condensation, surface wetting behaviour, and condensate film effects. Values < 1 are conservative (reduce heat removal, raise peak pressure).",
     "sheet": "FLARECON"
   },
   "conc_k": {
@@ -135,7 +138,7 @@
     "base": 0.001,
     "p1": 0.0,
     "p2": 0.003,
-    "help": "Thickness of the air gap between the steel liner inner surface and the concrete wall behind it. This gap resistance is the largest single uncertainty in the liner-to-concrete thermal path. A well-bonded liner has near-zero gap; construction imperfections or thermal cycling can open gaps up to ~3 mm. Larger gaps reduce heat conduction to the concrete and raise peak pressure. Conservative direction: larger values.",
+    "help": "Thickness of the air gap between the steel liner inner surface and the concrete wall behind it. This gap resistance is the largest single uncertainty in the liner-to-cmPoweroncrete thermal path. A well-bonded liner has near-zero gap; construction imperfections or thermal cycling can open gaps up to ~3 mm. Larger gaps reduce heat conduction to the concrete and raise peak pressure. Conservative direction: larger values.",
     "sheet": "FLARECON"
   },
   "pcc_fraction": {
@@ -144,7 +147,7 @@
     "base": 0.0,
     "p1": 0.0,
     "p2": 0.0,
-    "help": "Fraction of wall area with active outer-surface cooling (passive containment cooling system or equivalent). Set p1 = p2 = 0 for conventional dry containments with no credited outer cooling (variable is then inactive). For AP1000-type designs set p1 = 0.3, p2 = 1.0. For B&W mPower PCCT uncertainty per MPWR-TECR-005062 Table 5-1, set p1 = 0.0, p2 = 0.367 (dome fraction).",
+    "help": "Fraction of wall area with active outer-surface cooling (passive containment cooling system or equivalent). Set p1 = p2 = 0 for conventional dry containments with no credited outer cooling (variable is then inactive).",
     "sheet": "FLARECON"
   },
   "T_outer_C": {
@@ -153,7 +156,11 @@
     "base": 40.6,
     "p1": 20.0,
     "p2": 65.0,
-    "help": "Temperature of the outer containment surface boundary condition, used when pcc_fraction > 0. For mPower-type passive containment cooling tanks (PCCT), the B&W uncertainty study (MPWR-TECR-005062, Table 5-1) uses 105°F (40.6°C) as the nominal value, ranging from ambient (~20°C) to near-adiabatic (~65°C). Has no effect when pcc_fraction = 0.",
+    "help": "Temperature of the outer containment surface boundary condition, used when pcc_fraction > 0.",
     "sheet": "FLARECON"
+  },
+  "_section_additional_parameters": {
+    "_note": "─── Additional Parameters Section ───"
+
   }
 }

@@ -1,0 +1,16 @@
+{
+  "CaseATWS": 8e-06,
+  "CaseBlowdown": 0.0003,
+  "CaseBoronDilution": 0.0025,
+  "CaseLBLOCA_cold": 0.000005,
+  "CaseLBLOCA_hot": 0.0002,
+  "CaseLBLOCA_lpsi": 0.0001,
+  "CaseLOHS": 0.007,
+  "CaseMSLB": 0.0009,
+  "CaseNull": 0.1,
+  "CasePump": 0.036,
+  "CaseRIA": 0.0025,
+  "CaseRodEject": 0.00001,
+  "CaseSBLOCA": 0.0009,
+  "CaseStartup": 0.1
+}
