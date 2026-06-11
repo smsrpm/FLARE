@@ -8,3 +8,4 @@ scipy
 Pillow
 XSteamPython
 reportlab
+python-docx
