@@ -1,6 +1,6 @@
 FLARE Code Theory Manual
 Fast Licensing Accident Response Engine
-Revision 1 — June 2026
+Revision 2 — June 2026
 Robert P. Martin
 
 
@@ -236,7 +236,9 @@ Severe-event source-term escalation uses E_mean = max_t [ECR_mean_ox(t)] / 100 (
 dP_n/dt = ((rho_net - beta) / Lambda) * P_n + sum_i [lambda_i * C_i]
 dC_i/dt = (beta_i / Lambda) * P_n - lambda_i * C_i   (i = 1 to 6 groups)
 
-Q_fission = P_n * Q_rated
+Q_fission = P_n * Q_rated_fission
+
+The point-kinetics power is interpreted as the fission-chain power component, not the complete core heat source.
 
 ## Reactivity Feedback
 
@@ -258,7 +260,7 @@ External (RIA cases): rho_ext(t) from column F of the time-series table.
 
 Five RPS setpoints monitored: high neutron flux (trip_power_frac, default 110%), low RCS pressure (trip_P_lo_kPa, default 90% of initial P), high RCS pressure (disabled by default), low coolant flow (disabled by default), timed manual trip (trip_time_s, default never). Signal processing delay trip_delay (default 1.5 s) before scram executes.
 
-Post-scram power: six-group delayed neutron decay curve using actual rod worth in dollars (trip_rod_worth_pcm / beta_eff).
+Post-scram fission-chain power: six-group delayed-neutron kinetics response using actual rod worth in dollars (trip_rod_worth_pcm / beta_eff). Decay heat is calculated independently and is not conditional on scram.
 
 ## Prompt Jump and Nordheim-Fuchs
 
@@ -266,9 +268,43 @@ Prompt Jump Approximation: P_new = P_old * (beta_eff - rho_prev) / (beta_eff - r
 
 For prompt-supercritical excursions (rho_net > beta_eff), the Nordheim-Fuchs analytic model integrates over N_sub = 1000 sub-steps within each master time step. The burst self-terminates when Doppler feedback consumes the excess reactivity.
 
-## Decay Heat
+## Dynamic Decay Heat and Total Core Power
 
-ANS-5.1-1979 standard: Q_decay(t_rel) / Q_0 = sum_i [a_i * lambda_i * exp(-lambda_i * t_rel) * (1 - exp(-lambda_i * T_irr))] summed over 23 nuclide groups for U-235, U-238, and Pu-239 fission products. Actinide contributions (U-239, Np-239) added separately.
+FLARE now separates the reactor heat source into fission-chain power, decay heat power, and total core power. The point-kinetics equations calculate the fission-chain component. Reactivity feedback, scram, boron insertion, Doppler feedback, moderator feedback, void feedback, and prompt-criticality logic act on this fission component only. The thermal-hydraulic energy equation is driven by the total core heat generation:
+
+P_core(t) = P_fission(t) + P_decay(t)
+
+This separation is important for ATWS and other transients in which the fission chain power may decrease substantially without a reactor trip. Decay heat is not a scram-dependent source term. It is present at all times as the result of fission-product and actinide inventories produced by prior operation and by fissioning that continues during the transient. Therefore, fission power may collapse toward zero under strong negative reactivity feedback, but total core heat generation should decay toward the ANSI/ANS decay-heat level rather than collapse to zero.
+
+The ANSI/ANS-5.1 fission-product decay-heat representation is retained as the basis for the decay curve. FLARE uses the exponential coefficient sets already implemented for U-235, U-238, and Pu-239. In the dynamic formulation, those coefficient sets are interpreted as decay-heat inventory groups. For each group j,
+
+dD_j/dt = A_j P_fission(t) - lambda_j D_j
+
+and the fission-product decay heat is
+
+P_decay,fp(t) = sum_j D_j(t)
+
+where A_j and lambda_j are the group strength and decay constant implied by the ANSI/ANS coefficient representation. For a timestep Delta t, the exact constant-source update is
+
+D_{j,n+1} = D_{j,n} exp(-lambda_j Delta t) + A_j P_fission,n [1 - exp(-lambda_j Delta t)] / lambda_j
+
+with the source term evaluated from the fission power over the timestep. This update is the discrete form of the transient fission-history convolution,
+
+P_decay,fp(t) = integral_{-infinity}^{t} P_fission(tau) k_ANS(t - tau) d tau
+
+where k_ANS is the ANSI/ANS-derived decay response kernel. The model therefore preserves the ANSI/ANS decay curve for an ideal shutdown from constant prior power, while also allowing decay heat to follow arbitrary transient fission-power histories.
+
+The initial decay inventory is established from the assumed pre-transient operating history. The fission component is initialized consistently so that the total core power at time zero matches the intended initial reactor power rather than double-counting equilibrium decay heat. In simplified terms,
+
+P_fission(0) = P_initial - P_decay(0)
+
+so that
+
+P_core(0) = P_initial
+
+The actinide contribution associated with the ANSI/ANS model is retained as a simplified pre-transient correction in the current implementation. A fully dynamic actinide production-decay chain may be added later if higher fidelity is needed for long-duration overpower or ATWS cases.
+
+The output variables should be interpreted as follows: Fission Power (MW) is the point-kinetics fission-chain source; Decay Heat Power (MW) is the dynamically advanced ANSI/ANS decay-heat source; Core Power (MW) is the total heat source used by the thermal-hydraulic and fuel heat-transfer models. RK Total Power (MW), where retained for compatibility, is aligned with the combined core heat source rather than being treated as a post-scram-only decay-heat substitute.
 
 
 # TRIP AND PROTECTION SYSTEM MODELS
