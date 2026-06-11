@@ -22,6 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 _DEFAULT_FREQ  = 1e-3
+RISK_FREQUENCIES_JSON = "flare_risk_frequencies.json"
 NEI_FREQ_AOO   = 1e-2
 NEI_FREQ_DBE   = 1e-4
 NEI_FREQ_SCREEN= 5e-7
@@ -386,12 +387,11 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     status_path = run_dir / "risk_status.json"
     local_results_path = run_dir / "flare_risk_results.json"
-    local_pra_path = run_dir / "flare_pra_table.csv"
+    local_freq_path = run_dir / RISK_FREQUENCIES_JSON
     try:
-        pd.DataFrame([{"CaseName": k, "Frequency": v}
-                      for k, v in sorted(freqs.items())]).to_csv(local_pra_path, index=False)
-    except Exception as _pra_err:
-        log_warning(run_dir, f"Could not write run-local flare_pra_table.csv: {_pra_err}")
+        local_freq_path.write_text(json.dumps({str(k): float(v) for k, v in sorted(freqs.items())}, indent=2) + "\n", encoding="utf-8")
+    except Exception as _freq_err:
+        log_warning(run_dir, f"Could not write run-local {RISK_FREQUENCIES_JSON}: {_freq_err}")
 
     # Prevent stale abort requests from a reused run folder from killing a new run.
     try:

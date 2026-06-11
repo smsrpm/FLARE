@@ -2869,10 +2869,12 @@ def pwr_sim(wkstbase, minimum_output=0):
     # T_sec_K       = sg_secondary_temperature(P_sec_kPa)
     T_sec_K       = get_variable(local_namespace, "T_sec_K", sg_secondary_temperature(P_sec_kPa))  # K
     # UA_sg_rated sizing modes:
-    #   sg_dynamic_ua_flag = 0 (default): preserve the normal rated-condition
-    #       sizing based on power_target and thot_target. This is the production
-    #       behavior and is appropriate for startup cases where the initial RCS
-    #       temperature/power may not represent full-power SG design conditions.
+    #   sg_dynamic_ua_flag = 0 (default): production sizing from the same
+    #       lumped SG heat-transfer equation used during the simulation at the
+    #       initial/rated condition.  This makes a null transient self-balancing
+    #       when the user does not explicitly supply UA_sg_rated:
+    #           Q_target = min(UA_rated*v_ratio**0.8, mdot*cp) * (T_primary - T_sec)
+    #       solved for UA_rated, with a primary-side flow-capacity diagnostic.
     #   sg_dynamic_ua_flag = 1: diagnostic-only sizing from the instantaneous
     #       current heat balance:
     #           UA_sg_rated = RK Total Power / (RCS_Temperature - T_sec_K)
@@ -2885,10 +2887,62 @@ def pwr_sim(wkstbase, minimum_output=0):
     _power_target    = float(get_variable(local_namespace, "power_target", total_power))
     _t_hot           = float(get_variable(local_namespace, "thot_target",  temp_core_exit))
     _T_primary_rated = _t_hot + 273.15  # K
-    _dT_rated        = max(_T_primary_rated - T_sec_K, 1.0)  # avoid div/0
-    _UA_sg_default   = (_power_target * 1e6) / _dT_rated       # W/K
-
     _RCS_Temperature_ref_K = float(temp_core_exit) + 273.15
+
+    # Prefer the actual initial primary temperature for automatic production
+    # sizing.  If the user supplies thot_target, use it as the rated/design
+    # primary temperature for the SG UA estimate; otherwise use temp_core_exit.
+    _sg_use_thot_target = "thot_target" in local_namespace
+    _T_primary_sizing_K = _T_primary_rated if _sg_use_thot_target else _RCS_Temperature_ref_K
+    _dT_rated = float(_T_primary_sizing_K) - float(T_sec_K)
+    if not np.isfinite(_dT_rated) or _dT_rated <= 0.0:
+        print("WARNING: SG rated-sizing ΔT is nonpositive; using 1.0 K to avoid division by zero.")
+        _dT_rated = 1.0
+
+    # Build a temporary initial pump state so automatic UA sizing is consistent
+    # with sg_heat(), which applies Dittus-Boelter flow scaling and the
+    # primary-side heat-capacity cap.  This does not advance the transient.
+    if pump_flag:
+        try:
+            _sg_size_pump_state = init(
+                pump_orifice_area, pump_speed_rpm,
+                1e3 * pressure_kPa,
+                float(temp_core_exit) + 273.15,
+            )
+        except Exception as _sg_pump_err:
+            print(f"WARNING: SG automatic UA sizing could not initialize pump state ({_sg_pump_err}); using rated-flow ratio 1.0.")
+            _sg_size_pump_state = {"vol_flow_m3s": _Q_R_SI, "mass_flow_kgs": 0.0, "coasted_down": False}
+    else:
+        # With no forced flow, the forced-convection SG model cannot remove rated
+        # power.  Keep a finite default for diagnostics, but warn below.
+        _sg_size_pump_state = {"vol_flow_m3s": 0.0, "mass_flow_kgs": 0.0, "coasted_down": True}
+
+    _sg_v_ratio0 = max(float(_sg_size_pump_state.get("vol_flow_m3s", 0.0)) / max(_Q_R_SI, 1e-30), 0.0)
+    _sg_flow_factor0 = max(_sg_v_ratio0, 1.0e-6) ** 0.8
+
+    try:
+        _P_kPa0 = float(pressure_kPa)
+        _T_C0 = min(float(temp_core_exit), 0.9999 * XSteam.Tsat_p(_P_kPa0))
+        _hf0 = XSteam.hL_T(_T_C0)
+        _cp_sg_size = XSteam.cp_ph(_P_kPa0, _hf0) * 1.0e3
+        if not np.isfinite(_cp_sg_size) or _cp_sg_size <= 0.0:
+            _cp_sg_size = 5500.0
+    except Exception:
+        _cp_sg_size = 5500.0
+
+    _Q_sg_target_W = max(float(_power_target), 0.0) * 1.0e6
+    _C_primary0 = max(float(_sg_size_pump_state.get("mass_flow_kgs", 0.0)), 0.0) * _cp_sg_size
+    _Q_flow_capacity0_W = _C_primary0 * _dT_rated
+    if pump_flag and _Q_flow_capacity0_W > 0.0 and _Q_sg_target_W > _Q_flow_capacity0_W * 1.001:
+        print("WARNING: SG automatic UA sizing target exceeds primary-side flow-capacity limit: "
+              f"target={_Q_sg_target_W/1e6:.1f} MW, "
+              f"capacity={_Q_flow_capacity0_W/1e6:.1f} MW. "
+              "No UA value can remove the target power under these initial pump/temperature conditions.")
+    elif not pump_flag:
+        print("WARNING: SG automatic UA sizing requested with pump_flag=0; forced-flow SG heat removal is unavailable.")
+
+    _UA_sg_default = _Q_sg_target_W / (_dT_rated * _sg_flow_factor0)
+
     _dT_sg_dynamic = _RCS_Temperature_ref_K - float(T_sec_K)
     if not np.isfinite(_dT_sg_dynamic) or _dT_sg_dynamic <= 0.0:
         print("WARNING: SG diagnostic dynamic-UA reference ΔT is nonpositive; "
@@ -2928,7 +2982,9 @@ def pwr_sim(wkstbase, minimum_output=0):
               f"P_sec={P_sec_kPa:.0f} kPa, T_sec={T_sec_K-273.15:.1f} C")
     else:
         print(f"SG: UA_rated={UA_sg_rated/1e6:.2f} MW/K  "
-              f"(ΔT_rated={_dT_rated:.1f} K), "
+              f"(auto-sized with ΔT={_dT_rated:.1f} K, "
+              f"v_ratio={_sg_v_ratio0:.3f}, flow_factor={_sg_flow_factor0:.3f}, "
+              f"target={_Q_sg_target_W/1e6:.1f} MW), "
               f"P_sec={P_sec_kPa:.0f} kPa, T_sec={T_sec_K-273.15:.1f} C")
 
     # ── decay heat / power ───────────────────────────────────────────────────
@@ -5828,6 +5884,12 @@ def pwr_sim(wkstbase, minimum_output=0):
                 distance_eab_m          = float(get_variable(local_namespace, "nbt_distance_eab_m", 914.0)),
                 distance_lpz_m          = float(get_variable(local_namespace, "nbt_distance_lpz_m", 4800.0)),
                 distance_cr_intake_m    = float(get_variable(local_namespace, "nbt_distance_cr_intake_m", 100.0)),
+                chi_q_eab_override      = (float(get_variable(local_namespace, "nbt_chi_q_eab", None))
+                                           if get_variable(local_namespace, "nbt_chi_q_eab", None) is not None else None),
+                chi_q_lpz_override      = (float(get_variable(local_namespace, "nbt_chi_q_lpz", None))
+                                           if get_variable(local_namespace, "nbt_chi_q_lpz", None) is not None else None),
+                chi_q_cr_override       = (float(get_variable(local_namespace, "nbt_chi_q_cr", None))
+                                           if get_variable(local_namespace, "nbt_chi_q_cr", None) is not None else None),
                 cr_flow_cfm             = float(get_variable(local_namespace, "nbt_cr_flow_cfm", 100.0)),
                 cr_volume_ft3           = float(get_variable(local_namespace, "nbt_cr_volume_ft3", 20000.0)),
                 cr_filter_on            = bool( get_variable(local_namespace, "nbt_cr_filter_on", True)),
@@ -6296,6 +6358,12 @@ def pwr_sim(wkstbase, minimum_output=0):
                 _nbt_eab      = float(get_variable(local_namespace, "nbt_distance_eab_m",         914.0))
                 _nbt_lpz      = float(get_variable(local_namespace, "nbt_distance_lpz_m",        4800.0))
                 _nbt_cr_d     = float(get_variable(local_namespace, "nbt_distance_cr_intake_m",   100.0))
+                _nbt_xq_eab   = (float(get_variable(local_namespace, "nbt_chi_q_eab", None))
+                                 if get_variable(local_namespace, "nbt_chi_q_eab", None) is not None else None)
+                _nbt_xq_lpz   = (float(get_variable(local_namespace, "nbt_chi_q_lpz", None))
+                                 if get_variable(local_namespace, "nbt_chi_q_lpz", None) is not None else None)
+                _nbt_xq_cr    = (float(get_variable(local_namespace, "nbt_chi_q_cr",  None))
+                                 if get_variable(local_namespace, "nbt_chi_q_cr",  None) is not None else None)
                 _nbt_cr_flow  = float(get_variable(local_namespace, "nbt_cr_flow_cfm",            100.0))
                 _nbt_cr_vol   = float(get_variable(local_namespace, "nbt_cr_volume_ft3",        20000.0))
                 _nbt_cr_filt  = bool( get_variable(local_namespace, "nbt_cr_filter_on",            True))
@@ -6329,6 +6397,9 @@ def pwr_sim(wkstbase, minimum_output=0):
                         distance_eab_m          = _nbt_eab,
                         distance_lpz_m          = _nbt_lpz,
                         distance_cr_intake_m    = _nbt_cr_d,
+                        chi_q_eab_override      = _nbt_xq_eab,
+                        chi_q_lpz_override      = _nbt_xq_lpz,
+                        chi_q_cr_override       = _nbt_xq_cr,
                         cr_flow_cfm             = _nbt_cr_flow,
                         cr_volume_ft3           = _nbt_cr_vol,
                         cr_filter_on            = _nbt_cr_filt,
@@ -6862,34 +6933,39 @@ print("\n", flush=True)
 
     # Core inventories from NUREG-1465 Table 2 (3411 MWt PWR at shutdown).
     # Scaled to actual plant power via scale = total_power / 3411.
+    #
+    # DCF values are activity-weighted means from FGR-11 (inhalation, rem/Ci)
+    # and FGR-12 (cloudshine, rem per Ci-s/m3), weighted by NUREG-1465 Table 2
+    # inventory at 3411 MWt equilibrium full power.
+    # Reference: FGR-11 (EPA-520/1-88-020), FGR-12 (EPA-402-R-93-081)
 _NBT_GROUPS = {
     "NG":           dict(label="Noble Gases",        elements="Kr, Xe",
                          t_half_hr=0.78,    inv_ci=3.697e+08, ci_per_fission=1.416509e-18, release=1.00,
-                         dcf_inh=6.5e-5,   dcf_cloud=2.8e-2),
+                         dcf_inh=7.97e-5,   dcf_cloud=4.22e-2),   # FGR wt; Xe-138 dom. cloud
     "Halogens":     dict(label="Halogens",           elements="I, Br",
                          t_half_hr=2.41,    inv_ci=1.110e+08, ci_per_fission=1.437732e-18, release=0.40,
-                         dcf_inh=1.5e1,    dcf_cloud=3.1e-2),
+                         dcf_inh=1.106e1,   dcf_cloud=7.65e-2),   # FGR wt; I-131 dom. inh, I-132/134 dom. cloud
     "Alkali_metals":dict(label="Alkali Metals",      elements="Cs, Rb",
                          t_half_hr=2080.0,  inv_ci=1.360e7, ci_per_fission=1.470166e-18, release=0.30,
-                         dcf_inh=5.0e1,    dcf_cloud=4.7e-3),
+                         dcf_inh=5.47e1,    dcf_cloud=5.00e-2),   # FGR wt; Cs-134 dominant
     "Te_group":     dict(label="Tellurium Group",    elements="Te, Sb, Se",
                          t_half_hr=5.04,    inv_ci=1.888e+08, ci_per_fission=1.308530e-18, release=0.05,
-                         dcf_inh=1.1e1,    dcf_cloud=1.6e-2),
+                         dcf_inh=9.22e0,    dcf_cloud=2.11e-2),   # FGR wt; Te-132 dominant
     "Ba_Sr":        dict(label="Barium/Strontium",   elements="Ba, Sr",
                          t_half_hr=3.68,    inv_ci=2.389e+08, ci_per_fission=1.955664e-18, release=0.02,
-                         dcf_inh=1.7e1,    dcf_cloud=2.6e-2),
+                         dcf_inh=1.70e1,    dcf_cloud=2.59e-2),   # FGR wt; Sr-90 dom. inh
     "Noble_metals": dict(label="Noble Metals",       elements="Ru, Rh, Pd, Mo, Tc",
                          t_half_hr=11.24,   inv_ci=5.241e+08, ci_per_fission=3.185190e-18, release=0.0025,
-                         dcf_inh=1.26e1,   dcf_cloud=2.8e-2),
+                         dcf_inh=1.258e1,   dcf_cloud=2.81e-2),   # FGR wt; Ru-106 dom. inh
     "Ce_group":     dict(label="Cerium Group",       elements="Ce, Pu, Np",
                          t_half_hr=59.88,   inv_ci=1.544e+09, ci_per_fission=8.014688e-19, release=0.0005,
-                         dcf_inh=9.6e0,    dcf_cloud=1.1e-2),
+                         dcf_inh=9.52e0,    dcf_cloud=1.11e-2),   # FGR wt; Ce-144/Pu dom. inh
     "Lanthanides":  dict(label="Lanthanides",        elements="La, Zr, Nd, Eu, Nb, Pm, Pr, Sm, Y",
                          t_half_hr=6.67,    inv_ci=7.683e+08, ci_per_fission=5.970780e-18, release=0.0002,
-                         dcf_inh=3.0e0,    dcf_cloud=5.0e-2),
+                         dcf_inh=3.67e0,    dcf_cloud=3.99e-2),   # FGR wt; Zr-95 dom. inh, La-140 dom. cloud
     "U_actinides":  dict(label="Uranium/Actinides",  elements="U, Th",
                          t_half_hr=162.0,   inv_ci=8.450e+03, ci_per_fission=0.000000e+00, release=0.0002,
-                         dcf_inh=8.0e1,    dcf_cloud=1.0e-5),
+                         dcf_inh=7.50e2,    dcf_cloud=1.0e-7),    # FGR wt; Pu-241 dom. inh; cloud negligible
 }
 
 _NBT_SPRAY_REMOVAL = {
@@ -6971,7 +7047,7 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
             flush=True,
         )
     _r_fuel = float(get_variable(local_namespace, "nbt_fuel_radius_m", 0.00418))
-    _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", 2.408))
+    _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", 3.66))
     _rho    = float(get_variable(local_namespace, "nbt_rho_uo2_kg_m3", 10400.0))
     _enr    = float(get_variable(local_namespace, "nbt_u235_enrichment", 0.05))
     _burn   = float(get_variable(local_namespace, "nbt_fissile_burned_fraction", 0.05))
@@ -6984,14 +7060,35 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
         u235_enrichment=_enr,
         fissile_burned_fraction=_burn)
 
+    # Burnup scaling via nbt_burnup_gwdmtu [GWd/MTU].
+    # Inventory is scaled by (plant_burnup / 33 GWd/MTU), where 33 GWd/MTU
+    # is the NUREG-1465 reference burnup (NUREG-1465 Section 1).
+    # For large PWRs with low-leakage core loading, use peak assembly burnup
+    # rather than core average — e.g. 62 GWd/MTU for a 5-cycle peripheral
+    # assembly vs ~47 GWd/MTU core average.
+    # For the CRN SMR: nbt_burnup_gwdmtu = 51  (CRN ESPA SSAR Section 15.2)
+    # Default: 33 GWd/MTU (no correction — NUREG-1465 basis as-is).
+    _NUREG1465_REF_BURNUP = 33.0
+    _burnup_gwdmtu = get_variable(local_namespace, "nbt_burnup_gwdmtu", None)
+    if _burnup_gwdmtu is not None:
+        _burnup_corr = float(_burnup_gwdmtu) / _NUREG1465_REF_BURNUP
+        print(f"[NBT inventory] Burnup: {float(_burnup_gwdmtu):.1f} GWd/MTU "
+              f"/ {_NUREG1465_REF_BURNUP:.0f} GWd/MTU (NUREG-1465 ref) "
+              f"= {_burnup_corr:.4f}x", flush=True)
+    else:
+        _burnup_corr = 1.0
+
     for _key, _g in groups.items():
-        _default_ci = float(_g.get("ci_per_fission", 0.0)) * _n_fiss
+        _default_ci = float(_g.get("ci_per_fission", 0.0)) * _n_fiss * _burnup_corr
         _override_name = f"nbt_inv_{_key}_Ci"
         _g["inv_ci"] = float(get_variable(local_namespace, _override_name, _default_ci))
 
     _meta = {
-        "model": _model,
-        "n_fissions": _n_fiss,
+        "model":              _model,
+        "n_fissions":         _n_fiss,
+        "burnup_gwdmtu":      float(_burnup_gwdmtu) if _burnup_gwdmtu is not None
+                              else _NUREG1465_REF_BURNUP,
+        "burnup_correction":  _burnup_corr,
         "n_fuel_rods": _n_rods,
         "fuel_radius_m": _r_fuel,
         "fuel_active_length_m": _l_fuel,
@@ -7078,6 +7175,7 @@ def _notbadtrad(
         release_overrides=None,
         credit_decay=False,
         credit_deposition=False,
+        chi_q_eab_override=None, chi_q_lpz_override=None, chi_q_cr_override=None,
         local_namespace=None):
     """
     NOTBADTRAD screening calculation.
@@ -7086,6 +7184,16 @@ def _notbadtrad(
     """
     import copy as _copy
     import time as _time
+
+    # nbt_calibrate: explicit dose output multiplier.
+    # Applied to all dose results (EAB, LPZ, CR, group doses, dist_table)
+    # AFTER the physics calculation.  Default = 1.0 (no adjustment).
+    # Use to account for conservatisms not captured by the generic NUREG-1465
+    # source term — e.g. plant-specific release fractions, ESF leakage,
+    # or calibration against a site-specific RADTRAD licensing calculation.
+    # This is a declared conservatism factor, not a physical parameter.
+    # Document the basis for any value other than 1.0.
+    _nbt_calibrate = float(get_variable(local_namespace, "nbt_calibrate", 1.0))
     t0 = _time.perf_counter()
 
     groups = _copy.deepcopy(_NBT_GROUPS)
@@ -7095,9 +7203,12 @@ def _notbadtrad(
             groups[k]["release"] = release_overrides.get(k, 0.0)
 
     scale   = power_mwt / 3411.0
-    xq_eab  = _nbt_chi_q(distance_eab_m,  release_height_m, stability_class, wind_speed_m_s)
-    xq_lpz  = _nbt_chi_q(distance_lpz_m,  release_height_m, stability_class, wind_speed_m_s)
-    xq_cr   = _nbt_chi_q(distance_cr_intake_m, release_height_m, stability_class, wind_speed_m_s)
+    xq_eab  = chi_q_eab_override if chi_q_eab_override is not None \
+               else _nbt_chi_q(distance_eab_m,  release_height_m, stability_class, wind_speed_m_s)
+    xq_lpz  = chi_q_lpz_override if chi_q_lpz_override is not None \
+               else _nbt_chi_q(distance_lpz_m,  release_height_m, stability_class, wind_speed_m_s)
+    xq_cr   = chi_q_cr_override  if chi_q_cr_override  is not None \
+               else _nbt_chi_q(distance_cr_intake_m, release_height_m, stability_class, wind_speed_m_s)
 
     # Licensing acceptance intervals are location-specific:
     #   EAB: 0–2 hr by default
@@ -7170,17 +7281,25 @@ def _notbadtrad(
                                "eab_integration_tede_rem": _eab_d,
                                "lpz_integration_tede_rem": _lpz_d})
 
-    return {"tede_eab_rem": tede_eab, "tede_lpz_rem": tede_lpz,
-            "tede_cr_rem":  tede_cr,  "group_doses":  group_doses,
+    return {"tede_eab_rem": tede_eab * _nbt_calibrate,
+            "tede_lpz_rem": tede_lpz * _nbt_calibrate,
+            "tede_cr_rem":  tede_cr  * _nbt_calibrate,
+            "group_doses":  {g: {k: v * _nbt_calibrate if k.startswith("tede") else v
+                                 for k, v in d.items()}
+                             for g, d in group_doses.items()},
             "runtime_ms":   (_time.perf_counter() - t0) * 1000.0,
             "chi_q_used":   {"eab": xq_eab, "lpz": xq_lpz, "cr": xq_cr},
             "integration_times_hr": {"eab": _eab_time_hr, "lpz": _lpz_time_hr, "cr": _cr_time_hr},
             "inputs":       {"eab_integration_hr": _eab_time_hr,
                              "lpz_integration_hr": _lpz_time_hr,
                              "cr_integration_hr":  _cr_time_hr,
-                             "inventory": _inventory_meta},
+                             "inventory": _inventory_meta,
+                             "nbt_calibrate": _nbt_calibrate},
             "dist_fit":     dist_fit,
-            "dist_table":   dist_table}
+            "dist_table":   [{**row,
+                              "eab_integration_tede_rem": row["eab_integration_tede_rem"] * _nbt_calibrate,
+                              "lpz_integration_tede_rem": row["lpz_integration_tede_rem"] * _nbt_calibrate}
+                             for row in dist_table]}
 
 # ── end NOTBADTRAD ────────────────────────────────────────────────────────────
 

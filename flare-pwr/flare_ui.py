@@ -32,6 +32,7 @@ from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 from openpyxl import load_workbook
+from flare_json_editor import render_json_editor_button, discover_workbook_parameters
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -291,6 +292,39 @@ def _runtime_dir(base_dir: Path | None = None) -> Path:
 
 def _runtime_file(name: str, base_dir: Path | None = None) -> Path:
     return _runtime_dir(base_dir) / name
+
+
+def _sync_runtime_json_from_working_folder(working_dir: Path | str, filename: str, state_key: str) -> bool:
+    """Copy a tool-specific JSON file from the selected working folder to Runtime.
+
+    The copy is performed once when the sidebar Working Folder selection changes.
+    FLARE looks first for the JSON file directly in the selected working folder,
+    then in working-folder Runtime/runtime subfolders.  The app Runtime copy remains
+    the authoritative file used by the existing UI loaders/editors.
+    """
+    try:
+        wdir = Path(working_dir)
+        candidates = [wdir / filename, wdir / "Runtime" / filename, wdir / "runtime" / filename]
+        src = next((p for p in candidates if p.exists() and p.is_file()), None)
+        current_sig = f"{str(wdir.resolve())}|{src.stat().st_mtime if src else 'none'}"
+        if st.session_state.get(state_key) == current_sig:
+            return False
+        st.session_state[state_key] = current_sig
+        if src is None:
+            return False
+        dst = _runtime_file(filename)
+        try:
+            if src.resolve() == dst.resolve():
+                return False
+        except Exception:
+            pass
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        st.toast(f"Loaded {filename} from selected Working Folder.", icon="📄")
+        return True
+    except Exception as exc:
+        st.warning(f"Could not copy {filename} from the selected Working Folder: {exc}")
+        return False
 
 
 # ── Anthropic API key (shared with flare_home.py) ─────────────────────────────
@@ -622,8 +656,15 @@ def _is_generated_input_dir(path: Path) -> bool:
             return True
     return False
 
-def discover_input_cases():
+def discover_input_cases(working_rel: str | None = None):
+    """Return user-maintained FLARE input cases.
+
+    If working_rel is supplied, only cases whose input workbook resides
+    directly in that selected working folder are returned.  This keeps sidebar
+    case selection and Run All Cases scoped to the same user-selected folder.
+    """
     entries = []
+    working_rel_norm = None if working_rel in (None, "") else str(working_rel).replace("\\", "/").strip("/")
     for p in WORK_DIR.rglob("*_in.xlsx"):
         if p.parent == WORK_DIR:
             continue  # root-level input files are intentionally ignored
@@ -631,18 +672,34 @@ def discover_input_cases():
             continue
         if _is_generated_input_dir(p.parent):
             continue
-        case = p.stem[:-3] if p.stem.endswith("_in") else p.stem.replace("_in", "")
         rel = p.parent.relative_to(WORK_DIR).as_posix()
+        if working_rel_norm is not None and rel != working_rel_norm:
+            continue
+        case = p.stem[:-3] if p.stem.endswith("_in") else p.stem.replace("_in", "")
         label = f"{case}  —  {rel}"
         entries.append({"case": case, "path": p, "rel": rel, "label": label})
     entries.sort(key=lambda e: (e["case"].lower(), e["rel"].lower()))
     return entries
 
-def find_cases():
-    return [e["label"] for e in discover_input_cases()]
 
-def _case_from_label(label: str):
+def discover_working_folders():
+    """Return eligible working folders containing one or more input decks."""
+    folders = {}
     for e in discover_input_cases():
+        rel = e["rel"]
+        if rel not in folders:
+            folders[rel] = {"rel": rel, "path": e["path"].parent, "count": 0}
+        folders[rel]["count"] += 1
+    entries = list(folders.values())
+    entries.sort(key=lambda e: e["rel"].lower())
+    return entries
+
+
+def find_cases(working_rel: str | None = None):
+    return [e["label"] for e in discover_input_cases(working_rel)]
+
+def _case_from_label(label: str, working_rel: str | None = None):
+    for e in discover_input_cases(working_rel):
         if e["label"] == label:
             return e
     return None
@@ -676,7 +733,12 @@ def load_command_block(case_name, input_path=None):
                 break
             if isinstance(v, str):
                 rows.append((i, v))
-            if i > 120:
+            # Some larger FLARE decks carry editable scalar parameters (for
+            # example endtime) well below row 120.  Stop when the first numeric
+            # time-history table row is encountered above, not at an arbitrary
+            # early command-block limit.  Keep a high guard only to avoid
+            # scanning a malformed workbook forever.
+            if i > 1000:
                 break
         return rows
     except PermissionError:
@@ -699,25 +761,78 @@ def load_command_block(case_name, input_path=None):
 
 
 def parse_params(rows):
-    """Extract {name: value} from command block rows."""
+    """Extract {name: value} from command block rows.
+    Returns numeric as float, quoted strings as str.
+    """
     params = {}
     for _, text in rows:
-        if text.strip().startswith("#"):
-            continue
+        if not isinstance(text, str): continue
+        if text.strip().startswith("#"): continue
         m = re.match(r"^\s*(\w+)\s*=\s*([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)", text)
         if m:
-            try:
-                params[m.group(1)] = float(m.group(2))
-            except ValueError:
-                pass
+            try: params[m.group(1)] = float(m.group(2))
+            except ValueError: pass
+            continue
+        m = re.match(r"""^\s*(\w+)\s*=\s*["']([^"']+)["']""", text)
+        if m: params[m.group(1)] = m.group(2)
     return params
+
+def _normalize_flare_workbook_sheet_names(wb, case_name: str):
+    """Normalize FLARE workbook sheet names to the real case name.
+
+    Temporary override files may be named .~<case>_run_in.xlsx so they can be
+    distinguished from user-maintained input decks.  The workbook sheets,
+    however, must keep the case names expected by flare_sim.py after the file is
+    copied into the run folder as <case>_in.xlsx.
+    """
+    case_name = str(case_name)
+    desired_in = f"{case_name}_in"
+    desired_out = f"{case_name}_out"
+
+    def _canonical_title(title: str) -> str:
+        t = str(title).strip()
+        if t.startswith(".~"):
+            t = t[2:]
+        # The temporary override case is .~<case>_run, which can leave sheet
+        # names such as <case>_run_in or .~<case>_run_in.  Collapse those back
+        # to the original case sheet names.
+        if t == f"{case_name}_run_in":
+            return desired_in
+        if t == f"{case_name}_run_out":
+            return desired_out
+        if t == f"{case_name}_in":
+            return desired_in
+        if t == f"{case_name}_out":
+            return desired_out
+        return t
+
+    for _ws in wb.worksheets:
+        new_title = _canonical_title(_ws.title)
+        if new_title != _ws.title and new_title not in wb.sheetnames:
+            _ws.title = new_title
+
+    # Make sure the primary input sheet exists under the exact name expected by
+    # flare_sim.py.  Prefer common temporary variants if the exact name is absent.
+    if desired_in not in wb.sheetnames:
+        for candidate in (
+            f".~{case_name}_run_in",
+            f"{case_name}_run_in",
+            f".~{case_name}_in",
+        ):
+            if candidate in wb.sheetnames:
+                wb[candidate].title = desired_in
+                break
+    return wb[desired_in]
 
 
 def build_override_xlsx(case_name, overrides: dict, input_path=None):
     """
-    Copy base _in.xlsx to a temp file (.~run_in.xlsx) applying overrides,
-    then set minimum_output=0 so full post-processing runs.
-    Returns temp case name.
+    Copy base _in.xlsx to a temp file (.~run_in.xlsx) applying overrides.
+
+    The temp filename uses the .~ prefix so it is ignored by input discovery,
+    but the worksheet names remain the original <case>_in/<case>_out names.
+    That way, when the file is copied into the run folder as <case>_in.xlsx,
+    flare_sim.py finds the worksheet name it expects.
 
     The original workbook may be open in Excel, so copy it first and only open
     the private copy with openpyxl.
@@ -729,25 +844,52 @@ def build_override_xlsx(case_name, overrides: dict, input_path=None):
     shutil.copy2(src, dst)
 
     wb = load_workbook(dst)
-    ws = wb[f"{case_name}_in"]
-    ws.title = f"{tmp_name}_in"
-    if f"{case_name}_out" in wb.sheetnames:
-        wb[f"{case_name}_out"].title = f"{tmp_name}_out"
+    main_ws = _normalize_flare_workbook_sheet_names(wb, case_name)
 
-    for var, new_val in overrides.items():
+    def _sheet_for_override(sheet_name: str):
+        if not sheet_name:
+            return main_ws
+        for _name in wb.sheetnames:
+            if _name.strip().casefold() == sheet_name.strip().casefold():
+                return wb[_name]
+        return main_ws
+
+    for override_key, new_val in overrides.items():
+        if isinstance(override_key, tuple):
+            sheet_name, var = override_key
+            sheet_name = str(sheet_name or "")
+            var = str(var)
+        else:
+            sheet_name = ""
+            var = str(override_key)
+        ws = _sheet_for_override(sheet_name)
+        is_str = isinstance(new_val, str)
         pat = re.compile(
-            r"^(\s*" + re.escape(var) + r"\s*=\s*)"
-            r"([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)"
-            r"(.*)"
+            r"^(\s*"+re.escape(var)+r"\s*=\s*)"
+            + (r"""(["'][^"']*["'])""" if is_str
+               else r"([+-]?\d+\.?\d*(?:[eE][+-]?\d+)?)")
+            + r"(.*)"
         )
+        replaced = False
         for row in ws.iter_rows(max_col=1):
             cell = row[0]
-            if isinstance(cell.value, str) and var in cell.value and "=" in cell.value:
+            if isinstance(cell.value,str) and var in cell.value and "=" in cell.value:
                 m = pat.match(cell.value)
                 if m:
-                    vs = (f"{new_val:.6g}" if abs(new_val) < 1e4
-                          else f"{new_val:.4e}")
-                    cell.value = m.group(1) + vs + m.group(3)
+                    if is_str:
+                        q=m.group(2)[0]; vs=q+new_val.strip("'\"")+q
+                    else:
+                        vs=(f"{new_val:.6g}" if abs(new_val)<1e4 else f"{new_val:.4e}")
+                    cell.value=m.group(1)+vs+m.group(3); replaced=True; break
+        if not replaced and is_str:
+            for row in ws.iter_rows(min_row=1,max_col=1):
+                cell=row[0]
+                if (isinstance(cell.value,str)
+                        and cell.value.strip().lower().startswith("time")
+                        and cell.row>1):
+                    ws.insert_rows(cell.row)
+                    ws.cell(row=cell.row,column=1,
+                            value=var+"="+chr(34)+new_val.strip("'\"")+chr(34))
                     break
 
     wb.save(dst)
@@ -1173,18 +1315,25 @@ def _sim_all_tail_text_file(path, max_chars=8000):
 def _sim_all_latest_status_dir(active_only=True):
     """Return the newest Run-All status folder.
 
-    By default this only reattaches to an active worker.  That prevents an old
-    completed Run All Cases banner from reappearing after a page refresh or
-    after subsequent single-case runs.  Completed/failed batch status remains
-    visible only for the batch launched in the current Streamlit session.
+    Run All Cases status folders may now reside below a selected Working Folder
+    instead of the FLARE application root.  Search the root and immediate
+    subfolders so a browser refresh can reattach to an active worker.
     """
     try:
-        dirs = sorted(
-            [d for d in WORK_DIR.iterdir()
-             if d.is_dir() and (d.name.startswith(".sim_all_") or d.name.startswith("sim_all_"))],
-            key=lambda d: d.stat().st_mtime,
-            reverse=True,
-        )
+        candidates = []
+        search_roots = [WORK_DIR]
+        try:
+            search_roots.extend([d for d in WORK_DIR.iterdir() if d.is_dir() and not d.name.startswith(".")])
+        except Exception:
+            pass
+        for root in search_roots:
+            try:
+                for d in root.iterdir():
+                    if d.is_dir() and (d.name.startswith(".sim_all_") or d.name.startswith("sim_all_")):
+                        candidates.append(d)
+            except Exception:
+                continue
+        dirs = sorted(candidates, key=lambda d: d.stat().st_mtime, reverse=True)
         for d in dirs:
             status_path = d / "sim_all_status.json"
             if not status_path.exists():
@@ -1275,6 +1424,7 @@ def _sim_all_launch_worker(run_dir, case_list, fast_mode, final_report=False, fi
     cfg = {
         "work_dir": str(WORK_DIR),
         "run_dir": str(run_dir),
+        "output_parent": str(run_dir.parent),
         "batch_tag": batch_tag,
         "output_mode": "per_case_sim_dirs",
         "cases": [e["case"] for e in _case_entries_cfg],
@@ -1367,7 +1517,7 @@ def _sim_all_render_progress(status):
         elapsed = status.get("current_case_elapsed_s")
         c4.metric("Case elapsed", f"{elapsed:.0f} s" if isinstance(elapsed, (int, float)) else "—")
         if run_dir:
-            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders.")
+            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders in the selected Working Folder.")
             if status.get("final_report"):
                 st.caption("Final Report mode is active: figures are forced on and a final PDF will be compiled at the end.")
         log_path = status.get("current_case_console_log")
@@ -1386,7 +1536,7 @@ def _sim_all_render_progress(status):
     elif state == "complete":
         st.success(f"Batch run complete — {done - failed}/{total} OK, {failed} failed.")
         if run_dir:
-            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders.")
+            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders in the selected Working Folder.")
             summary_csv = run_dir / "FLARE_sim_all_results.csv"
             if summary_csv.exists():
                 with open(summary_csv, "rb") as f:
@@ -1403,7 +1553,7 @@ def _sim_all_render_progress(status):
     elif state == "aborted":
         st.warning(f"Batch run aborted — {done}/{total} cases processed.")
         if run_dir:
-            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders.")
+            st.caption(f"Batch status folder: `{run_dir.name}`; outputs are being written to ordinary `sim_<case>_<timestamp>` folders in the selected Working Folder.")
     elif state in {"failed", "error"}:
         st.error(f"Batch run failed — {msg}")
         if run_dir:
@@ -2553,43 +2703,85 @@ with st.sidebar:
     st.markdown('<div class="app-sub">Reactor Safety Analysis</div>',
                 unsafe_allow_html=True)
 
-    _case_entries = discover_input_cases()
-    if not _case_entries:
+    _working_folders = discover_working_folders()
+    if not _working_folders:
         st.error("No *_in.xlsx files found in FLARE subfolders. Root-level input files are intentionally ignored.")
         st.stop()
 
-    _case_labels = [e["label"] for e in _case_entries]
-    _selected_label = st.selectbox("Case", _case_labels,
+    _working_labels = [f"{e['rel']}  ({e['count']} case{'s' if e['count'] != 1 else ''})" for e in _working_folders]
+    _selected_working_label = st.selectbox(
+        "Working Folder",
+        _working_labels,
+        key="working_folder_sel",
+        help=(
+            "Select the folder containing the input decks for this run. "
+            "Only folders with actual *_in.xlsx input files are listed; generated sim_/risk_/ua_ and code folders are ignored. "
+            "Run All Cases is limited to the selected working folder."
+        ),
+    )
+    _selected_working_folder = _working_folders[_working_labels.index(_selected_working_label)]
+    _selected_working_rel = _selected_working_folder["rel"]
+    _selected_working_dir = _selected_working_folder["path"]
+    _sync_runtime_json_from_working_folder(
+        _selected_working_dir,
+        "flare_ui_params.json",
+        "pwr_runtime_json_sync_flare_ui_params",
+    )
+
+    _case_entries = discover_input_cases(_selected_working_rel)
+    if not _case_entries:
+        st.error(f"No *_in.xlsx files found in selected working folder `{_selected_working_rel}`.")
+        st.stop()
+
+    _case_labels = [e["case"] for e in _case_entries]
+    _selected_case_label = st.selectbox("Case", _case_labels,
+                             key=f"case_sel_{re.sub(r'[^0-9A-Za-z_]+', '_', _selected_working_rel).strip('_')[:100]}",
                              help=(
-                                 "Input decks are discovered recursively in subfolders below the FLARE root. "
-                                 "Root-level *_in.xlsx files and generated sim_/risk_/ua_ folders are ignored. "
-                                 "Switching cases clears the previous run output and console log."
+                                 "Cases are limited to the selected Working Folder. "
+                                 "Switching cases or working folders clears the previous run output and console log."
                              ))
-    _selected_entry = next(e for e in _case_entries if e["label"] == _selected_label)
+    _selected_entry = next(e for e in _case_entries if e["case"] == _selected_case_label)
     selected = _selected_entry["case"]
     selected_input_path = _selected_entry["path"]
-    st.caption(f"Input file: `{selected_input_path.relative_to(WORK_DIR)}`")
+    _selected_rel = selected_input_path.relative_to(WORK_DIR).as_posix()
+    # Use a path-qualified identity for UI state.  Case names alone are not
+    # sufficient because different input folders can contain workbooks with the
+    # same <case>_in.xlsx stem.  The Edit Parameters widgets must be rebuilt
+    # from the newly selected workbook every time this identity changes.
+    _selected_case_id = f"{selected}|{_selected_rel}"
+    _selected_case_key = re.sub(r"[^0-9A-Za-z_]+", "_", _selected_case_id).strip("_")[:140]
+    st.caption(f"Input file: `{_selected_rel}`")
 
-    # ── Reset Run tab whenever a different case is selected ───────────────────
-    # Issue #2: changing the case must clear the Run state and console output.
-    if selected != st.session_state.get("_sidebar_case"):
+    # ── Reset Run tab and Edit Parameters whenever a different input deck is selected ──
+    # Changing the selected input deck must clear stale number_input/selectbox
+    # widget state.  Otherwise Streamlit can preserve prior Edit Parameters
+    # values and apply SMR values to a later PWR4 run, or vice versa.
+    if _selected_case_id != st.session_state.get("_sidebar_case_id"):
+        _old_case_id = st.session_state.get("_sidebar_case_id")
+        for _k in list(st.session_state.keys()):
+            if str(_k).startswith("ov_"):
+                del st.session_state[_k]
+        st.session_state._sidebar_case_id = _selected_case_id
         st.session_state._sidebar_case  = selected
         st.session_state.run_status     = "idle"
         st.session_state.console_log    = ""
         st.session_state.last_case      = None
         st.session_state.run_dir        = None
         st.session_state.run_init_power = None
+        # Force the parameter editor to be reconstructed with values parsed
+        # from the newly selected workbook on the next rerun.
+        if _old_case_id is not None:
+            st.rerun()
 
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
 
     # ── Previous run selector ─────────────────────────────────────────────────
-    # Discover completed sim_* run folders across ALL cases.  This is important
-    # for Run All Cases: the batch worker writes normal per-case folders
-    # (sim_<Case>_<timestamp>), so a case-specific filter would show only the
-    # currently selected case and make it look as if the batch produced just one
-    # loadable run.
+    # Discover completed sim_* run folders in the selected Working Folder.
+    # PWR Simulator output is now scoped the same way as UA and Risk output:
+    # each run folder is created below the Working Folder selected in the
+    # sidebar, not in the FLARE application root.
     _prev_run_entries = []  # list of (label, run_dir, case_name, mtime)
-    for _d in WORK_DIR.iterdir():
+    for _d in _selected_working_dir.iterdir():
         if not (_d.is_dir() and _d.name.startswith("sim_")):
             continue
         # Prefer *_out.csv; fall back to *_out.xlsx if the csv is missing.
@@ -2603,7 +2795,9 @@ with st.sidebar:
             if _case_name in _seen_cases:
                 continue
             _seen_cases.add(_case_name)
-            _label = f"{_case_name}  /  {_d.name}"
+            # The run folder name already includes the case name, e.g.
+            # sim_CaseLBLOCA_20260611_125855.  Keep the dropdown label compact.
+            _label = _d.name
             _prev_run_entries.append((_label, _d, _case_name, _d.stat().st_mtime))
 
     _prev_run_entries.sort(key=lambda x: x[3], reverse=True)
@@ -2615,8 +2809,8 @@ with st.sidebar:
             _run_labels,
             key="prev_run_sel",
             help=(
-                "Load results from any previous simulator run. Run All Cases "
-                "outputs appear here as ordinary per-case sim_<Case>_<time> folders."
+                "Load results from a previous simulator run in the selected Working Folder. "
+                "Run All Cases outputs appear here as ordinary per-case sim_<Case>_<time> folders."
             ),
         )
         if _sel_prev != "— select a previous run —":
@@ -2638,77 +2832,82 @@ with st.sidebar:
     rows   = load_command_block(selected, selected_input_path)
     params = parse_params(rows)
 
-    KEY_PARAMS = [
-        ("endtime",         "End time [s]",
-         "Simulation end time in seconds. The engine uses a fine grid (0.01 s steps) "
-         "near t=0 and 1 s steps thereafter, so runtime scales roughly linearly."),
-        ("F_r",             "Radial peaking F_r",
-         "Radial hot-channel factor: ratio of peak-to-average pin power across the core. "
-         "Multiplied by F_z to give the combined hot-pin heat flux used in DNBR and PCT."),
-        ("F_z",             "Axial peaking F_z",
-         "Axial peaking factor: ratio of peak-to-average axial heat flux (chopped cosine). "
-         "Typical fresh-core value ~1.55. Combined with F_r for hot-pin calculations."),
-        ("h_gap",           "Gap conductance [W/m²K]",
-         "Fuel-clad gap conductance. Controls the temperature drop across the as-fabricated "
-         "He-filled gap. Lower values raise fuel centreline temperature; "
-         "typical BOL range 3000–9000 W/m²K."),
-        ("trip_delay",      "Trip delay [s]",
-         "Signal processing and relay delay applied to every reactor protection system trip. "
-         "The scram fires this many seconds after the setpoint is first exceeded. "
-         "Typical hard-wired PWR RPS: 1.5 s."),
-        ("trip_power_frac", "High-power trip frac",
-         "High-flux scram setpoint as a fraction of rated power "
-         "(e.g. 1.10 = trip at 110%). Applies to both the RPS evaluation "
-         "and the point-kinetics high-power check in RIA cases."),
-        ("trip_P_lo_kPa",   "Low-P trip [kPa]",
-         "Low-pressure scram setpoint [kPa]. The reactor trips when RCS pressure "
-         "falls below this value. Set to 0 to disable. "
-         "Default is 90% of the initial RCS pressure."),
-        ("total_power",     "Rated power [MW]",
-         "Rated thermal power of the reactor [MW]. Used to normalise decay heat, "
-         "set the initial heat flux for core temperatures, and scale rod-failure counts."),
-        ("pressure_kPa",    "Initial pressure [kPa]",
-         "Initial RCS pressure at t=0 [kPa]. "
-         "Standard PWR full-power operating pressure ~15 500 kPa (2250 psia)."),
-        ("temp_core_exit",  "Core-exit temp [°C]",
-         "Initial bulk coolant temperature at the core exit [°C]. "
-         "Sets the initial enthalpy and the starting point for "
-         "moderator reactivity feedback in RIA cases."),
-        ("alpha_D_pcm",     "Doppler coeff [pcm/°C]",
-         "Doppler (fuel temperature) reactivity coefficient [pcm/°C]. "
-         "Negative value provides prompt negative feedback during power excursions. "
-         "Typical PWR value: −2 to −4 pcm/°C."),
-        ("alpha_M_pcm",     "MTC [pcm/°C]",
-         "Moderator temperature coefficient [pcm/°C]. "
-         "Must be negative at power for inherent stability. "
-         "Typical PWR full-power value: −20 to −40 pcm/°C."),
-        ("k_sigma",         "k_sigma (failure dist.)",
-         "Number of standard deviations between the core-average pin power (f=1) "
-         "and the hot pin (f=F_r) in the Gaussian radial power distribution "
-         "used to estimate failed-rod counts. Default 3.0 places F_r at the "
-         "99.87th percentile."),
-    ]
+    def _load_ui_params():
+        _path = _runtime_file("flare_ui_params.json")
+        try:
+            entries = json.loads(_path.read_text(encoding="utf-8"))
+            return [(e["key"],e.get("label",e["key"]),e.get("help",""),
+                     e.get("options",None),e.get("default",None),e.get("sheet",""))
+                    for e in entries if "key" in e]
+        except FileNotFoundError:
+            st.warning(f"`{_path.name}` not found. Using built-in defaults.")
+        except Exception as exc:
+            st.warning(f"Could not read flare_ui_params.json: {exc}.")
+        return [
+            ("endtime","End time [s]","Simulation end time [s].",None,None,""),
+            ("total_power","Rated power [MW]","Rated thermal power [MW].",None,None,""),
+            ("F_r","Radial peaking F_r","Radial hot-channel factor.",None,None,""),
+            ("F_z","Axial peaking F_z","Axial peaking factor.",None,None,""),
+            ("h_gap","Gap conductance [W/m2K]","Fuel-clad gap conductance.",None,None,""),
+            ("pressure_kPa","Initial pressure [kPa]","Initial RCS pressure [kPa].",None,None,""),
+            ("temp_core_exit","Core-exit temp [C]","Core-exit temperature [C].",None,None,""),
+            ("alpha_D_pcm","Doppler coeff [pcm/C]","Doppler coefficient.",None,None,""),
+            ("alpha_M_pcm","MTC [pcm/C]","Moderator temperature coeff.",None,None,""),
+            ("trip_delay","Trip delay [s]","RPS delay [s].",None,None,""),
+            ("trip_power_frac","High-power trip frac","High-flux scram setpoint.",None,None,""),
+            ("trip_P_lo_kPa","Low-P trip [kPa]","Low-P scram setpoint [kPa].",None,None,""),
+        ]
+    KEY_PARAMS = _load_ui_params()
 
     overrides = {}
-    st.caption(
-        "Override any numeric parameter for this run only — "
-        "the base input file is never modified. "
-        "Only parameters present in the input file are shown."
+    st.caption("Override any parameter for this run only — "
+               "the base input file is never modified.")
+    _ui_param_candidates = discover_workbook_parameters(selected_input_path, selected)
+    _ui_param_values = {(str(c.get("sheet", "")).strip(), str(c.get("key", ""))): c.get("value")
+                        for c in _ui_param_candidates}
+    for _k, _v in params.items():
+        _ui_param_values.setdefault(("", str(_k)), _v)
+    render_json_editor_button(
+        path=_runtime_file("flare_ui_params.json"),
+        button_label="Edit parameter list",
+        title="Edit PWR Simulator parameter list",
+        state_prefix="pwr_ui_params",
+        help_text=(
+            "Open a form editor for Runtime/flare_ui_params.json, which controls "
+            "which input parameters appear in the Edit parameters panel."
+        ),
+        expected_top_level="list",
+        editor_kind="pwr_params",
+        candidates=_ui_param_candidates,
     )
     with st.expander("Edit parameters", expanded=False):
-        for key, label, tip in KEY_PARAMS:
-            if key in params:
-                # Step size = place value of lowest significant digit
-                new_val = st.number_input(
-                    label,
-                    value=float(params[key]),
-                    step=smart_step(params[key]),
-                    format="%.6g",
-                    key=f"ov_{selected}_{key}",
-                    help=tip,
-                )
-                if new_val != params[key]:
-                    overrides[key] = new_val
+        for key, label, tip, options, default, sheet in KEY_PARAMS:
+            sheet = str(sheet or "").strip()
+            value_key = (sheet, str(key))
+            override_key = value_key if sheet else key
+            widget_key = f"ov_{_selected_case_key}_{sheet or 'main'}_{key}"
+            if options:
+                file_val = _ui_param_values.get(value_key)
+                if file_val is not None:
+                    file_val = str(file_val).strip().strip("'\"")
+                    if file_val not in options: file_val = options[0]
+                dv = file_val if file_val is not None else (default or options[0])
+                if dv not in options: dv = options[0]
+                new_val = st.selectbox(label, options=options,
+                    index=options.index(dv), key=widget_key, help=tip)
+                if file_val is not None and new_val != file_val:
+                    overrides[override_key] = new_val
+                elif file_val is None and new_val != options[0]:
+                    overrides[override_key] = new_val
+            else:
+                if value_key not in _ui_param_values: continue
+                try: current_num = float(_ui_param_values[value_key])
+                except (TypeError, ValueError): continue
+                new_val = st.number_input(label, value=current_num,
+                    step=smart_step(current_num), format="%.6g",
+                    key=widget_key, help=tip)
+                if new_val != current_num:
+                    overrides[override_key] = new_val
 
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
     _fast_mode = st.checkbox(
@@ -2759,11 +2958,12 @@ with st.sidebar:
         )
     if final_report_flag and _fast_mode:
         st.caption("Final Report mode overrides Fast mode so figures and plots are generated.")
+    st.caption(f"Run All scope: `{_selected_working_rel}` — {len(_case_entries)} case(s).")
     run_all_btn = st.button(
         "▶  Run All Cases",
         width="stretch",
         help=(
-            "Run every *_in.xlsx case in a durable background worker. "
+            "Run every *_in.xlsx case in the selected Working Folder in a durable background worker. "
             "Progress is written to disk so the run can survive browser disconnects."
         ),
     )
@@ -2776,7 +2976,8 @@ with st.sidebar:
 
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
     st.caption("flare_sim.py")
-    st.caption(f"Working dir: `{WORK_DIR}`")
+    st.caption(f"FLARE root: `{WORK_DIR}`")
+    st.caption(f"Working folder: `{_selected_working_rel}`")
 
 
 # ── Main panel ─────────────────────────────────────────────────────────────────
@@ -2839,7 +3040,7 @@ with tab_run:
             st.warning("A Run All Cases batch is already active. Abort or wait for it to finish before starting another.")
         else:
             _tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-            _batch_dir = WORK_DIR / f"sim_all_{_tag}"
+            _batch_dir = _selected_working_dir / f"sim_all_{_tag}"
             if _sim_all_launch_worker(_batch_dir, _case_entries, _fast_mode, final_report=final_report_flag, final_report_detail=_final_report_detail):
                 st.session_state.sim_all_run_dir = _batch_dir
                 st.rerun()
@@ -2865,10 +3066,12 @@ with tab_run:
         # peak-power baseline for cases that trip immediately.
         st.session_state.run_init_power = params.get("total_power")
 
-        # Issue #1: create a unique output subfolder for this run
+        # Create a unique output subfolder in the selected Working Folder.
+        # This keeps PWR Simulator outputs with the corresponding input decks,
+        # matching the UA and Risk tools' Working Folder behavior.
         _tag     = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _run_dir = WORK_DIR / f"sim_{selected}_{_tag}"
-        _run_dir.mkdir(exist_ok=True)
+        _run_dir = _selected_working_dir / f"sim_{selected}_{_tag}"
+        _run_dir.mkdir(parents=True, exist_ok=True)
         st.session_state.run_dir = _run_dir
 
         # ── Prepare run folder and launch simulation there ────────────────────
@@ -2876,11 +3079,13 @@ with tab_run:
         # Copy it into the run folder under the ORIGINAL case name so that all
         # outputs (CSV, XLSX, CON) are written with the base case name rather
         # than the .~ temp prefix.
+        _override_tmp_src = None
         if overrides:
-            _run_input_src = WORK_DIR / f"{run_case}_in.xlsx"
+            _override_tmp_src = WORK_DIR / f"{run_case}_in.xlsx"
+            _run_input_src = _override_tmp_src
             _run_input_dst = _run_dir / f"{selected}_in.xlsx"
             # flare_sim.py uses the filename stem as the case name, so pass
-            # selected (not run_case) to run_simulation.
+            # selected (not the .~ temporary case name) to the subprocess.
             run_case = selected
             st.session_state.last_case = run_case
         else:
@@ -2889,11 +3094,18 @@ with tab_run:
 
         try:
             shutil.copy2(str(_run_input_src), str(_run_input_dst))
+            if overrides:
+                # Belt-and-suspenders check: if an older temp workbook already
+                # had .~ sheet names, normalize the archived run-folder copy too.
+                _wb = load_workbook(_run_input_dst)
+                _normalize_flare_workbook_sheet_names(_wb, selected)
+                _wb.save(_run_input_dst)
+                _wb.close()
             # Remove the temp override workbook from WORK_DIR now that it has
             # been copied into the run folder under the original case name.
-            if overrides and _run_input_src != selected_input_path:
+            if _override_tmp_src is not None:
                 try:
-                    _run_input_src.unlink(missing_ok=True)
+                    _override_tmp_src.unlink(missing_ok=True)
                 except Exception:
                     pass
         except PermissionError as _e:
@@ -2963,11 +3175,11 @@ with tab_run:
         # Windows/OneDrive systems.
 
         # Clean up temp override input file in the FLARE root only.  The run
-        # folder keeps its own archived copy for traceability.
-        if overrides:
-            tmp_xlsx = WORK_DIR / f"{run_case}_in.xlsx"
+        # folder keeps its own archived copy for traceability.  The temp file is
+        # normally deleted before launch; this is just a harmless fallback.
+        if overrides and _override_tmp_src is not None:
             try:
-                tmp_xlsx.unlink()
+                _override_tmp_src.unlink(missing_ok=True)
             except Exception:
                 pass
 

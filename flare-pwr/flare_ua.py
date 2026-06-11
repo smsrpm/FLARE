@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 from pathlib import Path
 from openpyxl import load_workbook
+from flare_json_editor import render_json_editor_button, discover_workbook_parameters
 
 # ── Optional heavy deps (PDF / stats) ────────────────────────────────────────
 try:
@@ -270,6 +271,39 @@ def _runtime_file(name: str, base_dir: Path | None = None) -> Path:
     return _runtime_dir(base_dir) / name
 
 
+def _sync_runtime_json_from_working_folder(working_dir: Path | str, filename: str, state_key: str) -> bool:
+    """Copy a tool-specific JSON file from the selected working folder to Runtime.
+
+    The copy is performed once when the sidebar Working Folder selection changes.
+    FLARE looks first for the JSON file directly in the selected working folder,
+    then in working-folder Runtime/runtime subfolders.  The app Runtime copy remains
+    the authoritative file used by the existing UI loaders/editors.
+    """
+    try:
+        wdir = Path(working_dir)
+        candidates = [wdir / filename, wdir / "Runtime" / filename, wdir / "runtime" / filename]
+        src = next((p for p in candidates if p.exists() and p.is_file()), None)
+        current_sig = f"{str(wdir.resolve())}|{src.stat().st_mtime if src else 'none'}"
+        if st.session_state.get(state_key) == current_sig:
+            return False
+        st.session_state[state_key] = current_sig
+        if src is None:
+            return False
+        dst = _runtime_file(filename)
+        try:
+            if src.resolve() == dst.resolve():
+                return False
+        except Exception:
+            pass
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        _shutil.copy2(src, dst)
+        st.toast(f"Loaded {filename} from selected Working Folder.", icon="📄")
+        return True
+    except Exception as exc:
+        st.warning(f"Could not copy {filename} from the selected Working Folder: {exc}")
+        return False
+
+
 
 # ── AI narrative helpers ─────────────────────────────────────────────────────
 def _read_config(key):
@@ -506,7 +540,10 @@ def load_ua_variables():
         )
         return DEFAULT_UA_VARIABLES.copy()
 
-UA_VARIABLES = load_ua_variables()
+# UA_VARIABLES is intentionally NOT cached at module level.
+# load_ua_variables() is called inside the render path so that edits to
+# flare_ua_variables.json take effect on the next page refresh without
+# restarting the Streamlit server or clearing the cache.
 
 PLOT_BG    = "#ffffff"
 PLOT_PAPER = "#f5f7fa"
@@ -1691,8 +1728,10 @@ def _is_generated_input_dir(path: Path) -> bool:
     return any(part.startswith(_EXCLUDED_INPUT_DIR_PREFIXES) or part.startswith(".")
                for part in rel_parts)
 
-def discover_input_cases():
+def discover_input_cases(working_rel: str | None = None):
+    """Return user-maintained UA input cases, optionally scoped to one working folder."""
     entries = []
+    working_rel_norm = None if working_rel in (None, "") else str(working_rel).replace("\\", "/").strip("/")
     for p in WORK_DIR.rglob("*_in.xlsx"):
         if p.parent == WORK_DIR:
             continue
@@ -1700,14 +1739,28 @@ def discover_input_cases():
             continue
         if _is_generated_input_dir(p.parent):
             continue
-        case = p.stem[:-3] if p.stem.endswith("_in") else p.stem.replace("_in", "")
         rel = p.parent.relative_to(WORK_DIR).as_posix()
+        if working_rel_norm is not None and rel != working_rel_norm:
+            continue
+        case = p.stem[:-3] if p.stem.endswith("_in") else p.stem.replace("_in", "")
         entries.append({"case": case, "path": p, "rel": rel, "label": f"{case}  —  {rel}"})
     entries.sort(key=lambda e: (e["case"].lower(), e["rel"].lower()))
     return entries
 
-def find_cases():
-    return [e["label"] for e in discover_input_cases()]
+def discover_working_folders():
+    """Return eligible working folders containing one or more UA input decks."""
+    folders = {}
+    for e in discover_input_cases():
+        rel = e["rel"]
+        if rel not in folders:
+            folders[rel] = {"rel": rel, "path": e["path"].parent, "count": 0}
+        folders[rel]["count"] += 1
+    entries = list(folders.values())
+    entries.sort(key=lambda e: e["rel"].lower())
+    return entries
+
+def find_cases(working_rel: str | None = None):
+    return [e["label"] for e in discover_input_cases(working_rel)]
 
 
 def sample_values(dist, p1, p2, base, n, rng):
@@ -1949,10 +2002,11 @@ def _load_ua_run_from_dir(run_dir: Path, base_case: str):
     st.session_state.ua_run_dir = run_dir
     st.session_state.ua_case = base_case
 
-def _find_recent_active_ua_run():
+def _find_recent_active_ua_run(run_root: Path | None = None):
     """Return most recent UA run folder whose status is running/starting."""
+    root = Path(run_root) if run_root is not None else WORK_DIR
     runs = sorted(
-        [d for d in WORK_DIR.iterdir()
+        [d for d in root.iterdir()
          if d.is_dir() and d.name.startswith("ua_") and (d / _UA_STATUS_FILE).exists()],
         key=lambda d: d.stat().st_mtime,
         reverse=True,
@@ -1963,10 +2017,12 @@ def _find_recent_active_ua_run():
             return d
     return None
 
-def _start_ua_worker(base_case, active_vars, n_samples, fast_mode, input_path=None):
+def _start_ua_worker(base_case, active_vars, n_samples, fast_mode, input_path=None, run_root: Path | None = None):
     """Create a UA run folder, write config, and launch detached worker."""
     _run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = WORK_DIR / f"ua_{base_case}_{_run_tag}"
+    root = Path(run_root) if run_root is not None else WORK_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    run_dir = root / f"ua_{base_case}_{_run_tag}"
     run_dir.mkdir(exist_ok=True)
 
     cfg = {
@@ -2104,6 +2160,36 @@ with st.sidebar:
                 'margin-bottom:1rem">Uncertainty Analysis</div>',
                 unsafe_allow_html=True)
 
+    _working_folders = discover_working_folders()
+    if not _working_folders:
+        st.error("No *_in.xlsx files found in FLARE subfolders. Root-level input files are intentionally ignored.")
+        st.stop()
+
+    _working_labels = [f"{e['rel']}  ({e['count']} case{'s' if e['count'] != 1 else ''})" for e in _working_folders]
+    _selected_working_label = st.selectbox(
+        "Working Folder",
+        _working_labels,
+        key="ua_working_folder_sel",
+        help=(
+            "Select the folder containing the input decks for this UA run. "
+            "Only folders with actual *_in.xlsx input files are listed; generated sim_/risk_/ua_ and code folders are ignored. "
+            "UA runs and previous-run loading are scoped to the selected working folder."
+        ),
+    )
+    _selected_working_folder = _working_folders[_working_labels.index(_selected_working_label)]
+    _selected_working_rel = _selected_working_folder["rel"]
+    _selected_working_dir = _selected_working_folder["path"]
+    _sync_runtime_json_from_working_folder(
+        _selected_working_dir,
+        "flare_ua_variables.json",
+        "ua_runtime_json_sync_flare_ua_variables",
+    )
+
+    if st.session_state.get("ua_selected_working_rel") != _selected_working_rel:
+        st.session_state.ua_selected_working_rel = _selected_working_rel
+        for _k in ("ua_log", "ua_status", "ua_results", "ua_samples", "ua_case", "ua_ts", "ua_con_ts", "ua_run_dir", "_ua_loaded_run"):
+            st.session_state.pop(_k, None)
+
     # Number of samples  -  first and most prominent
     n_samples = st.number_input("Number of samples", min_value=1,
                                 max_value=5000, value=50, step=10,
@@ -2122,21 +2208,22 @@ with st.sidebar:
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
 
     # Case selector
-    _case_entries = discover_input_cases()
+    _case_entries = discover_input_cases(_selected_working_rel)
     if not _case_entries:
-        st.error("No *_in.xlsx files found in FLARE subfolders. Root-level input files are intentionally ignored.")
+        st.error(f"No *_in.xlsx files found in selected working folder `{_selected_working_rel}`.")
         st.stop()
-    _case_labels = [e["label"] for e in _case_entries]
+    _case_labels = [e["case"] for e in _case_entries]
     _selected_label = st.selectbox("Base case", _case_labels,
+                             key=f"ua_case_sel_{re.sub(r'[^0-9A-Za-z_]+', '_', _selected_working_rel).strip('_')[:100]}",
                              help=(
-                                 "The nominal input case to perturb. Input decks are discovered recursively in "
-                                 "subfolders below the FLARE root; root-level inputs and generated output folders are ignored. "
+                                 "The nominal input case to perturb. Cases are limited to the selected Working Folder. "
                                  "All sampled parameters are varied around their base-case values; unselected parameters "
                                  "keep their base-case value exactly."
                              ))
-    _selected_entry = next(e for e in _case_entries if e["label"] == _selected_label)
+    _selected_entry = next(e for e in _case_entries if e["case"] == _selected_label)
     selected = _selected_entry["case"]
     selected_input_path = _selected_entry["path"]
+    st.caption(f"Working folder: `{_selected_working_rel}`")
     st.caption(f"Input file: `{selected_input_path.relative_to(WORK_DIR)}`")
 
     # Reset run state when the user picks a different base case so the Run tab
@@ -2189,15 +2276,34 @@ with st.sidebar:
 
     _case_has_flarecon = _has_flarecon_sheet(selected_input_path)
 
-    # Per-variable distribution editor
+    # Re-read the UA variable catalogue on every render so that edits to
+    # flare_ua_variables.json take effect on the next page refresh without
+    # restarting the Streamlit server or clearing the cache.
+    UA_VARIABLES = load_ua_variables()
+
+    # Per-parameter distribution editor
     active_vars = {}
     st.caption(
-        "Enable each variable you want to treat as uncertain and set its "
-        "probability distribution. Variables left unchecked are held at "
+        "Enable each parameter you want to treat as uncertain and set its "
+        "probability distribution. Parameters left unchecked are held at "
         "their base-case value for every sample. "
-        "Hover over any variable name for its physical description and typical range."
+        "Hover over any parameter name for its physical description and typical range."
     )
-    with st.expander("Edit variable distributions", expanded=True):
+    _ua_param_candidates = discover_workbook_parameters(selected_input_path, selected)
+    render_json_editor_button(
+        path=UA_VARIABLES_FILE,
+        button_label="Edit parameter catalogue",
+        title="Edit UA parameter catalogue",
+        state_prefix="ua_variables",
+        help_text=(
+            "Open a form editor for Runtime/flare_ua_variables.json, which controls "
+            "the parameters and default distributions available in the UA panel."
+        ),
+        expected_top_level="dict",
+        editor_kind="ua_variables",
+        candidates=_ua_param_candidates,
+    )
+    with st.expander("Edit parameter distributions", expanded=True):
         for var, _ucfg in UA_VARIABLES.items():
             label, def_dist, base, def_p1, def_p2, var_help = _ucfg[:6]
             var_sheet = _ucfg[6] if len(_ucfg) > 6 else ""
@@ -2240,7 +2346,7 @@ with st.sidebar:
     # ── Previous-run selector ─────────────────────────────────────────────
     import re as _re2
     _prev_runs = sorted(
-        [d for d in WORK_DIR.iterdir()
+        [d for d in _selected_working_dir.iterdir()
          if d.is_dir()
          and d.name.startswith("ua_")
          and any(d.glob("*_results.csv"))],
@@ -2256,7 +2362,7 @@ with st.sidebar:
             help="Select a completed UA run folder to review its results.",
         )
         if _sel_run != "— current session —":
-            _sel_dir = WORK_DIR / _sel_run
+            _sel_dir = _selected_working_dir / _sel_run
             _case_from_dir = _re2.sub(r"_\d{8}_\d{6}$", "", _sel_run[3:])
             _res_csv  = _sel_dir / f"ua_{_case_from_dir}_results.csv"
             _samp_csv = _sel_dir / f"ua_{_case_from_dir}_samples.csv"
@@ -2342,7 +2448,8 @@ with st.sidebar:
 
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
     st.caption("flare_sim.py")
-    st.caption(f"Working dir: `{WORK_DIR}`")
+    st.caption(f"FLARE root: `{WORK_DIR}`")
+    st.caption(f"Working folder: `{_selected_working_rel}`")
 
 
 # ── Main panel ────────────────────────────────────────────────────────────────
@@ -2369,7 +2476,7 @@ if "ua_run_dir" not in st.session_state: st.session_state.ua_run_dir = None # ou
 with tab_run:
     # Recover an active worker run after browser refresh/reconnect.
     if st.session_state.ua_status in ("idle", "running") and st.session_state.ua_run_dir is None:
-        _active = _find_recent_active_ua_run()
+        _active = _find_recent_active_ua_run(_selected_working_dir)
         if _active is not None:
             _st = _json_read(_active / _UA_STATUS_FILE, {})
             st.session_state.ua_run_dir = _active
@@ -2404,7 +2511,7 @@ with tab_run:
 
     if run_btn and status not in ("starting", "running") and active_vars:
         try:
-            _pid, _rd = _start_ua_worker(selected, active_vars, int(n_samples), _fast_mode)
+            _pid, _rd = _start_ua_worker(selected, active_vars, int(n_samples), _fast_mode, input_path=selected_input_path, run_root=_selected_working_dir)
             st.success(f"Started UA run in `{_rd.name}`.")
             st.rerun()
         except Exception as _e:

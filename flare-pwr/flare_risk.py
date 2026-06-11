@@ -8,7 +8,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import subprocess, sys, json, csv, os
+import subprocess, sys, json, csv, os, re
+import shutil
 import base64
 import requests
 from pathlib import Path
@@ -73,6 +74,39 @@ def _runtime_dir(base_dir: Path | None = None) -> Path:
 
 def _runtime_file(name: str, base_dir: Path | None = None) -> Path:
     return _runtime_dir(base_dir) / name
+
+
+def _sync_runtime_json_from_working_folder(working_dir: Path | str, filename: str, state_key: str) -> bool:
+    """Copy a tool-specific JSON file from the selected working folder to Runtime.
+
+    The copy is performed once when the sidebar Working Folder selection changes.
+    FLARE looks first for the JSON file directly in the selected working folder,
+    then in working-folder Runtime/runtime subfolders.  The app Runtime copy remains
+    the authoritative file used by the existing UI loaders/editors.
+    """
+    try:
+        wdir = Path(working_dir)
+        candidates = [wdir / filename, wdir / "Runtime" / filename, wdir / "runtime" / filename]
+        src = next((p for p in candidates if p.exists() and p.is_file()), None)
+        current_sig = f"{str(wdir.resolve())}|{src.stat().st_mtime if src else 'none'}"
+        if st.session_state.get(state_key) == current_sig:
+            return False
+        st.session_state[state_key] = current_sig
+        if src is None:
+            return False
+        dst = _runtime_file(filename)
+        try:
+            if src.resolve() == dst.resolve():
+                return False
+        except Exception:
+            pass
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        st.toast(f"Loaded {filename} from selected Working Folder.", icon="📄")
+        return True
+    except Exception as exc:
+        st.warning(f"Could not copy {filename} from the selected Working Folder: {exc}")
+        return False
 
 # ── AI narrative helpers ─────────────────────────────────────────────────────
 def _read_config(key):
@@ -560,25 +594,75 @@ _DEFAULTS = {
     "CaseNewLOCA":     1e-4,
 }
 
-# ── Risk-run-local persistence files ─────────────────────────────────────────
-# Revision note: risk results and PRA frequency tables are intentionally written
-# only inside risk_<timestamp> run folders.  The FLARE root folder is kept clean.
-# Older root-level files are not created by this UI; if present from a prior
-# revision, they are ignored except by manual user action.
+RISK_FREQUENCIES_JSON = "flare_risk_frequencies.json"
 
-def _risk_dirs_newest_first():
+# ── Risk frequency JSON persistence ───────────────────────────────────────────
+def _risk_frequency_json_path() -> Path:
+    """Return the Runtime JSON file used for user-defined event frequencies."""
+    return _runtime_file(RISK_FREQUENCIES_JSON)
+
+
+def _coerce_frequency(value, default=None):
     try:
-        return sorted(
-            [d for d in WORK_DIR.iterdir() if d.is_dir() and d.name.startswith("risk_")],
-            key=lambda d: d.stat().st_mtime,
-            reverse=True,
-        )
+        f = float(value)
+        if 1e-10 <= f <= 10.0:
+            return f
     except Exception:
-        return []
+        pass
+    return default
 
-def load_pra_table():
-    """Load frequencies from the most recent risk run folder, if available."""
-    for _d in _risk_dirs_newest_first():
+
+def load_risk_frequency_catalogue() -> dict[str, float]:
+    """Load user-defined event frequencies from Runtime/flare_risk_frequencies.json.
+
+    Preferred schema is a simple object mapping case name to annual frequency:
+        {"CaseLBLOCA": 1.0e-4, "CaseMSLB": 1.0e-3}
+
+    For forward compatibility, the loader also accepts:
+        {"frequencies": {"CaseLBLOCA": 1.0e-4}}
+    """
+    path = _risk_frequency_json_path()
+    if not path.exists():
+        return {}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(obj, dict) and isinstance(obj.get("frequencies"), dict):
+            obj = obj["frequencies"]
+        if not isinstance(obj, dict):
+            return {}
+        out = {}
+        for k, v in obj.items():
+            if str(k).startswith("_"):
+                continue
+            f = _coerce_frequency(v)
+            if f is not None:
+                out[str(k).strip()] = f
+        return out
+    except Exception:
+        return {}
+
+
+def save_risk_frequency_catalogue(freq_dict) -> bool:
+    """Save user-defined event frequencies to Runtime/flare_risk_frequencies.json."""
+    try:
+        path = _risk_frequency_json_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        clean = {}
+        for k, v in sorted(dict(freq_dict).items()):
+            f = _coerce_frequency(v)
+            if f is not None:
+                clean[str(k).strip()] = f
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(clean, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+        return True
+    except Exception:
+        return False
+
+
+def _load_legacy_pra_table(run_root: Path | None = None):
+    """Load older run-local CSV frequencies for migration/fallback only."""
+    for _d in _risk_dirs_newest_first(run_root):
         _p = _d / "flare_pra_table.csv"
         if not _p.exists():
             continue
@@ -590,9 +674,45 @@ def load_pra_table():
             continue
     return {}
 
-def load_results_from_disk():
-    """Restore results from the most recent risk run folder, if available."""
-    for _d in _risk_dirs_newest_first():
+
+# ── Risk-run-local persistence files ─────────────────────────────────────────
+# Revision note: risk results and PRA frequency tables are intentionally written
+# only inside risk_<timestamp> run folders.  The FLARE root folder is kept clean.
+# Older root-level files are not created by this UI; if present from a prior
+# revision, they are ignored except by manual user action.
+
+def _risk_dirs_newest_first(run_root: Path | None = None):
+    try:
+        root = Path(run_root) if run_root is not None else WORK_DIR
+        return sorted(
+            [d for d in root.iterdir() if d.is_dir() and d.name.startswith("risk_")],
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
+        )
+    except Exception:
+        return []
+
+def load_pra_table(run_root: Path | None = None):
+    """Compatibility wrapper: load user-defined frequencies from Runtime JSON.
+
+    Older FLARE revisions persisted these values as flare_pra_table.csv inside
+    the most recent risk_<timestamp> run folder.  The Risk UI now treats
+    Runtime/flare_risk_frequencies.json as the authoritative user-editable
+    frequency catalogue and only consults the older CSV as a one-time fallback.
+    """
+    freqs = load_risk_frequency_catalogue()
+    if freqs:
+        return freqs
+    legacy = _load_legacy_pra_table(run_root)
+    if legacy:
+        # Migrate useful legacy values into the Runtime JSON file the next time
+        # the UI initializes, so the user has one durable editing location.
+        save_risk_frequency_catalogue(legacy)
+    return legacy
+
+def load_results_from_disk(run_root: Path | None = None):
+    """Restore results from the most recent risk run folder in the active working folder, if available."""
+    for _d in _risk_dirs_newest_first(run_root):
         _p = _d / "flare_risk_results.json"
         if not _p.exists():
             continue
@@ -618,8 +738,9 @@ def _is_generated_input_dir(path: Path) -> bool:
     return any(part.startswith(_EXCLUDED_INPUT_DIR_PREFIXES) or part.startswith(".")
                for part in rel_parts)
 
-def discover_input_cases():
+def discover_input_cases(working_rel: str | None = None):
     entries = []
+    working_rel_norm = None if working_rel in (None, "") else str(working_rel).replace("\\", "/").strip("/")
     for p in WORK_DIR.rglob("Case*_in.xlsx"):
         if p.parent == WORK_DIR:
             continue
@@ -627,16 +748,32 @@ def discover_input_cases():
             continue
         if _is_generated_input_dir(p.parent):
             continue
+        rel = p.parent.relative_to(WORK_DIR).as_posix()
+        if working_rel_norm is not None and rel != working_rel_norm:
+            continue
         case = p.stem[:-3] if p.stem.endswith("_in") else p.stem.replace("_in", "")
-        entries.append({"case": case, "input_path": str(p), "rel": p.parent.relative_to(WORK_DIR).as_posix()})
-    # Preserve one entry per case name; warn later if users create duplicates.
+        entries.append({"case": case, "input_path": str(p), "rel": rel})
+    # Preserve one entry per case name within the selected working folder.
     seen = {}
     for e in sorted(entries, key=lambda x: (x["case"].lower(), x["rel"].lower())):
         seen.setdefault(e["case"], e)
     return list(seen.values())
 
-case_entries = discover_input_cases()
-cases = [e["case"] for e in case_entries]
+def discover_working_folders():
+    """Return eligible working folders containing one or more Risk input decks."""
+    folders = {}
+    for e in discover_input_cases():
+        rel = e["rel"]
+        p = Path(e["input_path"]).parent
+        if rel not in folders:
+            folders[rel] = {"rel": rel, "path": p, "count": 0}
+        folders[rel]["count"] += 1
+    entries = list(folders.values())
+    entries.sort(key=lambda e: e["rel"].lower())
+    return entries
+
+case_entries = []
+cases = []
 
 def _active_risk_run_dir():
     _rd = st.session_state.get("risk_run_dir")
@@ -655,17 +792,24 @@ def save_results(results, run_dir=None):
         pass
 
 def save_pra_table(freq_dict, run_dir=None):
-    """Write frequencies only inside a risk_<timestamp> run folder."""
-    try:
-        _rd = Path(run_dir) if run_dir is not None else _active_risk_run_dir()
-        if _rd is None:
-            return False
-        _rd.mkdir(parents=True, exist_ok=True)
-        rows = [{"CaseName": k, "Frequency": v} for k, v in sorted(freq_dict.items())]
-        pd.DataFrame(rows).to_csv(_rd / "flare_pra_table.csv", index=False)
-        return True
-    except Exception:
-        return False
+    """Save user-defined event frequencies to the Runtime JSON catalogue.
+
+    A run-local JSON snapshot is also written when run_dir is supplied so a
+    completed risk run remains auditable, but the authoritative user-editable
+    file is Runtime/flare_risk_frequencies.json.
+    """
+    ok = save_risk_frequency_catalogue(freq_dict)
+    if run_dir is not None:
+        try:
+            _rd = Path(run_dir)
+            _rd.mkdir(parents=True, exist_ok=True)
+            clean = {str(k): float(v) for k, v in sorted(dict(freq_dict).items())}
+            (_rd / RISK_FREQUENCIES_JSON).write_text(
+                json.dumps(clean, indent=2) + "\n", encoding="utf-8"
+            )
+        except Exception:
+            pass
+    return ok
 
 
 def _extract_eab_from_sheet(_wb, _sheet_name):
@@ -1014,10 +1158,11 @@ def _write_json_atomic(path, payload):
     except Exception:
         pass
 
-def _latest_risk_status_dir():
+def _latest_risk_status_dir(run_root: Path | None = None):
     try:
+        root = Path(run_root) if run_root is not None else WORK_DIR
         dirs = sorted(
-            [d for d in WORK_DIR.iterdir() if d.is_dir() and d.name.startswith("risk_")],
+            [d for d in root.iterdir() if d.is_dir() and d.name.startswith("risk_")],
             reverse=True,
         )
         for d in dirs:
@@ -1250,6 +1395,50 @@ with st.sidebar:
                 'margin-bottom:1rem">Risk Assessment</div>',
                 unsafe_allow_html=True)
 
+    _working_folders = discover_working_folders()
+    if not _working_folders:
+        st.error(f"No Case*_in.xlsx files found in FLARE subfolders below: `{WORK_DIR}`. Root-level case inputs are ignored.")
+        st.stop()
+
+    _working_labels = [f"{e['rel']}  ({e['count']} case{'s' if e['count'] != 1 else ''})" for e in _working_folders]
+    _selected_working_label = st.selectbox(
+        "Working Folder",
+        _working_labels,
+        key="risk_working_folder_sel",
+        help=(
+            "Select the folder containing the input decks for this risk run. "
+            "Only folders with actual Case*_in.xlsx input files are listed; generated sim_/risk_/ua_ and code folders are ignored. "
+            "Risk runs and previous-run loading are scoped to the selected working folder."
+        ),
+    )
+    _selected_working_folder = _working_folders[_working_labels.index(_selected_working_label)]
+    _selected_working_rel = _selected_working_folder["rel"]
+    _selected_working_dir = _selected_working_folder["path"]
+    _sync_runtime_json_from_working_folder(
+        _selected_working_dir,
+        RISK_FREQUENCIES_JSON,
+        "risk_runtime_json_sync_frequencies",
+    )
+    case_entries = discover_input_cases(_selected_working_rel)
+    cases = [e["case"] for e in case_entries]
+
+    # Keep sidebar actions, including Load Previous Run, scoped to the active
+    # working folder and protected from stale session-state from another folder.
+    if st.session_state.get("risk_selected_working_rel") != _selected_working_rel:
+        st.session_state.risk_selected_working_rel = _selected_working_rel
+        st.session_state.pop("risk_freqs", None)
+        st.session_state.pop("risk_results", None)
+        st.session_state.pop("risk_run_dir", None)
+        st.session_state.pop("risk_csv_path", None)
+    if "risk_freqs" not in st.session_state:
+        _pra_freqs_sidebar = load_pra_table(_selected_working_dir)
+        st.session_state.risk_freqs = {
+            c: _pra_freqs_sidebar.get(c, _DEFAULTS.get(c, _DEFAULT_FREQ))
+            for c in cases
+        }
+    if "risk_results" not in st.session_state:
+        st.session_state.risk_results = load_results_from_disk(_selected_working_dir)
+
     st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
     st.markdown("### ▶  Run")
     _fast_mode = st.checkbox(
@@ -1305,7 +1494,7 @@ with st.sidebar:
 
     # Find all previous risk_* subdirectories in WORK_DIR
     _risk_dirs = sorted(
-        [d for d in WORK_DIR.iterdir()
+        [d for d in _selected_working_dir.iterdir()
          if d.is_dir() and d.name.startswith("risk_")],
         reverse=True   # most recent first
     )
@@ -1315,7 +1504,7 @@ with st.sidebar:
         _sel_label  = st.selectbox("Run folder", _dir_labels,
                                    key="load_run_sel",
                                    label_visibility="collapsed")
-        _sel_dir    = WORK_DIR / _sel_label
+        _sel_dir    = _selected_working_dir / _sel_label
 
         if st.button("📥  Load", width="stretch", key="load_run_btn"):
             try:
@@ -1363,6 +1552,7 @@ with st.sidebar:
         st.caption("No previous runs found.")
 
     st.markdown("---")
+    st.caption(f"Working folder: `{_selected_working_rel}`")
     st.caption(f"FLARE · Risk Assessment F-C Tool")
 
 st.markdown('<div class="risk-title">⚛️  FLARE Risk Assessment F-C Tool</div>',
@@ -1370,11 +1560,19 @@ st.markdown('<div class="risk-title">⚛️  FLARE Risk Assessment F-C Tool</div
 st.markdown('<div class="risk-sub">Enter event frequencies, run all cases, view the '
             'Frequency-Consequence chart.</div>', unsafe_allow_html=True)
 if not cases:
-    st.warning(f"No Case*_in.xlsx files found in FLARE subfolders below: `{WORK_DIR}`. Root-level case inputs are ignored.")
+    st.warning(f"No Case*_in.xlsx files found in selected working folder `{_selected_working_rel}`.")
     st.stop()
 
-# Merge: PRA table > _DEFAULTS > _DEFAULT_FREQ
-pra_freqs = load_pra_table()
+# Reset run state when the selected working folder changes.
+if st.session_state.get("risk_selected_working_rel") != _selected_working_rel:
+    st.session_state.risk_selected_working_rel = _selected_working_rel
+    st.session_state.pop("risk_freqs", None)
+    st.session_state.pop("risk_results", None)
+    st.session_state.pop("risk_run_dir", None)
+    st.session_state.pop("risk_csv_path", None)
+
+# Merge: Runtime JSON frequency catalogue > _DEFAULTS > _DEFAULT_FREQ
+pra_freqs = load_pra_table(_selected_working_dir)
 
 # ── Results persistence ────────────────────────────────────────────────────────
 # ── Session state for frequencies ─────────────────────────────────────────────
@@ -1385,10 +1583,11 @@ if "risk_freqs" not in st.session_state:
     }
 if "risk_results" not in st.session_state:
     # Try to restore from disk first (survives page refresh)
-    st.session_state.risk_results = load_results_from_disk()
+    st.session_state.risk_results = load_results_from_disk(_selected_working_dir)
 
 # ── Input table ────────────────────────────────────────────────────────────────
 st.markdown("### Case Frequency Input")
+st.caption(f"User-defined event frequencies are saved in `Runtime/{RISK_FREQUENCIES_JSON}`.")
 st.markdown(
     '<div class="fc-note">NEI 18-04 classification: '
     '<span class="cat-aoo">AOO</span> f ≥ 10⁻² /yr &nbsp;|&nbsp; '
@@ -1458,17 +1657,17 @@ st.divider()
 # ── Save frequencies button ────────────────────────────────────────────────────
 if st.button("💾  Save Frequencies", width="content"):
     _rd = _active_risk_run_dir()
-    if _rd is not None and save_pra_table(st.session_state.risk_freqs, _rd):
-        st.success(f"Frequencies saved to `{_rd.name}/flare_pra_table.csv`.", icon="💾")
+    if save_pra_table(st.session_state.risk_freqs, _rd):
+        st.success(f"Frequencies saved to `Runtime/{RISK_FREQUENCIES_JSON}`.", icon="💾")
     else:
-        st.info("Frequencies are held in the current session and will be saved inside the next `risk_<timestamp>` run folder when you run the Risk Model.")
+        st.error(f"Could not save frequencies to `Runtime/{RISK_FREQUENCIES_JSON}`.")
 
 # ── Run all cases using durable worker subprocess ─────────────────────────────
 if run_btn:
     import time as _time
     _tag     = _time.strftime("%Y%m%d_%H%M%S")
-    _run_dir = WORK_DIR / f"risk_{_tag}"
-    _run_dir.mkdir(exist_ok=True)
+    _run_dir = _selected_working_dir / f"risk_{_tag}"
+    _run_dir.mkdir(parents=True, exist_ok=True)
     st.session_state.risk_run_dir = str(_run_dir)
     st.session_state.risk_results = {}
     save_results({}, _run_dir)
@@ -1481,7 +1680,7 @@ if run_btn:
 # Monitor any active worker-backed risk run.
 _active_run_dir = st.session_state.get("risk_run_dir")
 if not _active_run_dir:
-    _latest_status_dir = _latest_risk_status_dir()
+    _latest_status_dir = _latest_risk_status_dir(_selected_working_dir)
     if _latest_status_dir is not None:
         _latest_status = _read_json(_latest_status_dir / "risk_status.json", {})
         if _latest_status.get("status") in {"starting", "running"}:

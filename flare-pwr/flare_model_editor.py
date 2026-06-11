@@ -67,13 +67,21 @@ def _is_generated_or_support_path(path: Path) -> bool:
     return False
 
 
-def find_case_files():
+def _working_rel_for(path: Path) -> str:
+    """Return a normalized path for a workbook's folder relative to WORK_DIR."""
+    return path.parent.relative_to(WORK_DIR).as_posix()
+
+
+def find_case_files(working_rel: str | None = None):
     """
     Find FLARE input files in subfolders below WORK_DIR.
 
     Root-level *_in.xlsx files are intentionally ignored.  Generated folders
-    such as sim_*, risk_*, ua_*, and .sim_all_* are also ignored.
+    such as sim_*, risk_*, ua_*, and .sim_all_* are also ignored.  When
+    working_rel is supplied, only input files directly in that selected
+    working folder are returned.
     """
+    working_rel_norm = None if working_rel in (None, "") else str(working_rel).replace("\\", "/").strip("/")
     found = []
     for p in WORK_DIR.rglob("*_in.xlsx"):
         if p.parent == WORK_DIR:
@@ -82,6 +90,9 @@ def find_case_files():
             continue
         if _is_generated_or_support_path(p):
             continue
+        rel = _working_rel_for(p)
+        if working_rel_norm is not None and rel != working_rel_norm:
+            continue
         found.append(p)
 
     # Deduplicate and sort by case name, then folder.
@@ -89,10 +100,29 @@ def find_case_files():
     return found
 
 
-def case_label(path: Path) -> str:
-    case_name = path.stem.replace("_in", "")
+def discover_working_folders():
+    """Return eligible working folders containing one or more model input decks."""
+    folders = {}
+    for p in find_case_files():
+        rel = _working_rel_for(p)
+        if rel not in folders:
+            folders[rel] = {"rel": rel, "path": p.parent, "count": 0}
+        folders[rel]["count"] += 1
+    entries = list(folders.values())
+    entries.sort(key=lambda e: e["rel"].lower())
+    return entries
+
+
+def case_name(path: Path) -> str:
+    return path.stem[:-3] if path.stem.endswith("_in") else path.stem.replace("_in", "")
+
+
+def case_label(path: Path, include_folder: bool = True) -> str:
+    name = case_name(path)
+    if not include_folder:
+        return name
     rel_dir = path.parent.relative_to(WORK_DIR)
-    return f"{case_name}  —  {rel_dir}"
+    return f"{name}  —  {rel_dir}"
 
 
 # ── Styling ──────────────────────────────────────────────────────────────────
@@ -361,9 +391,8 @@ st.sidebar.divider()
 # ── UI Modes ─────────────────────────────────────────────────────────────────
 mode = st.sidebar.radio("Mode", ["Model Editor", "Validator", "New Model"])
 
-case_files = find_case_files()
-
-if not case_files:
+_working_folders = discover_working_folders()
+if not _working_folders:
     st.error(
         "No *_in.xlsx files found in FLARE subfolders.\n\n"
         "Input files are now expected in subfolders below the FLARE root. "
@@ -372,7 +401,35 @@ if not case_files:
     )
     st.stop()
 
-label_to_path = {case_label(p): p for p in case_files}
+_working_labels = [
+    f"{e['rel']}  ({e['count']} case{'s' if e['count'] != 1 else ''})"
+    for e in _working_folders
+]
+_selected_working_label = st.sidebar.selectbox(
+    "Working Folder",
+    _working_labels,
+    key="model_editor_working_folder_sel",
+    help=(
+        "Select the folder containing the input decks to edit. "
+        "Only folders with actual *_in.xlsx input files are listed; generated sim_/risk_/ua_ "
+        "and support folders are ignored."
+    ),
+)
+_selected_working_folder = _working_folders[_working_labels.index(_selected_working_label)]
+_selected_working_rel = _selected_working_folder["rel"]
+
+case_files = find_case_files(_selected_working_rel)
+if not case_files:
+    st.error(f"No *_in.xlsx files found in selected working folder `{_selected_working_rel}`.")
+    st.stop()
+
+# Within a selected Working Folder, display clean case names.  If a folder ever
+# contains duplicate derived labels, fall back to including the relative folder.
+case_labels = [case_label(p, include_folder=False) for p in case_files]
+if len(set(case_labels)) != len(case_labels):
+    label_to_path = {case_label(p, include_folder=True): p for p in case_files}
+else:
+    label_to_path = {case_label(p, include_folder=False): p for p in case_files}
 selected_label = st.sidebar.selectbox("Select Case", list(label_to_path.keys()))
 file_path = label_to_path[selected_label]
 rows = load_rows(file_path)
@@ -399,9 +456,12 @@ if mode == "New Model":
     if same_folder:
         target_dir = file_path.parent
     else:
+        target_dir_options = [e["rel"] for e in _working_folders]
+        default_target_idx = target_dir_options.index(_selected_working_rel) if _selected_working_rel in target_dir_options else 0
         target_dir_label = st.selectbox(
             "Target folder",
-            sorted({str(p.parent.relative_to(WORK_DIR)) for p in case_files}),
+            target_dir_options,
+            index=default_target_idx,
         )
         target_dir = WORK_DIR / target_dir_label
 
@@ -619,4 +679,5 @@ else:
                 st.success(f"Saved to `{out.relative_to(WORK_DIR)}`")
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Working Dir:\n`{WORK_DIR}`")
+st.sidebar.caption(f"Working folder:\n`{_selected_working_rel}`")
+st.sidebar.caption(f"FLARE directory:\n`{WORK_DIR}`")

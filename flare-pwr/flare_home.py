@@ -1292,9 +1292,8 @@ st.markdown(
 )
 
 try:
-    import streamlit.components.v1 as components
-    components.html(
-        """
+    _input_hardening_html = """
+        <!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
         <script>
         function hardenAllInputs() {
             try {
@@ -1385,10 +1384,15 @@ try:
         setTimeout(function(){ hardenPasswordInputs(); hardenAllInputs(); injectDecoyFields(); }, 250);
         setTimeout(function(){ hardenPasswordInputs(); hardenAllInputs(); injectDecoyFields(); }, 1000);
         </script>
-        """,
-        height=0,
-        width=0,
+        </body></html>
+        """
+    _input_hardening_src = (
+        "data:text/html;base64,"
+        + base64.b64encode(_input_hardening_html.encode("utf-8")).decode("ascii")
     )
+    # st.components.v1.html is deprecated. Use st.iframe for this hidden,
+    # best-effort browser-side input hardening shim.
+    st.iframe(_input_hardening_src, height=0, width=0, scrolling=False)
 except Exception:
     pass
 
