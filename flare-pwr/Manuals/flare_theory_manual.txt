@@ -447,6 +447,26 @@ NOTBADTRAD is FLARE's reduced-order source-term and radiological consequence mod
 - Lanthanides (La, Zr, Nd, Eu, Nb, Pm, Pr, Sm, Y, Cm, Am): refractory
 - Uranium/actinides: very low-volatility refractory (severe-event table only)
 
+## Group Dose Conversion Factors (FGR-11 / FGR-12, NUREG-1465 Table 2 activity-weighted)
+
+Group            Half-life(hr)  DCF_inh(rem/Ci)  DCF_cloud(rem per Ci-s/m3)  Dominant nuclide(s)
+Noble gases      0.78           7.97e-5          4.22e-2                     Xe-138 (cloudshine)
+Halogens         2.41           1.106e1          7.65e-2                     I-131 (inh.); I-132/I-134 (cloudshine)
+Alkali metals    2080           5.47e1           5.00e-2                     Cs-134
+Tellurium        5.04           9.22             2.11e-2                     Te-132
+Ba/Sr            3.68           1.70e1           2.59e-2                     Sr-90 (inhalation)
+Noble metals     11.24          1.258e1          2.81e-2                     Ru-106 (inhalation)
+Cerium group     59.88          9.52             1.11e-2                     Ce-144, Pu isotopes
+Lanthanides      6.67           3.67             3.99e-2                     Zr-95 (inh.); La-140 (cloudshine)
+Uranium/actinides 162           7.50e2           1.0e-7                      Pu-241 (inhalation)
+
+DCF_inh from FGR-11 (EPA-520/1-88-020); DCF_cloud from FGR-12 (EPA-402-R-93-081), both activity-weighted
+using NUREG-1465 Table 2 inventory at 3411 MWt. Ba/Sr, noble-metals, and cerium-group values were already
+FGR-consistent. The halogen and noble-gas cloudshine values increase ~2.5x and ~1.5x relative to prior
+ad hoc values, driven by short-lived isotopes (I-132, I-134, Xe-138, Kr-88) that are a small fraction of
+group inventory but have cloudshine DCFs several times the longer-lived isotopes that dominate inhalation.
+Net effect: ~89% (1.885x) increase in EAB dose for a representative DBA LOCA case relative to prior values.
+
 ## DBA Release Fractions (RG 1.183 / NUREG-1465 aligned)
 
 Group            Gap release    Early in-vessel    Total
@@ -461,6 +481,11 @@ Lanthanides      0.00           0.0002             0.0002
 
 Released inventory: I_rel_g(t) = I_g,0 * (R_gap * f_gap(t) + R_EIV * f_EIV(t))
 
+Release timing: gap release over nbt_gap_release_duration_hr (default 0.5 hr), early in-vessel release
+over nbt_early_iv_duration_hr (default 1.3 hr), total 1.8 hr per RG 1.183 Table 3. Source rate within
+each phase = released_Ci / (phase_duration_hr * 3600). These are regulatory-specified timing values and
+should not be adjusted for conservatism without justification.
+
 ## Severe Core-Melt Release Fractions
 
 Interpolated between DBA and severe-event targets using E_mean (mean oxidizing rod ECR as a fraction):
@@ -468,13 +493,85 @@ Interpolated between DBA and severe-event targets using E_mean (mean oxidizing r
 
 Severe-event targets: noble gases 1.000, halogens 0.750, alkali metals 0.750, tellurium 0.300, Ba/Sr 0.120, noble metals 0.005, cerium 0.005, lanthanides 0.005, uranium/actinides 0.001.
 
+## Source-Term Inventory Model
+
+Default group inventories scale from fuel geometry (nbt_n_fuel_rods, fuel pellet radius, active fuel
+length, UO2 density, enrichment, burned fraction) using fission-product yield data calibrated to
+approximate the NUREG-1465 Table 2 EOC inventory at 3411 MWt for a reference PWR core. nbt_n_fuel_rods
+defaults to N_pins (the thermal-hydraulic rod count); a warning is printed if explicitly set to a
+different value.
+
+Burnup correction: NUREG-1465 is applicable to burnup < ~40 GWd/MTU. For higher-burnup plants, set
+nbt_burnup_gwdmtu to the maximum average core burnup in GWd/MTU (or peak assembly burnup for large
+PWRs with low-leakage core loading, typically 55-62 GWd/MTU). All group inventories are scaled by
+  burnup_correction = nbt_burnup_gwdmtu / 33
+where 33 GWd/MTU is the NUREG-1465 reference burnup. Default (nbt_burnup_gwdmtu unset): correction = 1.0.
+Example: CRN ESPA SSAR Rev. 2 Sec. 15.2 states 51 GWd/MTU for the SMR surrogate plant -> correction = 1.55.
+
+All group inventories can be overridden individually via nbt_inv_{Group}_Ci parameters, which take
+precedence over both the geometry estimate and the burnup correction.
+
+## Atmospheric Dispersion (Pasquill-Gifford)
+
+sigma_y = a_y * (x/1000)^b_y * 1000 ;  sigma_z = min[ a_z * (x/1000)^b_z * 1000 , 5000 ]
+chi/Q = exp[ -0.5 * (h/sigma_z)^2 ] / (2*pi * sigma_y * sigma_z * u)
+
+x = receptor distance [m] (nbt_distance_eab_m=914, nbt_distance_lpz_m=4800, nbt_distance_cr_intake_m=100)
+h = nbt_release_height_m (default 0, ground-level release)
+u = nbt_wind_speed_m_s (default 1.0 m/s)
+Stability class nbt_stability_class (default 'F'), coefficients (a_y,b_y,a_z,b_z):
+  A: 0.22,0.896,0.20,0.890   B: 0.16,0.896,0.12,0.890   C: 0.11,0.896,0.08,0.890
+  D: 0.08,0.896,0.06,0.890   E: 0.06,0.896,0.03,0.890   F: 0.04,0.896,0.016,0.890
+
+Site-specific override: nbt_chi_q_eab, nbt_chi_q_lpz, nbt_chi_q_cr [s/m3] supply chi/Q directly from a
+PAVAN/ARCON96 analysis, bypassing the Pasquill-Gifford calculation for that receptor (recommended when
+benchmarking against an FSAR/SSAR). The Pasquill-Gifford model remains an approximation beyond a few
+hundred meters and for averaging periods longer than a few hours; for a 30-day LPZ integration, the
+8-24hr or 1-4day PAVAN period value is generally a better single proxy than the 0-2hr or 4-30day values,
+because most LPZ dose accrues within the first day given the default release durations and removal rates.
+
 ## Transport and Dose
 
 Single-compartment: dA_g/dt = S_g(t) - (lambda_leak + lambda_decay + lambda_dep + lambda_spray + lambda_filter) * A_g
 
-Atmospheric dispersion factor chi/Q applied per receptor. TEDE = sum_g [Q_leaked,g * (chi/Q)_r * (BR * DCF_inh,g + DCF_cloud,g)].
+TEDE = sum_g [ A_g^env(T_r) * (chi/Q)_r * (BR * DCF_inh,g + DCF_cloud,g) ]   (EAB and LPZ; both pathways)
+
+Each receptor integrates A_g^env independently over its own period:
+  EAB:          T_eab = nbt_eab_integration_hr (default 2.0 hr, worst 2-hr period per 10 CFR 50.67)
+  LPZ:          T_lpz = nbt_lpz_integration_hr (default 720 hr = 30 days)
+  Control room: T_cr  = end_time_hr (full simulation duration)
 
 Default: no decay credit, no deposition credit (conservative regulatory basis).
+
+## Control-Room Dose Model
+
+Inhalation only (no cloudshine credit for control room):
+  D_g,CR = A_g^env(T_cr) * (chi/Q)_CR / DF_g * BR * DCF_inh,g
+  D_CR   = sum_g D_g,CR
+
+DF_g (intake decontamination factor, applies if nbt_cr_filter_on=True; else DF_g=1.0 for all groups):
+  Noble gases: 1.0 (not filtered)
+  Halogens: 94 (= 0.90*100 + 0.05*20 + 0.05*20, aerosol/elemental/organic split)
+  All other groups: 100
+
+(chi/Q)_CR from nbt_distance_cr_intake_m via Pasquill-Gifford, or nbt_chi_q_cr override. No control-room
+free-volume/turnover model; filtered environmental concentration is assumed to apply directly over T_cr.
+
+## Dose Calibration Factor
+
+nbt_calibrate (default 1.0): final multiplier on tede_eab_rem, tede_lpz_rem, tede_cr_rem, group-level
+tede_* values, and the TEDE-vs-distance table. Not applied to inventories, release fractions, or any
+intermediate quantity. Use only as a documented, traceable calibration against a site-specific
+RADTRAD/licensing result; record the basis. Do not use to mask an unresolved modeling discrepancy that
+should instead be addressed via nbt_burnup_gwdmtu, chi/Q overrides, or integration periods.
+
+## TEDE-versus-Distance Output
+
+For standard distances (100, 250, 500, 1000, 1600, 3200, 4800, 8000, 16000 m, plus user EAB/LPZ
+distances), Pasquill-Gifford chi/Q is evaluated and EAB/LPZ TEDE scaled as:
+  Dose(d) = Dose(reference) * chi/Q(d) / chi/Q(reference)
+Exact for Pasquill-Gifford since dose is linear in chi/Q. Populated only when the reference chi/Q was
+computed from Pasquill-Gifford (omitted for a receptor whose chi/Q was set via nbt_chi_q_eab/lpz override).
 
 ## Iodine Spike Model
 
@@ -482,9 +579,9 @@ Equilibrium spike (scram or PORV opening): Q_equil = 500 * a_coolant * M_primary
 Accident spike (DNB or gap release): Q_accid = 335 * a_coolant * M_primary
 Combined: f_ISP = min[(Q_equil + Q_accid) / I_Halogens, 1.0]
 
-## Source-Term Inventory Model
-
-Group inventories scale from fuel geometry using fission-product yield data calibrated to NUREG-1465 Table 2 EOC inventory. The rod count used for inventory is controlled by nbt_n_fuel_rods, which defaults to N_pins (the thermal-hydraulic rod count). If nbt_n_fuel_rods is explicitly set to a value different from N_pins, a warning is printed. All group inventories can be overridden individually via nbt_inv_{Group}_Ci parameters.
+Note: for a DBA LOCA, core gap/early-in-vessel inventory vastly exceeds pre-accident coolant activity,
+so the iodine spike contributes negligibly (~0.001%) to total dose. The spike model is primarily
+relevant for non-LOCA events (SGTR, rod ejection, steam line break) where no fuel-gap release occurs.
 
 ## Dose Screening Limits
 
@@ -550,6 +647,13 @@ F_r                    1.0         --         Radial hot-pin peaking factor
 F_z                    1.0         --         Axial peaking factor
 N_pins                 18200       --         Number of fuel pins (read from input; not hardwired)
 nbt_n_fuel_rods        = N_pins    --         Rod count for source-term inventory (defaults to N_pins; warning if different)
+nbt_burnup_gwdmtu      unset(=33)  GWd/MTU    Plant burnup; inventory scaled by value/33 (33 = NUREG-1465 ref, no correction)
+nbt_chi_q_eab          unset       s/m3       Site-specific EAB chi/Q override (PAVAN/ARCON96); bypasses Pasquill-Gifford
+nbt_chi_q_lpz          unset       s/m3       Site-specific LPZ chi/Q override
+nbt_chi_q_cr           unset       s/m3       Site-specific control-room intake chi/Q override
+nbt_eab_integration_hr 2.0         hr         EAB dose integration period (10 CFR 50.67 worst 2-hr)
+nbt_lpz_integration_hr 720.0       hr         LPZ dose integration period (30 days)
+nbt_calibrate          1.0         --         Documented final-dose calibration multiplier (EAB/LPZ/CR TEDE)
 k_sigma                3.0         --         Sigma distance, average rod to hot pin
 h_gap                  6000        W/m2K      Fuel-clad gap conductance
 r_fuel_m               0.00418     m          Fuel pellet radius

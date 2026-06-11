@@ -1,852 +1,766 @@
-FLARE User's Manual
+FLARE User's Manual — AI Assistant Plain-Text Version
+Generated from FLARE_Users_Manual_JSON_Editor_Update.docx
+
+FLARE
 Fast Licensing Accident Response Engine
+User's Manual
 Expanded Revision — June 2026
 Robert P. Martin
-
-
-# PURPOSE AND SCOPE
-
-FLARE is a compact reactor safety analysis environment for rapid accident-response calculations, sensitivity studies, uncertainty runs, risk-informed screening, and technical demonstrations. It is not a substitute for a plant-specific licensing evaluation model, a formally assessed containment code, or a detailed radiological consequence analysis code. All results should be interpreted in the context of the reduced-order simplifications described in the Code Theory Manual and in Chapter 11 of this manual.
-
-This manual covers installation, tool navigation, input file format, operation of each tool, output interpretation, troubleshooting, and the FLARECON containment model. The companion Code Theory Manual describes the mathematical models.
-
-
-# CHAPTER 1 — INSTALLATION AND STARTUP
-
-## Requirements
-
-Python 3.11 or 3.12 is required. Use a dedicated virtual environment.
-
-Install all required packages with:
-  pip install streamlit plotly openpyxl pandas numpy XSteamPython scipy reportlab anthropic
-
-Package purposes:
-- streamlit: web-based UI framework for all FLARE tools
-- plotly: interactive time-history plots
-- openpyxl: reading and writing Excel input and output workbooks
-- pandas: tabular data processing for CSV, UA results, and risk tables
-- numpy: numerical arrays and math throughout the simulation engine
-- XSteamPython: water and steam thermodynamic properties (IAPWS-IF97)
-- scipy: root-finding used in critical-flow and steam-property solvers
-- reportlab: PDF report generation for Run All Cases
-- anthropic: Anthropic API client for AI Event Narratives and FLARE Assistant (optional but recommended)
-
-The anthropic package enables AI Event Narratives and the FLARE Assistant. Deterministic simulations run without it; narrative features require a valid API key.
-
-## File and Folder Organization
-
-All Python source files and case input workbooks live in a single root FLARE folder. Output files and timestamped run folders are created in the root during execution.
-
-Root FLARE folder (flare-pwr\):
-  flare_home.py              -- navigation hub and FLARE Assistant AI chat
-  flare_ui.py                -- PWR Simulator user interface
-  flare_sim.py               -- primary RCS simulation engine
-  flarecon_sim.py            -- FLARECON dry-containment response engine
-  flare_model_editor.py      -- Model Editor for RCS and FLARECON inputs
-  flare_analyzer.py          -- animated Plant Analyzer
-  flare_ua.py                -- Uncertainty Analysis interface
-  flare_ua_worker.py         -- UA durable worker process
-  flare_risk.py              -- Risk Assessment interface
-  flare_risk_worker.py       -- Risk Assessment durable worker
-  flare_sim_batch_worker.py  -- durable worker for Run All Cases
-  CaseName_in.xlsx           -- user case input files (place here)
-  CaseName_out.xlsx / _out.csv  -- RCS output workbook and CSV
-  CaseName-CON.csv           -- FLARECON containment output CSV
-  sim_CaseName_YYYYMMDD_HHMMSS\  -- timestamped run folder (archived input, output, logs)
-
-Subfolders:
-  Examples\    -- supplied example input workbooks; copy to root before running
-  Icons\       -- PNG/JPG images used by flare_home.py for tool tiles
-  Install\     -- launcher scripts (launch_flare.bat, start_streamlit.ps1, start_ngrok.ps1)
-               -- Python virtual environment (flare_env\) created here on first launch
-  Manuals\     -- reference copies of Users Manual and Code Theory Manual
-  Runtime\     -- flare_config.txt (API key), flare_ua_variables.json (UA catalogue),
-               -- flare_ui_params.json (sidebar overrides), .preflight_ok sentinel
-
-The FLARE folder can be moved or renamed without editing any paths. launch_flare.bat locates Install\ relative to itself and Streamlit is launched against flare_home.py in the root.
-
-NOTE: If the FLARE folder is inside OneDrive or another cloud-sync directory, pause sync before running simulations. OneDrive can lock Excel files and cause PermissionError messages.
-
-## Starting FLARE
-
-From the FLARE folder with the virtual environment active:
-  streamlit run flare_home.py
-
-Or on Windows, double-click Install\launch_flare.bat. This opens Streamlit at http://localhost:8501 and optionally starts an ngrok tunnel for remote access.
-
-On headless Linux servers, FLARE automatically uses the Agg matplotlib backend. The .preflight_ok sentinel file speeds subsequent launches by skipping the package check.
-
-## Platform Support
-
-Full support: Windows, macOS, Linux desktop. Restricted mode (CLI only, no Streamlit UI, CSV output): iOS (Pyto/Pythonista) and Android (Termux). flare_sim.py can be called directly from the command line in restricted mode.
-
-
-# CHAPTER 2 — FLARE HOME
-
-The Home page is the navigation and configuration hub. Clicking a tool tile opens that tool in the same browser session. Each tool has a Home button in its sidebar. If a tool file is missing, the Home page shows a user-friendly message.
-
-## FLARE Assistant
-
-The FLARE Assistant is an AI chat interface for answering questions about FLARE models, parameters, output columns, and common workflows. It draws on the Code Theory Manual, User's Manual, and supporting technical material. Use it for questions such as "what does this parameter do," "where is this output produced," or "how should I set up this class of case."
-
-The Assistant requires an Anthropic API key. Preferred approach: enter the key on the FLARE Home sidebar. FLARE writes it to Runtime/flare_config.txt. The file can also be created manually:
-
-  ANTHROPIC_API_KEY = sk-ant-...
-  ANTHROPIC_MODEL = claude-sonnet-4-6   # optional; omit to use the default model
-
-NOTE: API use requires an internet connection and may incur charges. Do not commit a personal API key to a shared code repository.
-
-
-# CHAPTER 3 — MODEL EDITOR
-
-The Model Editor is the recommended way to inspect and modify FLARE input workbooks without directly editing every cell in Excel. It reads CaseName_in.xlsx files, groups parameters into labeled sections, displays tooltips from inline comments, and writes changes back.
-
-## Overview
-
-The editor treats the workbook as a structured model. RCS and FLARECON parameters are displayed separately when both are present. Each group appears as a collapsible section with labeled fields and editable inputs.
-
-## Creating a New Input File
-
-Select New Case in the sidebar, enter a case name (no spaces or special characters). The editor creates CaseName_in.xlsx with a default RCS command block and time-series table. Run the new case once interactively before using it in batch, UA, or Risk runs.
-
-## Editing Existing Parameters
-
-The editor organizes each labeled parameter group as a collapsible section. Tooltips come from inline # comments in the RCS sheet or from description columns in the FLARECON sheet. After editing, click Save RCS Model or Save FLARECON Model.
-
-NOTE: Saving overwrites the original workbook. Create a backup before editing when preserving a baseline is important.
-
-## FLARECON Tab
-
-If the workbook contains a sheet named exactly FLARECON, the Model Editor displays a separate FLARECON Model tab. FLARECON uses plain-text section headers (DESIGN PARAMETERS, INITIAL CONDITIONS, etc.) instead of the #-prefixed headers used in the RCS sheet.
-
-## Import, Resample, and Full Table Editing
-
-Import/Resample reads an existing case and interpolates the time-series table to a new time grid. The Full Table Editor exposes the complete time-series table as an editable dataframe. The time column must start at zero and increase monotonically.
-
-
-# CHAPTER 4 — PWR SIMULATOR
-
+Independent Nuclear Industry Consultant
+Lynchburg, VA
+Revision History
+Rev | Date | Summary
+0 | May 2026 | Initial release.
+1 | June 2026 | Added FLARECON containment model documentation, AI Event Narrative updates, revised file organization, and expanded output/troubleshooting information.
+Table RH-1. Revision history.
+Table of Contents
+Preface
+FLARE is a compact reactor safety analysis environment for rapid accident-response calculations, sensitivity studies, uncertainty runs, risk-informed screening, and technical demonstrations. This User’s Manual explains how to install, start, configure, run, and interpret the tools that make up FLARE. It is written for an analyst who understands the broad purpose of design-basis and beyond-design-basis calculations but needs practical guidance on how the FLARE user interface, input files, output products, and supporting utilities fit together.
+The companion Code Theory Manual describes the mathematical models. This manual is deliberately operational. It focuses on what the user must do, what the software will produce, what assumptions must be made explicit, and how to recognize common mistakes. Where a model limitation affects the way a case should be set up or interpreted, that limitation is repeated here in user-facing language rather than left only in the theory documentation.
+Note: FLARE is a reduced-order screening and methods-demonstration tool. It should not be used as a substitute for a plant-specific licensing evaluation model, a formally assessed containment code, or a detailed radiological consequence analysis code. All results should be interpreted in the context of the simplifications described in Chapter 11.
+Chapter 1 — Installation and Startup
+This chapter describes the minimum software environment needed to run FLARE, the expected file organization, and the normal startup sequence. A reliable installation is important because FLARE tools share input workbooks, output folders, configuration files, and worker-process status files. Most startup problems are caused by missing Python packages, running from the wrong working directory, or file locking by synchronization services such as OneDrive.
+1.1 Requirements
+FLARE requires Python 3.11 or 3.12. The recommended installation is a Python virtual environment dedicated to FLARE so that package versions remain isolated from other projects. The complete set of required packages is:
+pip install streamlit plotly openpyxl pandas numpy XSteamPython scipy reportlab anthropic
+Package | Purpose
+streamlit | Web-based user interface framework for all FLARE tools.
+plotly | Interactive time-history plots in the PWR Simulator and Plant Analyzer.
+openpyxl | Reading and writing Excel input and output workbooks.
+pandas | Tabular data processing for CSV output, UA results, and risk tables.
+numpy | Numerical arrays and mathematical operations throughout the simulation engine.
+XSteamPython | Water and steam thermodynamic properties (pressure-enthalpy surface).
+scipy | Root-finding (brentq) used in the critical-flow and steam-property solvers.
+reportlab | PDF report generation for the Run All Cases final report.
+anthropic | API client for AI Event Narratives and the FLARE Assistant (optional but recommended).
+Table 1-1. Required Python packages.
+The anthropic package enables AI Event Narratives and the FLARE Assistant. Deterministic simulations can run without it, but narrative-generation features will be unavailable unless the package is installed and a valid API key is configured.
+1.2 Recommended Folder Layout
+The FLARE distribution is organized into a root folder (referred to throughout this manual as the FLARE folder) and five subfolders. All Python source files live in the root. Case input workbooks placed in the root are discovered automatically by the PWR Simulator, Uncertainty Analysis, and Risk Assessment tools. Output files and timestamped run folders are created in the root during execution.
+The top-level folder structure is:
+flare-pwr\
+  flare_home.py
+  flare_ui.py
+  flare_sim.py
+  flarecon_sim.py
+  flare_model_editor.py
+  flare_analyzer.py
+  flare_ua.py
+  flare_ua_worker.py
+  flare_risk.py
+  flare_risk_worker.py
+  flare_sim_batch_worker.py
+  CaseName_in.xlsx          (user case files placed here)
+  Examples\                 (supplied example input workbooks)
+  Icons\                    (tool tile images used by flare_home.py)
+  Install\                  (launcher scripts and virtual environment)
+  Manuals\                  (Users Manual and Code Theory Manual)
+  Runtime\                  (configuration files and JSON catalogues)
+File or pattern | Location | Purpose
+flare_home.py | Root | Navigation hub and FLARE Assistant AI chat.
+flare_ui.py | Root | PWR Simulator interface for interactive case setup, execution, results, and AI narratives.
+flare_sim.py | Root | Primary RCS simulation engine called by the UI and all worker scripts.
+flarecon_sim.py | Root | FLARECON dry-containment response engine.
+flare_model_editor.py | Root | Model Editor for RCS and FLARECON input workbooks.
+flare_analyzer.py | Root | Animated Plant Analyzer for RCS and containment CSV outputs.
+flare_ua.py / flare_ua_worker.py | Root | Uncertainty Analysis interface and durable worker process.
+flare_risk.py / flare_risk_worker.py | Root | Risk Assessment interface and durable worker process.
+flare_sim_batch_worker.py | Root | Durable worker process for Run All Cases report generation.
+CaseName_in.xlsx | Root | Input workbook for each simulation case. Place user case files here.
+CaseName_out.xlsx and _out.csv | Root | RCS output workbook and CSV produced in the root or in a timestamped run folder.
+CaseName-CON.csv | Root | FLARECON containment response output CSV.
+sim_CaseName_YYYYMMDD_HHMMSS\ | Root | Timestamped run folder created for each execution. Contains archived input, outputs, and logs.
+Examples\CaseName_in.xlsx | Examples\ | Supplied example input workbooks. Copy to the root before running.
+Icons\ | Icons\ | PNG/JPG images used by flare_home.py for tool tile display.
+Install\launch_flare.bat | Install\ | Windows double-click launcher. Opens Streamlit and optional ngrok tunnel.
+Install\start_streamlit.ps1 | Install\ | PowerShell script that creates or activates flare_env, installs packages, and starts Streamlit.
+Install\start_ngrok.ps1 | Install\ | Optional PowerShell script for exposing the Streamlit session via an ngrok tunnel.
+Install\flare_env\ | Install\ | Python virtual environment created by start_streamlit.ps1 on first launch.
+Manuals\ | Manuals\ | FLARE Users Manual and Code Theory Manual (reference copies).
+Runtime\flare_config.txt | Runtime\ | Anthropic API key and optional model override. Written by the Home page sidebar.
+Runtime\flare_ua_variables.json | Runtime\ | Editable uncertainty-parameter catalogue used by the UA tool. Defines distributions, bounds, help text, section markers, and optional worksheet routing such as FLARECON.
+Runtime\flare_ui_params.json | Runtime\ | Editable PWR Simulator sidebar-parameter catalogue. Defines which workbook parameters appear in the Edit parameters panel and how they are labeled.
+Runtime\flare_risk_frequencies.json | Runtime\ | Editable Risk Assessment event-frequency table. Stores user-defined case frequencies used to build the F-C chart.
+Runtime\.preflight_ok | Runtime\ | Sentinel file written after first successful package verification; speeds subsequent launches.
+Table 1-2. FLARE file and folder organization.
+Runtime JSON files are the active configuration catalogues used by FLARE. The PWR Simulator uses Runtime\flare_ui_params.json, the UA tool uses Runtime\flare_ua_variables.json, and the Risk Assessment tool uses Runtime\flare_risk_frequencies.json. If the selected Working Folder contains a tool-specific JSON file with the same name, either directly in the Working Folder or in a Runtime\ or runtime\ subfolder, FLARE copies that file into the application Runtime\ folder and then uses the Runtime copy for the session. This allows a Working Folder to carry its own parameter catalogue or risk-frequency set while preserving a single active Runtime location for each tool.
+The launcher scripts in the Install folder are designed so that the entire FLARE folder can be moved or renamed without editing any paths. launch_flare.bat locates Install\ relative to itself, and start_streamlit.ps1 resolves the FLARE root as the parent of Install\, then launches Streamlit against flare_home.py in the root. The virtual environment (flare_env) is created inside Install\ on first use.
+Example input workbooks in Examples\ are for reference only. Before running an example, copy it to the root FLARE folder. The PWR Simulator, UA, and Risk tools discover CaseName_in.xlsx files in the root; they do not search subfolders.
+Note: If the FLARE folder is located inside OneDrive or another cloud-sync directory, pause sync before running simulations. OneDrive can lock Excel input files or output folders and cause PermissionError messages during input reading or
+1.3 Starting FLARE
+FLARE is launched as a Streamlit application. Start from the FLARE folder. On a system where Streamlit is available on the path:
+streamlit run flare_home.py
+On Windows with a virtual environment, activate the environment first:
+cd C:\path\to\FLARE
+flare_env\Scripts\activate
+streamlit run flare_home.py
+A convenience launcher script for Windows is provided at Install\start_streamlit.ps1. This script checks for the virtual environment, installs missing packages if needed, and starts Streamlit automatically.
+The Home page opens in a browser, typically at http://localhost:8501. From the Home page, launch the PWR Simulator, Model Editor, Plant Analyzer, Uncertainty Analysis, Risk Assessment, or FLARECON workflows using the tool tiles.
+Note: If the FLARE folder is inside OneDrive or another cloud-sync folder, pause sync before running simulations. OneDrive can lock Excel input files or output folders and cause PermissionError messages during input reading or output writing.
+1.4 Platform Support
+FLARE detects the runtime platform at startup and adjusts its behavior accordingly. The simulation engine fully supports Windows, macOS, and Linux desktops. It can also run on iOS (Pyto, Pythonista) and Android (Termux) in a restricted mode that skips GUI display and Streamlit; in that mode, flare_sim.py can be called directly from the command line and outputs a CSV file.
+On headless Linux servers without a display, FLARE automatically uses the Agg matplotlib backend so figure-generation code does not fail. The preflight check writes a sentinel file (Runtime/.preflight_ok) after the first successful package verification; subsequent launches skip the slow package check and start faster.
+Chapter 2 — FLARE Home
+The FLARE Home page is the navigation and configuration hub. It provides a single entry point for launching individual tools and for configuring the FLARE Assistant. A typical workflow begins on the Home page, proceeds to the Model Editor or PWR Simulator, and then returns to the Home page to launch post-processing or supporting analysis tools.
+2.1 Navigation Tiles
+Each tile on the Home page represents a FLARE tool. Clicking a tile opens that tool in the same browser session. Each tool includes a Home button in its sidebar so the user can return without restarting Streamlit. If a tool file is missing from the FLARE folder, the Home page displays a user-friendly message instead of a Python traceback.
+2.2 FLARE Assistant
+The FLARE Assistant is an AI chat interface for answering questions about FLARE models, parameters, output columns, and common workflows. It draws on the Code Theory Manual, User’s Manual, and supporting technical reference material. The Assistant is most useful for questions such as “what does this parameter do,” “where is this output produced,” or “how should I set up this class of case.”
+The Assistant requires an Anthropic API key. The preferred approach is to enter the key on the FLARE Home sidebar. FLARE writes the key to Runtime/flare_config.txt in the working folder. The same file may also be created or edited manually:
+ANTHROPIC_API_KEY = sk-ant-...
+ANTHROPIC_MODEL = claude-sonnet-4-6   # optional; omit to use the default model
+Note: API use requires an internet connection and may incur charges under the Anthropic account associated with the key. Do not commit a personal API key to a shared code repository.
+Chapter 3 — Model Editor
+The Model Editor is the recommended way to inspect and modify FLARE input workbooks without directly editing every cell in Excel. It reads CaseName_in.xlsx files, groups parameters into labeled sections, displays tooltips from inline comments, and writes changes back to the original workbook.
+3.1 Overview
+The Model Editor treats the input file as a structured model, not merely a spreadsheet. RCS parameters and FLARECON parameters are displayed separately when both are present. Each parameter group appears as a collapsible section with labeled fields on the left and editable inputs on the right. This view is particularly useful when a workbook contains many parameters or when verifying comments, defaults, and section labels.
+3.2 Creating a New Input File
+To create a new case, select New Case in the sidebar and enter a case name following the CaseName convention (no spaces, no special characters). The editor creates CaseName_in.xlsx and populates it with a default RCS command block and a default time-series table. Run the new workbook once as a single interactive case before using it in a batch, UA, or Risk run to confirm the input is valid.
+3.3 Editing Existing Parameters
+When an existing case is selected, the editor loads the workbook and organizes each labeled parameter group as a collapsible section. Tooltips are built from inline comments in the RCS sheet or from the description column in the FLARECON sheet. After editing, click Save RCS Model or Save FLARECON Model to write changes back to the workbook.
+Note: Saving overwrites the original workbook. Create a backup copy before editing when preserving a baseline case is important.
+3.4 FLARECON Tab
+If the workbook contains a sheet named exactly FLARECON, the Model Editor displays a separate FLARECON Model tab. The FLARECON tab uses plain-text section headers such as DESIGN PARAMETERS and INITIAL CONDITIONS instead of the #-prefixed headers used in the RCS sheet. Keeping containment inputs in the same workbook as the RCS model ensures that the PWR Simulator can run the integrated calculation automatically.
+3.5 Import, Resample, and Full Table Editing
+The Import/Resample function reads an existing case and interpolates the time-series table to a new time grid. This is useful when a long transient needs a coarser control table or when an RIA calculation requires a very fine early-time reactivity table. The Full Table Editor exposes the entire time-series table as an editable dataframe. The time column must start at zero and increase monotonically.
+Chapter 4 — PWR Simulator
 The PWR Simulator is the primary execution and results-review interface. It runs individual cases, applies temporary sidebar overrides, launches FLARECON automatically when a containment sheet is present, displays calculated time histories and scalar metrics, and generates AI-supported event narratives and batch reports.
-
-## Overview and Typical Workflow
-
-1. Select a case from the Case dropdown.
-2. Review input assumptions; apply sidebar overrides only for sensitivity studies.
-3. Select Fast mode if figures are not needed.
-4. Click Run Simulation. Progress bar shows RCS time advancing; FLARECON status appears after.
-5. Review the Results tab. If CaseName-CON.csv was produced, review the Containment Response tab.
-
-At run start, FLARE makes a private temporary copy of the input workbook so the original can remain open in Excel without causing a PermissionError. The archived input is stored in the timestamped run folder.
-
-## Execution Modes, Run Folders, and Workers
-
-Interactive execution runs within the Streamlit session. Run All Cases uses durable workers: the UI writes a configuration file, starts a child process, and monitors status files in a timestamped sim_CaseName_YYYYMMDD_HHMMSS folder. When diagnosing a failed run, inspect the run folder first.
-
-## Results Tab
-
-Scalar metric tiles give a quick screen; time-series plots are essential for physical interpretation. A high PCT should be reviewed together with vessel level, break flow, ECCS injection, DNBR, HTC, and core power to understand the cause. The unit-system selector changes display units but does not alter the CSV data.
-
-## Containment Response Tab
-
-When CaseName-CON.csv is present, a Containment Response tab appears showing peak containment pressure, gas temperature, hydrogen concentration, steam concentration, sump level, and flammability status. The Shapiro diagram shows the mixture path through the flammability envelope.
-
-NOTE: The containment calculation is one-way coupled. RCS output drives FLARECON, but containment back-pressure does not feed back into the RCS break-flow calculation.
-
-## AI Event Narrative and Report Outputs
-
-The AI Event Narrative converts numerical results into a structured, section-by-section technical narrative. Narrative generation is section-by-section: each section is produced by a separate API call and displayed as it completes. A progress bar and status indicator are shown; the page refreshes to the stored final report after all sections complete.
-
-Data passed to the model includes: initial, peak, minimum, and final values for RCS pressure, temperature, core power, vessel level, pump flow, ECCS injection, DNBR, cladding and fuel temperatures, HTC, SG heat removal, equilibrium quality, rod failure counts, source-term group releases, dose values, containment results, and unit-system preference.
-
-The Narrative detail slider controls the number of sections and the target word count for each. The slider has 21 discrete detents from 0.00 to 1.00 in 0.05 increments. Target word count ranges from approximately 300 words at 0.00 to approximately 5,300 words at 1.00.
-
-Section plan by detail level:
-- 0.00: plant response overview only (short abstract)
-- 0.15: adds safety system and thermal-hydraulic response section
-- 0.25: adds fuel integrity and core thermal response section
-- 0.40: adds containment response section (when FLARECON data present)
-- 0.55: adds source term and radiological consequences section (when data present)
-- 0.75: adds review observations and model caveats section
-- 1.00: all sections at maximum word target
-
-For benign or verification cases with no fuel damage, FLARE condenses to a short three-section structure regardless of the slider. Sections covering fuel integrity or source term are suppressed when data are absent or zero.
-
-The Build tables only option creates the Sequence of Events and Initial/Final Conditions tables without an API call. Download as Word document creates an individual report. Run All Cases mode compiles individual reports and plots into a final PDF report.
-
-## Sidebar Controls
-
-Control                  Description
-Case dropdown            Select an input case from the FLARE folder.
-Load previous run        Reload a previous CSV result without re-running.
-Fast mode                Skip matplotlib figure generation; focus on CSV/workbook output.
-Narrative detail         21-level slider (0.00 to 1.00) controlling narrative length and scope.
-Input Parameters         Temporarily override selected parameters without changing the workbook.
-Run Simulation           Execute the selected case.
-Run All Cases            Execute all discovered cases in batch using a durable worker.
-Run All Cases - Final    Execute the case library and compile a final PDF report.
-
-
-# CHAPTER 5 — INPUT FILE FORMAT
-
-## RCS Command Block
-
-The command block occupies the top rows of the first worksheet. Each row is a Python-style assignment statement. Inline comments begin with # and should document units, modeling intent, and assumptions. The command block ends when the first numeric value appears in column A (start of the time-series table).
-
-FLARE parses the command block via Python exec() in an isolated namespace. Common formatting issues are handled automatically: Unicode minus signs converted to ASCII, trailing unit annotations stripped, thousands-separator commas removed.
-
-Example:
-  # CaseLBLOCA - Large Break LOCA from full power
-  diameter_break = 0.22          # m, cold-leg break
-  pressure_kPa   = 14820         # kPa, initial pressure
-  total_power    = 575           # MWt
-  core_flag      = 1
-
-## Time-Series Table
-
-The table begins after the command block with a header row whose first cell starts with "Time". Up to three blank or non-numeric rows are tolerated before parsing stops.
-
-Column A: Time (s)         -- simulation time; must start at zero, monotonically increasing
-Column B: Structure Q [MW] -- heat-structure input when cond_flag is enabled
-Column C: Decay Heat [MW]  -- override for ANS-5.1 decay heat; zero = use built-in
-Column D: SG Q [MW]        -- SG heat removal when sg_table_flag=1; negative = overcooling (MSLB)
-Column E: CVCS Flow [kg/s] -- net CVCS makeup/letdown adder on top of cvcs_kgs steady-state flow
-Column F: rho_ext [pcm]    -- external reactivity insertion for RIA or ATWS cases
-
-## FLARECON Sheet
-
-Add a second worksheet named exactly FLARECON to include containment analysis. FLARECON uses plain-text section headers (not # prefixed). The PWR Simulator detects the sheet automatically and runs FLARECON after the RCS simulation.
-
-Minimum FLARECON model:
-  DESIGN PARAMETERS
-  air_volume_m3 = 10000
-  floor_area_m2 = 435.6
-
-  INITIAL CONDITIONS
-  P0_kPa = 101.325
-  T0_C   = 27.0
-  T_wall0_C = 27.0
-
-  RUN CONTROL AND SOURCE OPTIONS
-  endtime     = 86400
-  timestep    = 2.0
-  source_mode = 'flare_then_decay_steam'
-
-## Parameter Classes
-
-Geometry: change only when representing a different plant or scaled model.
-Initial conditions: check first when a transient starts from the wrong state.
-Boundary conditions: use to define the initiating event and mitigating systems.
-Model flags: document flag choices; they alter model behavior fundamentally.
-Numerical controls: use to control integration and reporting, not to tune physics.
-
-NOTE: When using sidebar overrides, record important override values in case notes. The workbook is not changed.
-
-## Selected RCS Input Parameters
-
-Parameter              Default          Description
-pressure_kPa           14820            Initial RCS pressure [kPa]
-temp_core_exit         312.8            Initial core-exit coolant temperature [deg C]
-total_power            575              Rated thermal power [MWt]
-loop_vol_m3            0.0              Additional loop volume outside RPV [m3]
-Total_Mass_init_kg     0.0              Override for initial RCS inventory; 0 = fill at initial P and T
-diameter_break         0.0              Equivalent break diameter [m]; 0 = no break
-t_break                0.0             Break opening time [s]
-Slip_model             'Fauske'         Critical two-phase flow slip: 'Fauske', 'HEM', or 'Moody'
-Cd / Cd_sub / Cd_sat   0.9              Break discharge coefficient(s)
-PORV_setpoint_kPa      22064            PORV opening setpoint [kPa]; default effectively disables PORV
-PORV_reseat_kPa        setpoint - 500   PORV reseating setpoint [kPa]
-PORV_area_m2           0.0              PORV throat area [m2]; 0 = disabled
-PORV_Cd                0.84             PORV discharge coefficient
-PORV_tau_open          0.5              PORV stroke time to full open [s]
-PORV_tau_close         1.0              PORV stroke time to full close [s]
-scram_on_PORV          0                Set 1 to fire scram when PORV first opens
-pzr_area               0.0              Pressurizer cross-sectional area [m2]
-pzr_height             0.0              Pressurizer total height [m]
-pzr_level_init         0.0              Initial pressurizer liquid level [m]
-pzr_control_enabled    0                Enable pressurizer pressure-control surrogate for startup cases
-pzr_control_setpoint   15500            Normal pressurizer pressure setpoint [kPa]
-trip_P_lo_kPa          0.9 x P0         Low-pressure scram setpoint [kPa]
-trip_P_hi_kPa          0 (disabled)     High-pressure scram setpoint
-trip_power_frac        1.10             High-flux scram setpoint as fraction of rated power
-trip_time_s            1e6 (never)      Manual trip time [s]
-trip_delay             1.5              RPS signal-processing and relay delay [s]
-trip_rod_worth_pcm     -15000           Total shutdown reactivity from control rods [pcm]
-trip_rod_insertion_s   0.0              Ramp time for rod insertion [s]; 0 = instantaneous
-hpsi_mdot_rated        0.0              HPSI rated flow [kg/s]; 0 = disabled
-hpsi_p_shutoff_Pa      15.5e6           HPSI shutoff pressure [Pa]
-hpsi_delay_s           20.0             Time from SI signal to HPSI flow [s]
-lpsi_mdot_rated        0.0              LPSI rated flow [kg/s]; 0 = disabled
-lpsi_p_shutoff_Pa      1.5e6            LPSI shutoff pressure [Pa]
-lpsi_delay_s           30.0             Time from SI signal to LPSI flow [s]
-p_si_setpoint_Pa       12.5e6           SI actuation setpoint [Pa]
-si_boron_ppm           2300             Boron concentration of SI water [ppm]
-sg_flag                1                Enable steam-generator heat removal; 0 = LOHS
-sg_nat_frac            0.05             Natural-circulation SG UA fraction after pump trip
-sg_table_flag          0                Set 1 to use column D as prescribed Q_SG
-P_sec_kPa              6895             SG secondary-side pressure [kPa]
-core_flag              1                Enable cladding heat-transfer and fuel-temperature models
-N_pins                 18200            Number of fuel pins (read from input; not hardwired)
-d_pin                  0.0095           Fuel pin outer diameter [m]
-L_heated               2.4              Heated fuel length [m]
-delta_clad             0.00057          Cladding wall thickness [m]
-F_r                    1.0              Radial hot-channel peaking factor
-F_z                    1.0              Axial peaking factor (typical fresh core ~1.55)
-h_gap                  6000             Fuel-cladding gap conductance [W/m2K]
-post_chf_model         'bromley'        Post-CHF model: 'bromley', 'cold_leg', or 'hot_leg'
-htc_core_mult          1.0              Multiplicative bias on forced-convection HTC
-htc_fb_mult            1.0              Multiplicative bias on film-boiling HTC
-ria_flag               0                Set 1 to enable point-kinetics reactivity model
-pja_flag               0                Set 1 for Prompt Jump Approximation (requires ria_flag=1)
-alpha_D_pcm            -3.0             Doppler fuel-temperature coefficient [pcm/deg C]
-alpha_M_pcm            -35.0            Moderator temperature coefficient [pcm/deg C]
-alpha_M_void           -150.0           Void reactivity coefficient [pcm/% void]
-beta_eff_pcm           650              Effective delayed neutron fraction [pcm]
-source_term_model      'thermal_failure' Source-term model selection
-T_gap_release_C        800              Cladding temperature threshold for gap release [deg C]
-T_early_iv_C           1204             PCT limit triggering Early In-Vessel rod failures [deg C]
-cvcs_kgs               0.0              Steady-state CVCS makeup/letdown flow [kg/s]
-cvcs_boron_ppm         0.0              Boron concentration of CVCS makeup water [ppm]; 0 = unborated
-alpha_boron_pcm_ppm    -10.0            Differential boron reactivity worth [pcm/ppm]
-rcs_boron_ppm_init     0.0              Initial RCS boron concentration [ppm]
-
-## NOTBADTRAD Dose Model Parameters (nbt_ prefix)
-
-These are required for Risk Assessment tool cases.
-
-nbt_containment_volume_ft3   2.74e6    Containment free volume [ft3]
-nbt_leak_rate_frac_per_day   0.001     Containment leak rate per day (fraction of volume)
-nbt_sprays_on                True      Enable spray removal credit
-nbt_spray_start_hr           1/60      Time after accident when sprays actuate [hr]
-nbt_spray_stop_hr            24.0      Time spray credit ends [hr]
-nbt_gap_release_duration_hr  0.5       Gap release duration [hr]
-nbt_wind_speed_m_s           1.0       Meteorological wind speed [m/s]
-nbt_stability_class          'F'       Pasquill atmospheric stability class
-nbt_distance_eab_m           914       EAB receptor distance [m] (0.5 miles)
-nbt_distance_lpz_m           4800      LPZ receptor distance [m]
-nbt_distance_cr_intake_m     100       Control room intake distance [m]
-nbt_cr_flow_cfm              100       Control room ventilation flow [cfm]
-nbt_cr_volume_ft3            20000     Control room volume [ft3]
-nbt_cr_filter_on             True      Apply control room filter efficiency
-nbt_end_time_hr              24.0      Dose integration end time [hr]
-nbt_eab_integration_hr       2.0       EAB dose integration period [hr]
-nbt_lpz_integration_hr       720.0     LPZ dose integration period [hr] (30 days)
-nbt_credit_decay             False     Credit radioactive decay (default: no credit)
-nbt_credit_deposition        False     Credit dry and wet deposition (default: no credit)
-
-
-# CHAPTER 6 — PLANT ANALYZER
-
-The Plant Analyzer turns FLARE CSV output into an animated visual replay of the plant response. It reads CaseName_out.csv and automatically looks for a matching CaseName-CON.csv in the same directory. It is a post-processor, not a separate calculation. It can replay previous runs without re-executing the simulation.
-
-Launch from the PWR Simulator Results tab or directly:
-  streamlit run flare_analyzer.py
-
-Playback controls: First/Last (jump to start/end), Play/Pause, Timestep slider (manual scrub), Speed (delay between frames), Step skip (advance multiple steps per frame for 24-hour runs), Diagram zoom.
-
-Visual indicators:
-- Break stem blue: break mass flow active
-- PORV stem blue: PORV relief flow active
-- SI injection pipe blue: HPSI or LPSI active
-- Vessel fill: collapsed liquid level or inventory trend
-- Accumulator fill: accumulator liquid inventory
-- Pump impeller: dims as pump coasts down
-- Containment dome: gas temperature state; badges show current pressure and temperature
-
-The containment dome color scale is tied to absolute temperature, which allows visual comparison across different cases.
-
-
-# CHAPTER 7 — UNCERTAINTY ANALYSIS
-
-The Uncertainty Analysis tool performs Monte Carlo propagation of selected input uncertainties. It quantifies how uncertain parameters affect scalar figures-of-merit and time-history envelopes, and supports Wilks-style one-sided tolerance interpretations.
-
-## Overview
-
-A UA run starts from a base case and generates N sampled cases by perturbing selected inputs according to distributions specified in Runtime/flare_ua_variables.json. Each sample is run by the simulation engine. Scalar metrics, time histories, sample values, statistics, and visualizations are collected.
-
-## Setting Up a UA Run
-
-1. Select a base case that has already run successfully as a single deterministic case.
-2. Choose N samples. For first-order 95/95 Wilks (m=1), use at least N=59.
-3. Open the variable-distribution editor, enable variables, review distributions and bounds.
-4. Use Fast mode for large sample sets.
-5. Click Run UA and monitor the status area and run folder.
-
-## Pre-Flight Validation
-
-The UI validates all enabled variable distributions before launching. Variables with invalid parameters (e.g. uniform with lower >= upper, or normal with sigma <= 0) are blocked with a red error message per variable. The Run UA button is disabled until all issues are resolved. If a variable passes validation but produces an invalid input during sampling, the worker logs a warning, holds that variable constant at its base value for the affected sample, and continues.
-
-## Results Tab — Three Sub-Tabs
-
-After a run completes the Results tab shows three sub-tabs: FOM Distribution, Importance Analysis, and Ordered Statistic. A unit-system selector (metric or English) and a variable selector (FLARE scalar FOM, e.g. peak hot-pin clad temperature) appear at the top. When FLARECON results are present, a separate containment FOM selector is also shown.
-
-### FOM Distribution
-
-Shows:
-- Time-series overlay for all N samples (colour coded from lowest to highest)
-- Histogram of the scalar FOM across all samples
-- Top-10 ordered values table
-- Wilks confidence summary: confidence level beta for m = 1, 2, 3, 5, 10 at gamma = 95%
-- Empirical CDF
-
-When FLARECON outputs are present: containment time-series overlay with its own variable selector, containment scalar summary tiles (max, mean, min) with H2 colour coding at 4 vol% LFL (lower flammability limit) and 8 vol% detonable threshold.
-
-A caption directs the user to the Importance Analysis and Ordered Statistic tabs for complete statistical synthesis.
-
-### Importance Analysis
-
-Applies the stepwise multiple-regression method of Martin (Nucl. Technol. 175, 2011) to decompose the total output variance into contributions from individual sampled inputs. Theory is in Section 8.10 of the Code Theory Manual.
-
-User selects the Student-t confidence level (default: two-sided 97.5%, equivalent in breadth to the one-sided 95% level used for Wilks). FLARE computes r_min from that level and n: r_min = t_p / sqrt(n - 2 + t_p^2). At the default level with n=59, r_min = 0.256.
-
-Four KPI tiles:
-- sigma_o: actual standard deviation of the FOM across all samples
-- sqrt(Sum Var): convolution estimate from accepted contributors (Eq. 11, Martin 2011)
-- Ratio: convolution estimate / sigma_o (Eq. 12); green >= 0.90, orange < 0.90
-- Residual sigma: unexplained standard deviation
-
-A ratio of 0.90 or above is satisfactory. Below 0.90 suggests additional contributors below the stopping threshold or nonlinear interactions; increasing the sample size may help.
-
-Stepwise regression table: each accepted contributor listed in order of importance with:
-  - Pearson correlation coefficient (sign shows direction of influence)
-  - delta-standard-deviation contribution
-  - polynomial fit degree (1 or 2, selected by adjusted R-squared)
-  - adjusted R-squared
-  - terminal stopping row: shows which parameter caused the regression to halt and its |r| vs. threshold (this row is a diagnostic, not an accepted contributor)
-
-Tornado bar chart: accepted contributors ranked by delta-standard-deviation.
-Correlation bar chart: absolute |r| for each accepted contributor with r_min threshold line.
-Scatter plots: per-contributor with polynomial fit curve; residual output on vertical axis for steps after the first.
-
-When FLARECON outputs are present, a FLARECON Importance Analysis section appears below the FLARE section. It repeats the same analysis for the selected containment FOM using an independent Student-t threshold control. Each containment scalar (pressure, gas temperature, H2 concentration, sump level) is analysed separately.
-
-### Ordered Statistic
-
-Displays:
-- Top-20 ordered values as a connected scatter plot; user-selectable m highlighted by a star marker
-- Three wide summary tiles:
-    m-th order-statistic value
-    Wilks beta at gamma=95% for current n and m (green >= 95%, red < 95%)
-    Maximum observed value (m=1)
-- Beta vs. m curve (m=1 through 10) with dotted 95% reference line
-- Minimum-n reference table for m = 1, 2, 3, 10, 40, 100
-
-When FLARECON outputs are present, a FLARECON Ordered Statistics section appears below. For H2 concentration, horizontal dashed reference lines are shown at 4 vol% LFL and 8 vol% detonable threshold.
-
-NOTE: For Wilks use, the most important results are in the Ordered Statistic sub-tab. Confirm sampling independence and that no samples were rejected due to input combinations outside the valid model range before invoking a Wilks tolerance claim. The importance analysis is a post-processing diagnostic; it does not affect the Wilks statistical interpretation.
-
-### AI Uncertainty Narrative
-
-An AI Uncertainty Narrative expander appears at the bottom of the Results tab. It uses the same section-by-section generation approach as the PWR Simulator. Data drawn on includes: selected FLARE and FLARECON FOMs, sample population summaries, the complete stepwise regression table, Wilks order-statistic results for m = 1, 2, and 3, Pearson cross-check correlations, and the sampled input matrix.
-
-The same 21-level detail slider controls the number of sections and word target. Below detail 0.15, a compact two-section abstract is generated. At higher levels the narrative expands to include FOM distribution and ordered statistics, importance analysis and uncertainty drivers, FLARECON containment results when present, and a GDC support conclusion.
-
-A Clear button discards the stored narrative without affecting the statistical results. The narrative can be downloaded as a Markdown file.
-
-## Durable Worker Execution
-
-UA runs execute through flare_ua_worker.py in a timestamped ua_{case}_{timestamp} folder. Browser refreshes do not terminate the calculation. If a run stops early, inspect the per-sample log for the first failed sample.
-
-## Output Files
-
+4.1 Overview and Typical Workflow
+A normal interactive analysis begins by selecting a case, reviewing the input assumptions, optionally applying sidebar overrides, and running the simulation. When the run completes, review the scalar tiles for obvious failures, then inspect the time-series plots in sequence with the event chronology. For integrated RCS+containment cases, review both the RCS Results tab and the Containment Response tab before drawing conclusions.
+Simulator feature | User purpose
+Case selection | Choose the input workbook from the FLARE folder.
+Sidebar overrides | Perform quick sensitivity studies without changing the baseline workbook.
+Fast mode | Skip matplotlib figure generation when only CSV or batch output is needed.
+Live progress | Confirm that RCS and FLARECON time integration are advancing.
+Results plots | Review pressure, inventory, power, heat-transfer, source-term, and containment trends.
+AI Event Narrative | Generate a structured summary of the transient for reports.
+Run All Cases | Execute the case library and compile individual reports into a final PDF report.
+Table 4-1. PWR Simulator capabilities.
+4.2 Running a Case
+Select a case from the Case dropdown in the sidebar.
+Review the input assumptions. Apply sidebar overrides only for temporary sensitivity calculations.
+Select Fast mode if figures are not needed. Fast mode is appropriate for debugging, UA, Risk, and batch runs.
+Click Run Simulation. The progress bar shows RCS simulation time advancing. If a FLARECON sheet is present, containment status messages appear after the RCS simulation completes.
+Review the Results tab. If CaseName-CON.csv was produced, review the Containment Response tab.
+Note: At run start, FLARE makes a private temporary copy of the input workbook so the user may leave the original open in Excel without causing a PermissionError. The original file is not modified. The exact copy used for the run is archived in the timestamped run folder.
+4.3 Execution Modes, Run Folders, and Worker Processes
+Interactive single-case execution runs within the Streamlit session and is best for development, debugging, and interpretation. Long-running operations such as Run All Cases use durable workers. The UI writes a configuration file, starts a child process, and then monitors status files in a timestamped run folder named sim_CaseName_YYYYMMDD_HHMMSS. The worker may continue even if the browser disconnects.
+When diagnosing a failed run, inspect the run folder first. Per-case console logs typically identify missing inputs, property-lookup failures, or output-write problems. The run folder preserves the archived input snapshot, the output CSV, any Excel output, individual case logs, and the final status JSON.
+4.4 Results Tab
+The Results tab combines scalar metric tiles with interactive time-history plots. The scalar tiles are useful for quick screening, but the plots are essential for physical interpretation. For example, a high peak cladding temperature should be reviewed together with vessel level, break flow, ECCS injection, DNBR, heat-transfer coefficient, and core power to determine whether the result is driven by blowdown, delayed injection, dryout, or decay heat. The unit-system selector changes display units but does not alter the underlying CSV data.
+4.5 Containment Response Tab
+When a CaseName-CON.csv file is present in the run folder, a Containment Response tab appears. This tab displays peak containment pressure, gas temperature, hydrogen concentration, steam concentration, sump level, and flammability status. Time-history plots show the competing effects of break source, wall heat removal, floor and sump heat capacity, spray heat removal, condensation, and hydrogen addition. The Shapiro diagram, when generated, shows the path of the steam-air-hydrogen mixture through the flammability envelope.
+Note: The containment calculation is one-way coupled. RCS output drives FLARECON, but containment back-pressure does not feed back into the RCS break-flow calculation.
+4.6 AI Event Narrative and Report Outputs
+The AI Event Narrative converts the numerical results into a structured, section-by-section technical narrative. The narrative is data-grounded: FLARE passes selected scalar metrics, sequence-of-events data, initial and final conditions, source-term tables, dose tables, containment results, and unit-system preference to the language model. Each section of the narrative is generated by a separate API call and displayed as it completes, so the user can see progress in real time. After all sections are assembled, a progress bar and status indicator mark completion and the page refreshes to show the final stored report.
+The number and scope of sections is controlled by the Narrative detail slider. At detail 0.00, the narrative is a short abstract covering only the initiating event and plant response. At detail 0.15, a safety system and thermal-hydraulic response section is added. At 0.25, a fuel integrity and core thermal response section is added. At 0.40, a containment response section is added when FLARECON data are present. At 0.55, a source term and radiological consequences section is added when source-term data are present. At 0.75, a review observations and model caveats section is included. At detail 1.00, all available sections are generated at their maximum allocated word target. For benign or verification cases with no fuel damage, FLARE condenses the narrative to a short three-section structure regardless of the detail slider, and sections covering fuel integrity or source term are suppressed when their data are absent or zero.
+The Build tables only option creates the Sequence of Events and Initial/Final Conditions tables without an API call. This is useful when deterministic tabular output is needed or when an API key is not available. Download as Word document creates an individual report combining the narrative, tables, and case metadata. In Run All Cases mode, individual reports and plots are compiled into a final PDF report.
+4.7 Sidebar Controls
+Control | Description
+Case dropdown | Select an input case from the selected Working Folder.
+Load previous run | Reload a previous CSV result without re-running the simulation.
+Fast mode | Skip matplotlib figure generation; focus on CSV/workbook output.
+Narrative detail | Choose the target length and scope for AI Event Narratives. The slider has 21 discrete detents from 0.00 to 1.00 in 0.05 increments; each detent maps to a distinct target word count ranging from approximately 300 words at 0.00 to approximately 5,300 words at 1.00. Higher values add more narrative sections and expand the discussion of each topic.
+Input Parameters | Temporarily override selected parameters without changing the workbook.
+Run Simulation | Execute the selected case.
+Run All Cases | Execute all discovered cases in batch mode using a durable worker.
+Run All Cases – Final Report | Execute the case library and compile a final PDF report.
+Working Folder | Select the folder containing the input cases and any folder-specific JSON catalogues.
+Edit parameter list | Open the form-based JSON editor for Runtime\flare_ui_params.json. Use it to add, delete, reorder, and label the parameters shown in the sidebar Edit parameters panel.
+Table 4-2. PWR Simulator sidebar controls.
+The Edit parameter list button opens a form-based JSON editor for the PWR Simulator parameter catalogue. The editor separates the user from raw JSON syntax by presenting fields for labels, help text, dropdown options, worksheet routing, deletion, and ordering. Saving the editor writes Runtime\flare_ui_params.json; the input workbook itself is not modified by changing the catalogue.
+Chapter 5 — Input File Format
+FLARE input files are Excel workbooks that combine declarative parameter assignments with optional time-dependent forcing tables. Correct input organization is critical because the same workbook may be used by the Model Editor, PWR Simulator, Uncertainty Analysis, Risk Assessment, Plant Analyzer, and FLARECON. This chapter explains the workbook structure and gives practical guidance for maintaining cases that remain readable and reproducible.
+5.1 RCS Command Block
+The RCS command block occupies the top rows of the first worksheet. Each row is a Python-style assignment statement. Inline comments begin with # and should be used to preserve engineering units, modeling intent, and important assumptions. The command block ends when the first numeric value appears in column A, which marks the start of the time-series table.
+FLARE parses the command block by executing each assignment using Python’s exec() in an isolated namespace. The parser handles common formatting issues automatically:
+Unicode minus signs and en-dashes are converted to ASCII hyphens.
+Trailing unit annotations such as kPa or m³ are stripped before numeric evaluation.
+Thousands-separator commas in plain numeric values (e.g., -3,000) are removed.
+An example RCS command block for a large-break LOCA case:
+# CaseLBLOCA - Large Break LOCA from full power
+diameter_break = 0.22          # m, cold-leg break
+pressure_kPa   = 14820         # kPa, initial pressure
+total_power    = 575           # MWt
+core_flag      = 1
+5.2 Time-Series Table
+The time-series table provides user-specified transient forcing functions. It starts after the command block, beginning with a row whose first cell starts with the word “Time” (case-insensitive). The parser confirms the header by requiring that at least one numeric value follows within the next three rows.
+Column | Header | Purpose
+A | Time (s) | Simulation time. Must start at zero and increase monotonically.
+B | Structure Q [MW] | Generic heat-structure input when cond_flag is enabled.
+C | Decay Heat [MW] | Decay heat override. Zero means use the built-in ANS-5.1 decay heat model.
+D | SG Q [MW] | Steam-generator heat removal override when sg_table_flag = 1. Positive = normal SG removal; negative = SG adds heat (MSLB overcooling).
+E | CVCS Flow [kg/s] | Net CVCS makeup or letdown adder on top of the baseline cvcs_kgs steady-state flow.
+F | rho_ext [pcm] | External reactivity insertion for RIA or ATWS studies.
+Table 5-1. Time-series table column definitions.
+Up to three consecutive blank or non-numeric rows are tolerated in the table before parsing stops. This allows the user to insert visual separator rows without corrupting the input.
+5.3 FLARECON Sheet
+To add containment response analysis, add a second worksheet named exactly FLARECON to the input workbook. FLARECON uses key = value entries like the RCS sheet but uses plain-text section headers instead of #-prefixed headers. The PWR Simulator detects the sheet automatically and runs FLARECON after the RCS simulation has completed.
+DESIGN PARAMETERS
+air_volume_m3 = 10000          # m³ free gas volume
+floor_area_m2 = 435.6          # m² floor area
+INITIAL CONDITIONS
+P0_kPa = 101.325               # kPa initial pressure
+T0_C   = 27.0                  # °C initial temperature
+5.4 Parameter Classes
+Treating a FLARE input workbook as a declarative model rather than a collection of tuning knobs produces cases that are easier to review and prevents accidental compensation of one modeling error by another.
+Parameter class | Examples | How the user should treat it
+Geometry | vessel area, loop volume, heated length, pin diameter | Change only when representing a different plant or scaled model.
+Initial conditions | RCS pressure, core exit temperature, accumulator pressure | Check first when a transient starts from the wrong state.
+Boundary conditions | break diameter, SI flow, SG secondary temperature | Use to define the initiating event and mitigating systems.
+Model flags | core_flag, pja_flag, sg_table_flag | Document flag choices; they alter model behavior fundamentally.
+Numerical controls | timestep, endtime, output frequency | Use to control integration and reporting, not to tune physics.
+Table 5-2. Practical input-parameter classes.
+5.5 Input Integrity Practices
+Before using a case in UA, Risk, or Run All Cases, run it once interactively. Confirm that the initiating event occurs at the intended time, safety systems actuate as expected, and the final state is physically plausible. Keep case names concise and descriptive. Avoid spaces and special characters in file names when the case will be used in batch runs or shared across systems.
+Note: When using sidebar overrides, remember that the workbook is not changed. Record important override values in the case notes, report narrative, or a separate configuration record.
+5.6 Selected RCS Input Parameters
+The following table describes the most commonly used RCS parameters. Parameters listed without defaults are required for the relevant calculation. All defaults are drawn directly from the simulation code.
+Parameter | Default | Purpose and notes
+pressure_kPa | 14820 | Initial RCS pressure [kPa]. Standard full-power PWR ∼15500 kPa.
+temp_core_exit | 312.8 | Initial core-exit bulk coolant temperature [°C].
+total_power | 575 | Rated thermal power [MWt]. Scales decay heat, rod-failure counts, and SG UA sizing.
+loop_vol_m3 | 0.0 | Additional loop volume outside the RPV [m³] (hot/cold legs, pressurizer, SG primary side).
+Total_Mass_init_kg | 0.0 | Override for initial RCS inventory. Zero = fill vessel at initial P and T. Set for startup cases.
+diameter_break | 0.0 | Equivalent break diameter [m]. Zero disables break flow.
+t_break | 0.0 | Break opening time [s]. At t_break the break opens and scram/pump trip fire unless full_power_flag=1.
+Slip_model | 'Fauske' | Critical two-phase flow slip model: 'Fauske' (default), 'HEM', or 'Moody'.
+Cd | 0.9 | Break discharge coefficient. Applied to both subcooled and saturated regimes unless Cd_sub or Cd_sat are set separately.
+break_location | 'top_of_vessel' | Named break elevation: top_of_vessel, core_exit, vessel_bottom, or use break_elevation_m for a specific height.
+PORV_setpoint_kPa | 22064 | PORV opening setpoint [kPa]. Default ≈ critical point, effectively disabled. Set explicitly for overpressure cases.
+PORV_reseat_kPa | PORV_setpoint − 500 | PORV re-seating setpoint [kPa]. Controls hysteresis deadband.
+PORV_area_m2 | 0.0 | PORV throat area [m²]. Zero disables PORV entirely.
+PORV_Cd | 0.84 | PORV discharge coefficient.
+PORV_tau_open | 0.5 | PORV stroke time to full open [s].
+PORV_tau_close | 1.0 | PORV stroke time to full close [s].
+scram_on_PORV | 0 | Set 1 to fire scram when PORV first opens.
+pzr_area | 0.0 | Pressurizer cross-sectional area [m²]. Zero disables pressurizer level diagnostics.
+pzr_height | 0.0 | Pressurizer total height [m].
+pzr_level_init | 0.0 | Initial pressurizer liquid level [m].
+pzr_control_enabled | 0 | Enable normal-operation pressurizer pressure-control surrogate (spray/heater aggregate). Use for startup/power-ascension cases.
+pzr_control_setpoint_kPa | 15500 | Normal pressurizer pressure setpoint [kPa] when pzr_control_enabled=1.
+acc_gasvol | calculated | Accumulator nitrogen gas volume [m³]. Determines initial nitrogen pressure from ideal gas law.
+acc_totvol | calculated | Total accumulator volume [m³].
+trip_P_lo_kPa | 0.9 × initial P | Low-pressure scram setpoint [kPa]. Default is 90% of initial RCS pressure.
+trip_P_hi_kPa | 0 (disabled) | High-pressure scram setpoint [kPa]. Set for ATWS/overpressure cases.
+trip_power_frac | 1.10 | High-flux scram setpoint as a fraction of rated power.
+trip_time_s | 1×10⁶ (never) | Manual trip time [s].
+trip_delay | 1.5 | RPS signal-processing and relay delay [s] applied to all scram signals.
+trip_rod_worth_pcm | −15000 | Total shutdown reactivity inserted by control rods [pcm].
+trip_rod_insertion_time_s | 0.0 | Ramp time for rod insertion [s]. Zero = instantaneous.
+hpsi_mdot_rated | 0.0 | HPSI rated flow at shutoff-to-rated-head differential [kg/s]. Zero disables HPSI.
+hpsi_p_shutoff_Pa | 15.5×10⁶ | HPSI pump shutoff pressure [Pa].
+hpsi_delay_s | 20.0 | Time from SI signal to HPSI flow initiation [s].
+lpsi_mdot_rated | 0.0 | LPSI rated flow [kg/s]. Zero disables LPSI.
+lpsi_p_shutoff_Pa | 1.5×10⁶ | LPSI pump shutoff pressure [Pa].
+lpsi_delay_s | 30.0 | Time from SI signal to LPSI flow initiation [s].
+p_si_setpoint_Pa | 12.5×10⁶ | SI actuation setpoint [Pa].
+si_boron_ppm | 2300 | Boron concentration of RWST water injected by HPSI and LPSI [ppm].
+sg_flag | 1 | Enable steam-generator heat removal. Set to 0 for loss-of-heat-sink cases.
+sg_nat_frac | 0.05 | Natural-circulation SG UA fraction after pump trip. Represents residual SG cooling.
+sg_table_flag | 0 | Set to 1 to use column D of the time table as a prescribed Q_sg boundary condition.
+P_sec_kPa | 6895 | SG secondary-side pressure [kPa]. Sets secondary saturation temperature for UA model.
+core_flag | 1 | Enable cladding heat-transfer and fuel-temperature models.
+N_pins | 18200 | Number of fuel pins in the core.
+d_pin | 0.0095 | Fuel pin outer diameter [m].
+L_heated | 2.4 | Heated fuel length [m].
+delta_clad | 0.00057 | Cladding wall thickness [m].
+F_r | 1.0 | Radial hot-channel peaking factor. Set to plant-specific value for DNBR and PCT.
+F_z | 1.0 | Axial peaking factor. Typical fresh-core value ∼1.55.
+h_gap | 6000 | Fuel-cladding gap conductance [W/m²K]. Default represents BOL He-filled gap.
+dry_core_trigger_level_m | −1 (disabled) | Vessel level [m] below which simplified dry-core heat transfer activates. Set positive to enable.
+post_chf_model | 'bromley' | Post-CHF heat-transfer model: 'bromley', 'cold_leg', or 'hot_leg'.
+htc_core_mult | 1.0 | Multiplicative bias on forced-convection HTC. UA range typically 0.8–1.2.
+htc_fb_mult | 1.0 | Multiplicative bias on film-boiling HTC (Bromley and steam D-B).
+ria_flag | 0 | Set to 1 to enable point-kinetics reactivity model.
+pja_flag | 0 | Set to 1 to apply the Prompt Jump Approximation for rapid reactivity insertions.
+alpha_D_pcm | −3.0 | Doppler fuel-temperature coefficient [pcm/°C].
+alpha_M_pcm | −35.0 | Moderator temperature coefficient [pcm/°C].
+alpha_M_void | −150.0 | Void reactivity coefficient [pcm/% void].
+beta_eff_pcm | 650 | Effective delayed neutron fraction [β_eff, pcm].
+trip_rod_worth_pcm | −15000 | Control rod shutdown worth [pcm].
+source_term_model | 'thermal_failure' | Source-term model: thermal_failure, licensing_auto, RG1183_LOCA, RG1183_nonLOCA, RG1183_nonLOCA_DNB.
+T_gap_release_C | 800 | Cladding temperature threshold for gap release [°C].
+T_early_iv_C | 1204 | 10 CFR 50.46 PCT limit triggering Early In-Vessel rod failures [°C].
+cvcs_kgs | 0.0 | Steady-state CVCS makeup/letdown flow [kg/s].
+cvcs_boron_ppm | 0.0 | Boron concentration of CVCS makeup water [ppm]. Zero = unborated (worst-case dilution).
+alpha_boron_pcm_ppm | −10.0 | Differential boron reactivity worth [pcm/ppm].
+rcs_boron_ppm_init | 0.0 | Initial RCS boron concentration [ppm].
+Table 5-3. Selected RCS input parameters with defaults.
+5.7 NOTBADTRAD Dose Model Parameters
+Cases used in the Risk Assessment tool should include the NOTBADTRAD (NBT) parameters needed to calculate EAB, LPZ, and control-room TEDE dose. These parameters use the nbt_ prefix.
+Parameter | Default | Description
+nbt_containment_volume_ft3 | 2.74×10⁶ | Containment free volume [ft³].
+nbt_leak_rate_frac_per_day | 0.001 | Containment leak rate as a fraction of containment volume per day.
+nbt_sprays_on | True | Enable spray removal credit in dose calculation.
+nbt_spray_start_hr | 1/60 | Time after accident at which sprays actuate [hr].
+nbt_spray_stop_hr | 24.0 | Time at which spray credit ends [hr].
+nbt_gap_release_duration_hr | 0.5 | Gap release duration [hr].
+nbt_wind_speed_m_s | 1.0 | Meteorological wind speed [m/s].
+nbt_stability_class | 'F' | Pasquill-Gifford atmospheric stability class, A (most unstable) through F (most stable).
+nbt_release_height_m | 0.0 | Effective release height [m].
+nbt_distance_eab_m | 914 | EAB receptor distance [m] (default 0.5 miles = 914 m).
+nbt_distance_lpz_m | 4800 | LPZ receptor distance [m].
+nbt_distance_cr_intake_m | 100 | Control room air intake distance from release point [m].
+nbt_cr_flow_cfm | 100 | Control room ventilation flow rate [cfm].
+nbt_cr_volume_ft3 | 20000 | Control room volume [ft³].
+nbt_cr_filter_on | True | Apply control room filter efficiency to dose calculation.
+nbt_end_time_hr | 24.0 | Dose integration end time [hr].
+nbt_eab_integration_hr | 2.0 | EAB dose integration period [hr].
+nbt_lpz_integration_hr | 720.0 | LPZ dose integration period [hr] (30 days).
+nbt_credit_decay | False | Credit radioactive decay during release and transit.
+nbt_credit_deposition | False | Credit dry and wet deposition removal.
+nbt_burnup_gwdmtu | 33 (none) | Maximum average core burnup [GWd/MTU]. Inventory is scaled by (nbt_burnup_gwdmtu / 33). 33 GWd/MTU is the NUREG-1465 reference basis (no correction).
+nbt_early_iv_duration_hr | 1.3 | Early in-vessel release duration [hr], applied after the gap-release phase.
+nbt_chi_q_eab | not set | Site-specific EAB χ/Q override [s/m³] (e.g. from a PAVAN analysis). When set, replaces the Pasquill-Gifford EAB calculation.
+nbt_chi_q_lpz | not set | Site-specific LPZ χ/Q override [s/m³]. When set, replaces the Pasquill-Gifford LPZ calculation.
+nbt_chi_q_cr | not set | Site-specific control-room intake χ/Q override [s/m³]. When set, replaces the Pasquill-Gifford control-room calculation.
+nbt_calibrate | 1.0 | Multiplier applied to final EAB, LPZ, and control-room TEDE results. Use only as a documented calibration factor; record the basis in the case file.
+Table 5-4. NOTBADTRAD dose model parameters.
+The burnup, dispersion-override, and calibration parameters above support benchmarking a case against a site-specific licensing calculation. nbt_burnup_gwdmtu scales the default NUREG-1465-based group inventories to a plant-specific maximum average (or, for large PWRs with low-leakage core loading, peak assembly) burnup; for example, nbt_burnup_gwdmtu = 51 corresponds to the 51 GWd/MTU surrogate-plant burnup in the Clinch River ESPA SSAR (Rev. 2, Section 15.2).
+nbt_chi_q_eab, nbt_chi_q_lpz, and nbt_chi_q_cr allow a site-specific atmospheric dispersion factor (e.g. from PAVAN or ARCON96) to be supplied directly for the corresponding receptor, in place of the value computed from nbt_wind_speed_m_s, nbt_stability_class, and the nbt_distance_*_m parameters. This is the recommended approach when comparing NOTBADTRAD results to a plant FSAR or SSAR dose calculation, since the embedded Pasquill-Gifford model is an approximation that becomes less reliable at longer receptor distances and for averaging periods longer than a few hours.
+nbt_calibrate is a final multiplier on the EAB, LPZ, and control-room TEDE results and on the corresponding group-level and TEDE-versus-distance outputs. It does not affect inventories, release fractions, or any intermediate quantity. Because it can mask an underlying modeling difference if used carelessly, any value other than 1.0 should be documented in the case file together with the comparison case and result that motivated it.
+Chapter 6 — Plant Analyzer
+The Plant Analyzer turns FLARE CSV output into an animated visual replay of the plant response. It is a post-processor that helps users understand event timing, system interactions, and qualitative behavior. It is not a separate calculation. This chapter explains how to load a case, control the animation, interpret visual indicators, and use the containment dome display.
+6.1 Overview
+The Plant Analyzer displays an SVG representation of the primary system and, when available, an animated containment dome. It reads CaseName_out.csv and automatically looks for a matching CaseName-CON.csv in the same directory. Because the analyzer is driven by CSV output, it can replay previous runs without re-executing the simulation.
+6.2 Launching and Loading Data
+The simplest path is to launch the Plant Analyzer from the PWR Simulator Results tab, which loads the most recent output. It may also be launched directly using Streamlit and then pointed to a saved CSV file from the sidebar:
+streamlit run flare_analyzer.py
+6.3 Playback Controls
+Control | Use
+First / Last | Jump to the beginning or end of the time history.
+Play/Pause | Start or pause automatic replay.
+Timestep slider | Manually scrub through the transient.
+Speed | Control the delay between animation frames.
+Step skip | Advance multiple time steps per frame; useful for 24-hour containment runs.
+Diagram zoom | Resize the displayed plant diagram.
+Table 6-1. Plant Analyzer playback controls.
+6.4 Visual Interpretation
+Animated colors and fills are diagnostic aids. Break, PORV, SI, CVCS, vessel level, accumulator level, pressurizer level, pump status, and containment state are all displayed qualitatively. Use the animation to identify event timing and interactions, then return to the numerical plots for quantitative interpretation.
+Indicator | Meaning
+Break stem turns blue | Break mass flow is active.
+PORV stem turns blue | PORV relief flow is active.
+SI injection pipe turns blue | Pumped safety injection (HPSI or LPSI) is active.
+Vessel fill | Collapsed vessel level or inventory trend.
+Accumulator fill | Accumulator liquid inventory.
+Pump impeller color | Pump speed status; dims as pump coasts down.
+Containment dome color | Containment gas temperature state.
+Containment badges | Current containment pressure and gas temperature numerical values.
+Table 6-2. Plant Analyzer visual indicators.
+6.5 Containment Dome
+The containment dome appears whether or not containment data are available. With a paired CON CSV, the dome fill and outline respond to containment gas temperature, and badges display current pressure and temperature. Without a CON CSV, the dome displays a muted no-data message. The color scale is tied to absolute temperature rather than run-relative values, which allows visual comparison across cases.
+Chapter 7 — Uncertainty Analysis
+The Uncertainty Analysis tool performs Monte Carlo propagation of selected input uncertainties. Its purpose is to quantify how uncertain parameters affect scalar figures-of-merit and time-history envelopes. The tool also supports Wilks-style one-sided tolerance interpretations when the sampling plan is defined before the run and the samples are independent realizations of a fixed uncertainty model.
+7.1 Overview
+A UA run starts from a base case and generates N sampled cases by perturbing selected inputs according to distributions specified in Runtime/flare_ua_variables.json. Each sampled case is run by the FLARE simulation engine. The tool then collects scalar metrics, time histories, sample values, statistics, envelope plots, CDF plots, and correlation measures.
+7.2 Setting Up a UA Run
+Select a base case that has already run successfully as a single deterministic case.
+Choose the number of samples. For a one-sided first-order 95/95 Wilks estimate, use at least 59 samples.
+Open the parameter-distribution editor and enable the parameters to be sampled. Review distribution types, bounds, and help text before running. Use Edit parameter catalogue when the JSON catalogue itself needs to be changed.
+Use Fast mode for large sample sets unless individual plots are specifically needed.
+Click Run UA and monitor the status area and run folder.
+7.3 Results and Interpretation
+After a UA run completes, the Results tab organises the output into three sub-tabs: FOM Distribution, Importance Analysis, and Ordered Statistic. A unit-system selector at the top of the Results tab applies metric or English conversions to all displayed values. A variable selector chooses the FLARE scalar figure of merit (e.g. peak hot-pin clad temperature) and, when FLARECON results are present, a separate containment FOM selector is shown. The sub-tabs described below apply to both FLARE and FLARECON outputs.
+FOM Distribution
+The FOM Distribution sub-tab shows the time-series overlay for the selected variable (all N samples plotted together with colour coding from lowest to highest), a histogram of the scalar FOM across all samples, a top-10 ordered values table, a Wilks confidence summary table (showing the confidence level beta for order statistics m = 1, 2, 3, 5, and 10 at coverage gamma = 95%), and an empirical CDF. When FLARECON outputs are present, a containment time-series overlay with its own variable selector, a containment scalar summary showing the maximum, mean, and minimum across samples, and H2 colour coding relative to the lower flammability limit (4 vol%) and detonable threshold (8 vol%) are also displayed. A caption directs the user to the Importance Analysis and Ordered Statistic tabs for the complete statistical synthesis.
+Importance Analysis
+The Importance Analysis sub-tab applies the stepwise multiple-regression method described by Martin (Nucl. Technol. 175, 2011) to decompose the total output variance into contributions from individual sampled inputs. The theory is documented in Section 8.10 of the Code Theory Manual. The user selects the Student-t confidence level (defaulting to the two-sided 97.5% level, which is equivalent to the one-sided 95% level used for Wilks). FLARE computes the minimum correlation threshold r_min from that level and the sample size n, using Eq. (8.35) of the Code Theory Manual.
+Four key performance indicator tiles are displayed: the actual standard deviation of the selected FOM across all samples (sigma_o), the convolution estimate of the standard deviation from the accepted contributors (sqrt(Sum Var), Eq. 11 of Martin 2011), the ratio of the convolution estimate to the actual standard deviation (Eq. 12), and the residual standard deviation not explained by the accepted contributors. A ratio of 0.90 or above is generally satisfactory. A ratio below 0.90 indicates that additional contributors may exist below the stopping threshold, suggesting a larger sample size.
+The stepwise regression table lists each accepted contributor in order of importance with its Pearson correlation coefficient, delta-standard-deviation contribution, polynomial fit degree (1 or 2, selected by adjusted R-squared), and adjusted R-squared. A terminal stopping row is included to show which parameter caused the regression to halt and its correlation relative to the threshold. A tornado bar chart ranks the accepted contributors by delta-standard-deviation. A second bar chart shows the absolute correlation for each contributor against the threshold line. Scatter plots with the polynomial fit curve are shown for each accepted contributor, with residual output on the vertical axis for steps after the first.
+When FLARECON outputs are present, a FLARECON Importance Analysis section appears below the FLARE section within the same sub-tab. It repeats the same analysis for the selected containment FOM using an independent Student-t threshold control. Each FLARECON scalar (containment pressure, containment gas temperature, H2 concentration, sump level) is analysed separately when present.
+Ordered Statistic
+The Ordered Statistic sub-tab displays the top-20 ordered values as a connected scatter plot with a user-selectable order statistic m highlighted by a star marker. Three summary tiles show the m-th order-statistic value, the Wilks confidence beta at coverage 95% for the current n and m, and the maximum observed value (m = 1). The Wilks confidence tile is coloured green when beta is at or above 95% (indicating that the 95/95 criterion is met) and red when below. A curve of beta versus m (for m = 1 through 10) is shown alongside the ordered values plot, with a dotted reference line at beta = 95%. A minimum-n reference table at the bottom of the sub-tab shows the sample size required to achieve 95/95 for m = 1, 2, 3, 10, 40, and 100.
+When FLARECON outputs are present, a FLARECON Ordered Statistics section appears below the FLARE section. It applies the same ordered-statistic and Wilks analysis to each selected containment FOM. For H2 concentration, horizontal dashed reference lines at the lower flammability limit (4 vol%) and the detonable threshold (8 vol%) are overlaid on the ordered values plot.
+AI Uncertainty Narrative
+An AI Uncertainty Narrative expander appears at the bottom of the Results tab. The narrative is section-by-section (matching the same generation architecture used in the PWR Simulator) and draws on the full statistical results: the selected FLARE and FLARECON FOMs, the sample population summaries, the complete stepwise regression table, the Wilks order-statistic results for m = 1, 2, and 3, Pearson cross-check correlations, and the sampled input matrix. The narrative detail slider controls the number of sections generated and the word target for each, following the same 21-level scale used in the PWR Simulator. At detail levels below 0.15, a compact two-section abstract is generated. At higher detail levels the narrative is expanded to include dedicated sections on the FOM distribution and ordered statistics, importance analysis and uncertainty drivers, FLARECON containment FOM results when present, and a GDC support conclusion. A Clear button discards the stored narrative without affecting the statistical results. The narrative can be downloaded as a Markdown file.
+Note: For Wilks use, the most important results are the sorted scalar figures-of-merit and the selected order statistic displayed in the Ordered Statistic sub-tab. Confirm that the sampling is independent and that no samples were rejected due to input combinations outside the valid model range before invoking a Wilks tolerance claim. The importance analysis is a post-processing diagnostic; it does not affect the Wilks statistical interpretation of the output distribution.
+7.4 Durable Worker Execution
+UA runs execute through flare_ua_worker.py. The UI writes a configuration JSON, starts the worker, and monitors a status JSON file in a timestamped ua_{case}_{timestamp} folder. This prevents browser refreshes from terminating the calculation. If a UA run stops early, inspect the per-sample log associated with the first failed sample. Many failures are caused by an input realization that pushes a property lookup, timestep, or correlation outside its valid range.
+7.5 Output Files
 ua_{case}_{YYYYMMDD_HHMMSS}/
   ua_{case}_results.csv     -- scalar results for all samples
   ua_{case}_samples.csv     -- sampled parameter values
   ua_{case}_N_out.csv       -- time-series output for sample N
   sample_N.log              -- console log for sample N
-
-## flare_ua_variables.json Fields
-
-label        -- human-readable variable name in the sidebar
-distribution -- uniform, normal, lognormal, or triangular
-base         -- base or mode value
-p1           -- lower bound (uniform/triangular) or mean (normal/lognormal)
-p2           -- upper bound (uniform/triangular) or standard deviation (normal/lognormal)
-help         -- tooltip text
-
-## Default Uncertain Variables
-
-Variable           Distribution  Default range           Physical basis
-F_r                uniform       1.2 - 1.45              Radial hot-channel factor uncertainty
-F_z                uniform       1.45 - 1.65             Axial peaking variation over core life
-total_power        normal        mu=575, sigma=10 MW     Calorimetric power measurement (~1-2%)
-diameter_break     uniform       0.15 - 0.25 m           Break spectrum uncertainty
-Cd_sub             uniform       0.85 - 1.0              Subcooled discharge coefficient
-k_fuel             uniform       2.5 - 3.5 W/mK          UO2 conductivity degradation with burnup
-h_gap              uniform       3000 - 9000 W/m2K       Largest single fuel-temperature contributor
-delta_clad         uniform       0.0005 - 0.00065 m      Cladding thickness manufacturing tolerance
-
-
-# CHAPTER 8 — RISK ASSESSMENT
-
-The Risk Assessment tool maps FLARE case results onto a frequency-consequence (F-C) chart. The user supplies event frequencies; FLARE calculates consequences using NOTBADTRAD; the tool plots each case against the NEI 18-04-style design objective boundary.
-
-## Overview
-
-Each chart point represents a FLARE case. Horizontal axis: consequence = total EAB TEDE = D_accident,EAB + D_iodine-spike,EAB. Vertical axis: event frequency [events/yr] supplied by the user, stored in flare_pra_table.csv.
-
-## Setting Up the Case Library
-
-The Risk tool discovers CaseName_in.xlsx files in the FLARE folder. Assign a frequency to each case. Cases must include nbt_ parameters for dose calculation. Run each case individually before adding to a risk batch.
-
-## Running and Reviewing Results
-
-Click Run Risk Model. The resulting F-C chart displays points against the design objective boundary. Below and to the left = favorable; above or to the right = examine in detail.
-
-An AI Risk Narrative can be generated from the results using the narrative expander below the F-C chart. It uses the same section-by-section generation approach as the PWR Simulator. The same 21-level detail slider controls length and scope: at low detail, a short summary of the event set and dominant F-C contributors; at high detail, coverage of each event category, margin to the design objective boundary, frequency and consequence uncertainty, and risk-informed conclusions. Downloadable as Markdown.
-
-## F-C Chart Boundary (log-log interpolated)
-
-EAB dose [rem]    Frequency [events/yr]    Category
-0.01              10                        Screening region
-0.1               1                         AOO to DBE transition
-1.0               0.1                       DBE upper range
-1.0               0.01                      DBE lower range
-25                1e-4                      BDBE upper range
-1000              5e-7                      BDBE lower range
-
-## Durable Worker
-
-Risk Assessment uses flare_risk_worker.py in a timestamped risk_{timestamp} folder. If one case fails, inspect that case's log before assuming the full risk calculation failed. Previous-run results can be reloaded from the sidebar without re-running.
-
-
-# CHAPTER 9 — CASE SETUP GUIDE
-
-## General Case-Building Workflow
-
-1. Choose a descriptive case name (no spaces; e.g. CaseSBLOCA_2in_HPSI).
-2. Set initial power, pressure, temperature, inventory, core geometry, and safety-system availability.
-3. Define the initiating event: break size, pump trip, reactivity insertion, LOHS, boron dilution.
-4. Run in the PWR Simulator with figures enabled.
-5. Review sequence-of-events timing, pressure, inventory, cooling, source term, and containment.
-6. Only after baseline behaves as intended, use in UA, Risk, or Run All Cases.
-
-## LOCA Cases
-
-Key parameters: diameter_break, t_break, pressure_kPa, total_power, core_flag, hpsi_mdot_rated, lpsi_mdot_rated, Slip_model = 'Fauske'.
-
-After first run, confirm: break flow starts at intended time, RCS pressure decreases plausibly, accumulator injection begins when RCS pressure falls below accumulator pressure, pumped SI is available after ESFAS and actuation delays, vessel level and core temperature trends are consistent.
-
-NOTE: The default PORV setpoint is effectively disabled (~22000 kPa). For LOCA cases this is often intentional; for overpressure or LOHS cases it is not. Set PORV_setpoint_kPa and PORV_area_m2 explicitly whenever PORV operation is part of the scenario.
-
+7.6 flare_ua_variables.json
+The UA parameter catalogue is stored in Runtime\flare_ua_variables.json. The Edit parameter catalogue button opens a form-based JSON editor that can add parameters discovered in the selected workbook, edit distribution type and bounds, revise help text, assign optional worksheet routing such as FLARECON, delete entries, insert section markers, and reorder parameters. On Save and Close, the displayed order is preserved in the JSON object insertion order.
+JSON key | Purpose
+label | Human-readable variable name displayed in the sidebar.
+distribution | Sampling distribution: uniform, normal, lognormal, or triangular.
+base | Base or mode value used for documentation and some distribution parameterizations.
+p1 | First distribution parameter: lower bound (uniform/triangular) or mean (normal/lognormal).
+p2 | Second distribution parameter: upper bound (uniform/triangular) or standard deviation (normal/lognormal).
+help | Tooltip text explaining the variable and its intended use.
+sheet | Optional worksheet routing field. Use FLARECON for containment parameters that are written to the FLARECON worksheet during sampled-case generation.
+_note | Optional section-marker text used by the JSON editor to display headings such as FLARECON or Additional parameters.
+Table 7-1. flare_ua_variables.json field definitions.
+7.7 Default Uncertain Variables
+The default catalog in flare_ua_variables.json includes the following variables as representative examples. The user should review and adjust distributions to match the analysis objectives.
+Variable | Distribution | Default range | Physical basis
+F_r | uniform | 1.2 – 1.45 | Radial hot-channel factor manufacturing and burnup uncertainty.
+F_z | uniform | 1.45 – 1.65 | Axial peaking variation over core life.
+total_power | normal | μ=575, σ=10 MW | Calorimetric power measurement uncertainty (∼1–2%).
+diameter_break | uniform | 0.15 – 0.25 m | Break spectrum uncertainty.
+Cd_sub | uniform | 0.85 – 1.0 | Subcooled discharge coefficient (NUREG validation range).
+k_fuel | uniform | 2.5 – 3.5 W/m·K | UO₂ conductivity degradation with burnup.
+h_gap | uniform | 3000 – 9000 W/m²K | Largest single fuel-temperature uncertainty contributor.
+delta_clad | uniform | 0.0005 – 0.00065 m | Cladding thickness manufacturing tolerance.
+Table 7-2. Default UA variable catalog.
+Chapter 8 — Risk Assessment
+The Risk Assessment tool maps FLARE case results onto a frequency-consequence chart. It is designed for rapid comparison of event categories and mitigation options, not for a complete probabilistic risk assessment. The user supplies event frequencies, FLARE calculates consequences using the NOTBADTRAD dose model, and the tool plots each case relative to the NEI 18-04-style design objective boundary.
+8.1 Overview
+Each point on the F-C chart represents a complete FLARE case. The horizontal coordinate is consequence, expressed as total EAB TEDE. The vertical coordinate is event frequency, supplied by the user and stored in Runtime\flare_risk_frequencies.json. The total EAB dose plotted is the sum of the accident source-term dose and the iodine-spike dose:
+D_total,EAB = D_accident,EAB + D_iodine-spike,EAB
+8.2 Setting Up the Case Library
+The Risk tool discovers CaseName_in.xlsx files in the selected Working Folder and allows the user to assign a frequency to each case. Frequencies are saved in Runtime\flare_risk_frequencies.json, and a Working Folder copy of flare_risk_frequencies.json is copied into Runtime\ when that folder is selected. Cases used for risk plotting should include the NBT parameters needed for dose calculation. Run each case individually before adding it to a risk batch so that input problems do not obscure risk-tool behavior.
+8.3 Running and Reviewing Results
+Click Run Risk Model to execute the selected case library. The UI shows progress and per-case console logs. The resulting F-C chart displays points against the design objective boundary. A case below and to the left of the boundary is favorable relative to the screening curve; a case above or to the right should be examined in more detail.
+An AI Risk Narrative can be generated from the results using the narrative expander below the F-C chart. The narrative uses the same section-by-section generation approach as the PWR Simulator: each section is produced by a separate API call and displayed as it completes. The detail slider (21 levels, 0.00 to 1.00) controls the target length and the number of sections. At low detail the narrative summarises the event set and the dominant F-C chart contributors in a short report. At high detail it expands to cover each event category, margin relative to the design objective boundary, frequency and consequence uncertainty, and risk-informed conclusions. The narrative can be downloaded as a Markdown file.
+8.4 F-C Chart Boundary
+EAB dose [rem] | Frequency [events/yr] | Interpretive category
+0.01 | 10 | Screening region
+0.1 | 1 | AOO to DBE transition
+1.0 | 0.1 | DBE upper range
+1.0 | 0.01 | DBE lower range
+25 | 1×10⁻⁴ | BDBE upper range
+1000 | 5×10⁻⁷ | BDBE lower range
+Table 8-1. Frequency-consequence boundary points used by the Risk tool.
+8.5 Durable Worker Execution and Logs
+Risk Assessment uses flare_risk_worker.py. The worker creates a timestamped risk_{timestamp} folder, executes the selected cases, writes per-case logs, aggregates dose results, and generates F-C chart data. If one case fails, inspect that case’s log before assuming the risk calculation failed as a whole. Previous-run results can be reloaded from the sidebar without re-running the case library.
+Chapter 9 — Case Setup Guide
+This chapter provides practical guidance for building useful FLARE cases. It is organized by event class. Each section explains the physical intent of the case, identifies the key input parameters, gives a representative input block, and describes what the user should check after the first run. The example values are starting points, not validated plant-specific inputs.
+9.1 General Case-Building Workflow
+Choose a descriptive case name such as CaseSBLOCA_2in_HPSI or CaseLOHS_PORV.
+Set the initial power, pressure, temperature, inventory, core geometry, and safety-system availability.
+Define the initiating event: break size, pump trip, reactivity insertion, loss of heat sink, boron dilution, or other forcing.
+Run the case in the PWR Simulator with figures enabled.
+Review sequence-of-events timing, pressure response, inventory trend, core cooling, source-term indicators, and any containment response.
+Only after the baseline behaves as intended, use the case in UA, Risk, or Run All Cases.
+9.2 LOCA Cases
+A LOCA case is defined primarily by break size, break timing, system pressure, ECCS availability, accumulator behavior, and decay heat. For a large-break LOCA, the dominant early behavior is depressurization and inventory loss. For a small-break LOCA, the timing of accumulator injection, HPSI, LPSI, PORV behavior, and steam-generator heat removal may be more important.
+diameter_break    = 0.22        # m, equivalent break diameter
+t_break           = 0.0         # s, break opening time
+pressure_kPa      = 14820       # kPa
+total_power       = 575         # MWt
+core_flag         = 1
+hpsi_mdot_rated   = 40.0        # kg/s
+lpsi_mdot_rated   = 80.0        # kg/s
+Slip_model        = 'Fauske'    # default LOCA slip option
+After the first LOCA run, confirm that break flow starts at the intended time, RCS pressure decreases plausibly, accumulator injection begins when RCS pressure falls below accumulator pressure, pumped SI is available after ESFAS and actuation delays, and vessel level and core temperature trends are consistent with the scenario. If PCT rises unexpectedly, inspect break flow, vessel level, core HTC, DNBR, decay heat, and SI flow together rather than focusing on PCT alone.
+Note: The default PORV setpoint is effectively disabled (set near the critical point). For LOCA cases this is often intentional; for overpressure or loss-of-heat-sink cases it is not. Set PORV_setpoint_kPa and PORV_area_m2 explicitly whenever PORV operation is part of the scenario.
+9.3 LOHS and Pump Trip Cases
+Loss-of-heat-sink and pump-trip cases test the interaction among primary flow coastdown, steam-generator heat removal, pressurizer response, PORV operation, and reactor trip logic. Unlike a LOCA, the primary system may remain intact, so pressure control and heat removal assumptions are especially important.
+pump_trip_time     = 0.0
+PORV_setpoint_kPa  = 16000
+PORV_reseat_kPa    = 15500
+PORV_area_m2       = 0.008
+scram_on_PORV      = 1
+pzr_area           = 3.0
+pzr_height         = 17.0
+pzr_level_init     = 11.0
+sg_nat_frac        = 0.05
+Review pressure, PORV mass flow, SG heat removal, pump speed, core power, and pressurizer level. The most common setup mistake is leaving the PORV at the disabling default setpoint. Another common issue is mixing old pressurizer pressure-hold parameters with the newer pressurizer level model; remove deprecated pzr_hold_kPa and pzr_pressure_hold inputs from older cases before interpreting results.
+9.4 RIA and Rod Ejection Cases
+RIA cases require a time-dependent external reactivity insertion entered in column F of the time-series table as rho_ext in pcm. The timestep should be small enough to resolve the insertion and the prompt power response. The Prompt Jump Approximation (pja_flag = 1) should be enabled for rapid sub-prompt-critical insertions. If prompt-critical behavior is being explored, the case should be treated as a screening demonstration.
+ria_flag           = 1
+pja_flag           = 1
+core_flag          = 1
+# Column F contains rho_ext(t) in pcm, peak near t = 0.
+After running an RIA case, inspect power, reactivity, fuel temperature, cladding temperature, and trip timing. A smooth-looking output can still miss the peak if the timestep or input table is too coarse. For narrow reactivity pulses, refine the time grid and compare peak power and deposited energy.
+9.5 ATWS Cases
+An ATWS case represents failure to scram following an anticipated transient. In FLARE, this typically means inhibiting automatic scram by setting full_power_flag = 1. Because ATWS outcomes depend strongly on heat removal, pressure relief, moderator feedback, and assumed operator or system action, document all model flags and boundary conditions clearly.
+full_power_flag    = 1          # hold power / inhibit automatic scram
+sg_flag            = 0          # example: loss of SG heat removal
+PORV_setpoint_kPa  = 16000
+PORV_area_m2       = 0.008
+Note: full_power_flag = 1 inhibits all automatic trip setpoints. Use it only when the ATWS scenario explicitly requires holding power. Do not leave it enabled in cases intended to represent normal trip response.
+9.6 Boron Dilution Cases
+Boron dilution cases use CVCS makeup flow to reduce boron concentration and introduce positive reactivity. These cases are sensitive to the assumed dilution flow, initial boron concentration, and reactivity coefficient. FLARE treats the effect as a reduced-order reactivity forcing problem.
+cvcs_kgs            = 5.0
+cvcs_boron_ppm      = 0.0         # unborated makeup
+cvcs_start_time_s   = 0.0
+alpha_boron_pcm_ppm = -10.0
+rcs_boron_ppm_init  = 1200.0      # ppm, initial RCS boron
+Check the reactivity history, core power, trip response, and CVCS flow timing. If the response is unexpectedly weak, verify the sign convention for alpha_boron_pcm_ppm and confirm that CVCS flow is active over the intended time interval.
+9.7 Dose and Risk Case Inputs
+Cases used in the Risk Assessment tool should include the nbt_ parameters described in Section 5.7. Both the consequence assumptions and the frequency basis should be recorded. After the first run, inspect the Source Term, Dose, and Iodine Spike sheets in the output workbook. Confirm that the case produces the intended release category and that zero-release cases are zero because of the modeled event, not because a source-term flag or inventory input is missing.
+When benchmarking a case against a published licensing dose (e.g. an FSAR or SSAR Chapter 15 result), set nbt_burnup_gwdmtu to the plant-specific burnup, set nbt_chi_q_eab and nbt_chi_q_lpz to the site PAVAN values for the same receptor distances and time periods used in the licensing calculation, and disable spray credit (nbt_sprays_on = False) unless the licensing calculation explicitly takes spray credit. Differences that remain after matching these inputs are generally attributable to the group-level, NUREG-1465-based source term and FGR-weighted dose conversion factors, and should not be removed with nbt_calibrate without documenting the comparison.
+9.8 Adding a FLARECON Containment Model
+To add containment response analysis, add a FLARECON sheet to the input workbook. The minimum model defines free volume, floor area, wall area, initial pressure, initial temperature, wall temperature, run time, timestep, and source mode.
+DESIGN PARAMETERS
+air_volume_m3       = 10000     # free gas volume [m³]
+floor_area_m2       = 435.6     # floor area [m²]
+wall_surf_area_m2   = 2585      # liner/wall area [m²]
+INITIAL CONDITIONS
+P0_kPa              = 101.325
+T0_C                = 27.0
+T_wall0_C           = 27.0
+RUN CONTROL AND SOURCE OPTIONS
+endtime             = 86400     # s, 24 hours
+timestep            = 2.0
+source_mode         = 'flare_then_decay_steam'
+SPRAY OPTIONS
+spray_from_flare_nbt = True
+spray_effectiveness  = 0.8
+Review containment pressure, gas temperature, wall temperature, sump level, hydrogen concentration, steam concentration, and the Shapiro diagram. For long containment runs, use the Plant Analyzer Step skip control to accelerate visual playback.
+9.9 First-Run Acceptance Checks
+Check | Question to answer
+Initial state | Do pressure, temperature, power, inventory, and levels match the intended plant condition?
+Initiating event | Does the break, pump trip, reactivity insertion, or heat-sink loss occur at the intended time?
+Protection signals | Do trip, ESFAS, SI, PORV, and spray signals latch as expected?
+Mass and energy trends | Are pressure, break flow, SG heat removal, and inventory physically consistent?
+Fuel response | Are PCT, DNBR, ECR, and hydrogen trends consistent with the cooling history?
+Source term and dose | Are releases present only when intended, and are zero-release cases understandable?
+Containment response | Do pressure, temperature, steam, hydrogen, spray, and sump trends make sense together?
+Output files | Were workbook, CSV, CON CSV, logs, plots, and reports created where expected?
+Table 9-1. Recommended first-run review checks.
+Chapter 10 — Output Reference
+FLARE creates several output products for different purposes. This chapter explains the principal output files and gives guidance for interpreting common values that may otherwise appear anomalous.
+10.1 RCS Output Workbook
+The Excel output workbook is the most complete single-file record of an RCS calculation. It contains the full time series, summary quantities, source-term tables, dose tables, iodine-spike information, and an input echo.
+Sheet | Contents
+Sheet1 | Full time-series output, matching the CSV columns.
+Summary | Scalar peaks, rod failure counts, and source-term summary values.
+Source Term | Reduced radionuclide group inventories, release fractions, and released activity.
+Dose | EAB, LPZ, and control-room TEDE dose by group with limit comparisons, plus a TEDE-versus-distance table evaluated from the Pasquill-Gifford model.
+Iodine Spike | Equilibrium and accident-initiated iodine spike dose contributions.
+Input Echo | Snapshot of the executed command block.
+Table 10-1. RCS output workbook sheets.
+10.2 RCS CSV Output Columns
+The CaseName_out.csv file is written before any Excel or plotting work, so a crash in post-processing still leaves a readable output file. The following table lists the principal CSV columns.
+Column | Units | Description
+Time (s) | s | Simulation time.
+RCS Pressure (kPa) | kPa | Lumped RCS total pressure.
+RCS Temperature (K) | K | Bulk coolant temperature.
+Break Flow (kg/s) | kg/s | Mass flow out of the break.
+Break Enthalpy (kJ/kg) | kJ/kg | Specific enthalpy of the break discharge.
+Accumulator Flow (kg/s) | kg/s | Mass flow from the accumulator.
+HPSI Flow (kg/s) | kg/s | HPSI pumped injection flow.
+LPSI Flow (kg/s) | kg/s | LPSI pumped injection flow.
+CVCS Flow (kg/s) | kg/s | Net CVCS makeup/letdown flow.
+Total Mass Scaled | — | RCS total mass normalized to initial inventory.
+Vessel Level (m) | m | Collapsed liquid level in the reactor vessel.
+Accumulator Level (m) | m | Accumulator liquid level.
+Core Power (MW) | MW | Net core heat transfer rate.
+RK Total Power (MW) | MW | Point-kinetics fission + decay heat rate.
+Pump Speed (rpm) | rpm | RCP shaft speed.
+Pump Mass Flow (kg/s) | kg/s | Coolant mass flow through the core.
+SG Heat Removal (MW) | MW | Steam-generator heat removal rate.
+Equilibrium Quality (-) | — | Bulk equilibrium steam quality.
+Void Fraction (-) | — | Bulk void fraction.
+Clad Surface Temp (K) | K | Average core cladding surface temperature (slab solve result).
+Hot Pin Clad Temp (K) | K | Peak cladding temperature on the hot pin.
+Hot Pin Fuel Temp (K) | K | Peak fuel centerline temperature on the hot pin.
+Fuel Avg Temp (K) | K | Core-average fuel temperature.
+Clad HTC (W/m2-K) | W/m²K | Applied core heat-transfer coefficient.
+DNBR | — | Departure from nucleate boiling ratio. NaN when correlation is not applicable.
+CHF Heat Flux (MW/m2) | MW/m² | Critical heat flux at the hot-pin location.
+Hot Pin Heat Flux (MW/m2) | MW/m² | Actual hot-pin heat flux.
+PORV Mass Flow (kg/s) | kg/s | PORV discharge flow.
+Pressurizer Level (m) | m | Pressurizer liquid level diagnostic.
+Reactivity scram (pcm) | pcm | Scram rod reactivity contribution.
+Reactivity Boron (pcm) | pcm | Boron dilution/injection reactivity.
+Reactivity Doppler (pcm) | pcm | Fuel Doppler feedback reactivity.
+Reactivity Moderator (pcm) | pcm | Moderator temperature and void feedback.
+Reactivity net (pcm) | pcm | Net reactivity (all sources combined).
+RCS Boron (ppm) | ppm | RCS boron concentration.
+Zr Oxidation Hot Pin ECR (%) | % | Hot-pin equivalent cladding reacted (Baker-Just).
+Zr Oxidation Mean Oxidizing Rod ECR (%) | % | Core-average oxidizing rod ECR.
+H2 Generated (kg) | kg | Cumulative hydrogen from hot-pin oxidation.
+H2 Full Core Cladding Reaction (kg) | kg | Bounding H₂ assuming all cladding reacts.
+Rod Failures DNB (est.) | — | Estimated rod count with DNB failure.
+Rod Failures PCT (est.) | — | Estimated rod count exceeding cladding temperature limit.
+Rod Failures Gap (est.) | — | Estimated rod count with gap release.
+Rod Failures EarlyIV (est.) | — | Estimated rod count with Early In-Vessel failure.
+Table 10-2. Principal RCS CSV output columns.
+10.3 FLARECON Output
+FLARECON writes CaseName-CON.csv in the same run directory as the RCS output. The file contains the containment time history and is read by the PWR Simulator Containment Response tab and by the Plant Analyzer containment dome.
+Column | Units | Description
+Time [s] | s | Simulation time.
+Pressure [kPa] | kPa | Containment total pressure.
+Gas Temp [C] | °C | Bulk gas temperature.
+Wall Temp Inner [C] | °C | Inner liner/wall surface temperature.
+Wet Floor/Sump Temp [C] | °C | Sump or wet-floor temperature.
+Sump Level [m] | m | Calculated sump liquid level.
+H2 Concentration [vol%] | vol% | Hydrogen concentration in gas phase.
+Steam Concentration [vol%] | vol% | Steam concentration in gas phase.
+Wall Heat Removal [W] | W | Heat removal to wall/liner by condensation.
+Spray Heat Removal [W] | W | Heat removal by containment spray.
+Source mdot [kg/s] | kg/s | Mass source from RCS break or source-mode model.
+Table 10-3. Selected FLARECON output columns.
+10.4 DNBR Output Interpretation
+DNBR and CHF Heat Flux are set to NaN or blank when core mass flux is below the validity range of the CHF correlations. This commonly occurs during pump coastdown or natural-circulation conditions. A NaN DNBR in that region does not mean DNB has occurred; it means the correlation is not being applied. Review cladding temperature and heat-transfer regime to interpret the cooling state.
+10.5 Conservation and Consistency Checks
+Useful consistency checks include total mass scaled, vessel collapsed level, break flow, injection flow, core power, steam-generator heat removal, and containment source mdot. For integrated cases, compare RCS break flow with FLARECON Source mdot to confirm the containment run is reading the expected source file. Remember that FLARECON is one-way coupled; differences due to containment back-pressure feedback are not represented.
+10.6 Appropriate Use of Results
+When using FLARE results externally, report the case name, input workbook version, major model flags, timestep, source-term option, containment option, and any sidebar overrides. FLARE results are most useful for scoping, sensitivity analysis, uncertainty demonstrations, risk-informed screening, methods comparison, and educational use. Avoid presenting FLARE output as a replacement for a plant-specific, validated evaluation model.
+Chapter 11 — Code Assessment and Model Limitations
+This chapter summarizes user-level consistency checks and the principal reduced-order limitations. It is not a formal code validation report. Instead, it helps users determine whether a calculation is internally consistent and whether the selected model is appropriate for the question being asked.
+11.1 Purpose of User-Level Assessment Checks
+A successful run only proves that the software completed and produced output. The user still must determine whether the input represents the intended scenario and whether the output is physically plausible. Basic checks include confirming event timing, latching signals, mass and energy trends, source-term activation, and containment response. These checks should be performed before using a case in batch processing or external reporting.
+11.2 Principal Reduced-Order Limitations
+The RCS model is a single homogeneous-equilibrium control volume. It cannot resolve axial void distribution, counter-current flow limitation, hot-leg condensation, multidimensional vessel refill, detailed reflood, or local subchannel effects. The hot-channel, rod-state, oxidation, source-term, and dose models are reduced-order post-processors driven by the lumped thermal-hydraulic solution. FLARECON is also single-node and one-way coupled. These simplifications are appropriate for screening and methods demonstrations but not for replacing detailed licensing models.
+Model | Limitation
+RCS thermal-hydraulics | Single homogeneous-equilibrium node. No axial resolution, no counter-current flow, no hot-leg condensation.
+Break flow | Fauske/HEM/Moody critical-flow correlation. No stratification, no pipe flow dynamics.
+Core heat transfer | Single slab per pin (average and hot pin). No subchannel, no reflood model.
+Decay heat | ANS-5.1-2014 correlation. Column C override replaces it entirely.
+Pump model | Reduced affinity-law homologous pump with exponential coastdown. No reverse flow.
+FLARECON | Single well-mixed gas node. No local stratification, no flame propagation, one-way coupled from RCS.
+Dose model (NOTBADTRAD) | Embedded Pasquill-Gifford dispersion (stability classes A–F) with independent EAB/LPZ/control-room integration periods, or direct site-specific χ/Q override (nbt_chi_q_eab, nbt_chi_q_lpz, nbt_chi_q_cr). No ARCON96/PAVAN-equivalent processing of joint-frequency meteorological data and no time-varying meteorology.
+Source term | RG 1.183 group release fractions scaled by reduced-order failure model and by nbt_burnup_gwdmtu. Group dose conversion factors are FGR-11/FGR-12 activity-weighted constants. No nuclide-level transport or time-evolving dose conversion factors.
+Table 11-1. Principal model limitations.
+11.3 Appropriate Use Boundaries
+Use FLARE when transparency, speed, trend comparison, and sensitivity exploration are more important than spatial fidelity. Do not use FLARE where the conclusion depends on local multidimensional flow, detailed fuel mechanics, detailed nuclide transport, site-specific meteorology, or dynamic coupling between containment pressure and RCS break flow. When communicating results, state the reduced-order nature of the model plainly.
+Chapter 12 — Troubleshooting
+The fastest troubleshooting path is usually to reproduce the problem with a single case, inspect the console log or run-folder log, and then simplify the input until the failing behavior is isolated.
+12.1 Common Errors
+Error or symptom | Likely cause | Fix
+PermissionError on input file | OneDrive lock or workbook open in Excel | Pause sync, close Excel, or move the FLARE folder outside OneDrive.
+Tool file not found on Home page | Missing Python module in FLARE folder | Copy the missing .py file into the working directory.
+NaN in all columns after a time step | Property lookup out of range or unstable input | Check pressure and enthalpy range, reduce timestep, or reduce extreme boundary forcing.
+DNBR = NaN throughout | Mass flux below CHF correlation validity range | Normal at very low flow; review cladding temperature instead.
+PORV never opens | Setpoint left at disabling default (~22000 kPa) | Set PORV_setpoint_kPa and PORV_area_m2 explicitly.
+API key not configured | Runtime/flare_config.txt missing or malformed | Enter the key on the Home page or create the file manually.
+UA produces no results | Base case or first sample fails | Run the base case manually and inspect the sample_0.log.
+Plant Analyzer shows no data | CSV file not selected or missing | Select the correct _out.csv file from the sidebar.
+Containment dome shows no data | No matching CaseName-CON.csv | Run with a FLARECON sheet or verify the paired filename.
+FLARECON does not run | Input workbook lacks FLARECON sheet | Add a sheet named exactly FLARECON (case-sensitive).
+Startup case has continuous PORV relief | Total_Mass_init_kg not set; vessel over-fills with cold water | Set Total_Mass_init_kg to the hot full-power inventory and enable pzr_control_enabled.
+Break flow does not start at t=0 | t_break set to a positive value | Verify t_break = 0 if break is intended from start.
+Table 12-1. Common errors and fixes.
+12.2 Tips for LOHS and Pump Trip Cases
+Set PORV_setpoint_kPa and PORV_area_m2 explicitly.
+Enable a pressurizer model (pzr_area, pzr_height, pzr_level_init) when pressure-control behavior matters.
+Use scram_on_PORV = 1 only when PORV opening is intended to initiate scram.
+Set sg_nat_frac to represent post-trip natural-circulation heat removal.
+Set sg_trip_isolation_enabled = 1 (default) to isolate forced SG flow after reactor trip while retaining natural circulation.
+Remove deprecated pzr_hold_kPa and pzr_pressure_hold inputs from older input files.
+12.3 Tips for LOCA Cases
+Use the intended slip model and document the choice (Fauske for LOCA is the default).
+Set HPSI and LPSI rated flows deliberately; defaults of zero disable pumped injection.
+Confirm accumulator gas volume, total volume, and initial inventory before interpreting refill timing.
+Review vessel level and heat-transfer regime together with PCT.
 For cold-leg breaks, consider post_chf_model = 'cold_leg' to represent film boiling at flow stagnation.
-
-## LOHS and Pump Trip Cases
-
-Key parameters: pump_trip_time, PORV_setpoint_kPa, PORV_reseat_kPa, PORV_area_m2, scram_on_PORV, pzr_area, pzr_height, pzr_level_init, sg_nat_frac.
-
-Most common setup mistake: leaving the PORV at the disabling default setpoint. Another common issue: mixing old pressurizer pressure-hold parameters with the newer pressurizer level model. Remove deprecated pzr_hold_kPa and pzr_pressure_hold inputs from older cases.
-
-## RIA and Rod Ejection Cases
-
-Enable ria_flag = 1 and pja_flag = 1. Enter rho_ext(t) [pcm] in column F of the time-series table. The timestep must be small enough to resolve the insertion and prompt power response. Review power, reactivity, fuel temperature, cladding temperature, and trip timing.
-
-## ATWS Cases
-
-Use full_power_flag = 1 to inhibit automatic scram. Document all model flags and boundary conditions. full_power_flag = 1 inhibits all automatic trip setpoints -- do not leave it enabled in cases intended to represent normal trip response.
-
-## Boron Dilution Cases
-
-Key parameters: cvcs_kgs, cvcs_boron_ppm = 0 (unborated), cvcs_start_time_s, alpha_boron_pcm_ppm, rcs_boron_ppm_init. Set si_fill_threshold = 1.0 to disable SI pump flow degradation for intact-RCS conditions.
-
-## Dose and Risk Case Inputs
-
-Include nbt_ parameters (Chapter 5). After the first run, inspect the Source Term, Dose, and Iodine Spike sheets in the output workbook. Confirm that zero-release cases are zero because of the modeled event, not because a source-term flag or inventory input is missing.
-
-## Adding a FLARECON Containment Model
-
-Add a FLARECON sheet to the input workbook. Minimum model defines free volume, floor area, wall area, initial conditions, run time, timestep, and source mode. See Chapter 13 for full parameter reference.
-
-## First-Run Acceptance Checks
-
-Initial state: pressure, temperature, power, inventory, and levels match intended plant condition?
-Initiating event: break, pump trip, reactivity insertion, or heat-sink loss occurs at intended time?
-Protection signals: trip, ESFAS, SI, PORV, spray signals latch as expected?
-Mass and energy trends: pressure, break flow, SG heat removal, inventory physically consistent?
-Fuel response: PCT, DNBR, ECR, hydrogen trends consistent with cooling history?
-Source term and dose: releases present only when intended?
-Containment response: pressure, temperature, steam, hydrogen, spray, sump trends make sense together?
-Output files: workbook, CSV, CON CSV, logs, plots, reports created where expected?
-
-
-# CHAPTER 10 — OUTPUT REFERENCE
-
-## RCS Output Workbook (CaseName_out.xlsx)
-
-Sheet         Contents
-Sheet1        Full time-series output, same columns as CSV
-Summary       Scalar peaks, rod failure counts, source-term summary
-Source Term   Group inventories, release fractions, released activity
-Dose          EAB, LPZ, and control-room TEDE dose by group with limit comparisons
-Iodine Spike  Equilibrium and accident-initiated iodine spike dose contributions
-Input Echo    Snapshot of the executed command block
-
-## Principal RCS CSV Columns
-
-Column                          Units      Description
-Time (s)                        s          Simulation time
-RCS Pressure (kPa)              kPa        Lumped RCS total pressure
-RCS Temperature (K)             K          Bulk coolant temperature
-Break Flow (kg/s)               kg/s       Mass flow out of the break
-Break Enthalpy (kJ/kg)          kJ/kg      Specific enthalpy of break discharge
-Accumulator Flow (kg/s)         kg/s       Mass flow from accumulator
-HPSI Flow (kg/s)                kg/s       HPSI pumped injection flow
-LPSI Flow (kg/s)                kg/s       LPSI pumped injection flow
-CVCS Flow (kg/s)                kg/s       Net CVCS makeup/letdown flow
-Total Mass Scaled               --         RCS total mass normalized to initial inventory
-Vessel Level (m)                m          Collapsed liquid level in reactor vessel
-Accumulator Level (m)           m          Accumulator liquid level
-Core Power (MW)                 MW         Net core heat transfer rate
-RK Total Power (MW)             MW         Point-kinetics fission + decay heat rate
-Pump Speed (rpm)                rpm        RCP shaft speed
-Pump Mass Flow (kg/s)           kg/s       Coolant mass flow through the core
-SG Heat Removal (MW)            MW         Steam-generator heat removal rate
-Equilibrium Quality (-)         --         Bulk equilibrium steam quality
-Void Fraction (-)               --         Bulk void fraction
-Clad Surface Temp (K)           K          Average core cladding surface temperature
-Hot Pin Clad Temp (K)           K          Peak cladding temperature on the hot pin
-Hot Pin Fuel Temp (K)           K          Peak fuel centerline temperature on the hot pin
-Fuel Avg Temp (K)               K          Core-average fuel temperature
-Clad HTC (W/m2-K)               W/m2K      Applied core heat-transfer coefficient
-DNBR                            --         Departure from nucleate boiling ratio; NaN when not applicable
-CHF Heat Flux (MW/m2)           MW/m2      Critical heat flux at the hot-pin location
-Hot Pin Heat Flux (MW/m2)       MW/m2      Actual hot-pin heat flux
-PORV Mass Flow (kg/s)           kg/s       PORV discharge flow
-Pressurizer Level (m)           m          Pressurizer liquid level diagnostic
-Reactivity scram (pcm)          pcm        Scram rod reactivity contribution
-Reactivity Boron (pcm)          pcm        Boron dilution/injection reactivity
-Reactivity Doppler (pcm)        pcm        Fuel Doppler feedback
-Reactivity Moderator (pcm)      pcm        Moderator temperature and void feedback
-Reactivity net (pcm)            pcm        Net reactivity (all sources)
-RCS Boron (ppm)                 ppm        RCS boron concentration
-Zr Oxidation Hot Pin ECR (%)    %          Hot-pin equivalent cladding reacted (Baker-Just)
-Zr Oxidation Mean Rod ECR (%)   %          Core-average oxidizing rod ECR
-H2 Generated (kg)               kg         Cumulative hydrogen from hot-pin oxidation
-H2 Full Core Cladding (kg)      kg         Bounding H2 assuming all cladding reacts
-Rod Failures DNB (est.)         --         Estimated rod count with DNB failure
-Rod Failures PCT (est.)         --         Estimated rod count exceeding PCT limit
-Rod Failures Gap (est.)         --         Estimated rod count with gap release
-Rod Failures EarlyIV (est.)     --         Estimated rod count with Early In-Vessel failure
-
-## FLARECON Output (CaseName-CON.csv)
-
-Column                      Units     Description
-Time [s]                    s         Simulation time
-Pressure [kPa]              kPa       Containment total pressure
-Gas Temp [C]                deg C     Bulk gas temperature
-Wall Temp Inner [C]         deg C     Inner liner/wall surface temperature
-Wet Floor/Sump Temp [C]     deg C     Sump or wet-floor temperature
-Sump Level [m]              m         Calculated sump liquid level
-H2 Concentration [vol%]     vol%      Hydrogen concentration in gas phase
-Steam Concentration [vol%]  vol%      Steam concentration in gas phase
-Wall Heat Removal [W]       W         Heat removal to wall/liner by condensation
-Spray Heat Removal [W]      W         Heat removal by containment spray
-Source mdot [kg/s]          kg/s      Mass source from RCS break or source-mode model
-
-## DNBR Output Interpretation
-
-DNBR and CHF Heat Flux are NaN or blank when core mass flux is below the CHF correlation validity range. This commonly occurs during pump coastdown or natural-circulation conditions. A NaN DNBR does not mean DNB has occurred; it means the correlation is not being applied. Review cladding temperature and heat-transfer regime instead.
-
-## Appropriate Use of Results
-
-When using FLARE results externally, report: case name, input workbook version, major model flags, timestep, source-term option, containment option, and any sidebar overrides. FLARE results are most useful for scoping, sensitivity analysis, uncertainty demonstrations, risk-informed screening, methods comparison, and educational use.
-
-
-# CHAPTER 11 — CODE ASSESSMENT AND MODEL LIMITATIONS
-
-## Principal Reduced-Order Limitations
-
-Model                     Limitation
-RCS thermal-hydraulics    Single homogeneous-equilibrium node. No axial resolution, no counter-current flow, no hot-leg condensation.
-Break flow                Fauske/HEM/Moody critical-flow correlation. No stratification, no pipe flow dynamics.
-Core heat transfer        Single slab per pin (average and hot pin). No subchannel, no reflood model.
-Decay heat                ANS-5.1 correlation. Column C override replaces it entirely.
-Pump model                Reduced affinity-law homologous pump with exponential coastdown. No reverse flow.
-FLARECON                  Single well-mixed gas node. No local stratification, no flame propagation, one-way coupled from RCS.
-Dose model (NOTBADTRAD)   Gaussian dispersion with fixed meteorology. No site-specific variability.
-Source term               RG 1.183 group release fractions scaled by reduced-order failure model. No nuclide-level transport.
-
-## Appropriate Use Boundaries
-
-Use FLARE when transparency, speed, trend comparison, and sensitivity are more important than spatial fidelity. Do not use FLARE where the conclusion depends on local multidimensional flow, detailed fuel mechanics, detailed nuclide transport, site-specific meteorology, or dynamic coupling between containment pressure and RCS break flow.
-
-
-# CHAPTER 12 — TROUBLESHOOTING
-
-Error / symptom                                 Likely cause                              Fix
-PermissionError on input file                   OneDrive lock or Excel has file open      Pause sync, close Excel, move FLARE folder outside OneDrive
-Tool file not found on Home page                Missing .py file in FLARE folder          Copy the missing file into the working directory
-NaN in all columns after a time step            Property lookup out of range              Check P and h range; reduce extreme boundary forcing
-DNBR = NaN throughout                           Mass flux below CHF validity range        Normal at low flow; review cladding temperature instead
-PORV never opens                                Setpoint left at disabling default        Set PORV_setpoint_kPa and PORV_area_m2 explicitly
-API key not configured                          flare_config.txt missing or malformed     Enter key on Home page or create file manually
-UA produces no results                          Base case or first sample fails           Run base case manually; inspect sample_0.log
-Plant Analyzer shows no data                    CSV not selected or missing               Select correct _out.csv from sidebar
-Containment dome shows no data                  No matching CaseName-CON.csv              Run with a FLARECON sheet or verify paired filename
-FLARECON does not run                           FLARECON sheet missing or misnamed        Add sheet named exactly FLARECON (case-sensitive)
-Startup case has continuous PORV relief         Total_Mass_init_kg not set               Set Total_Mass_init_kg and enable pzr_control_enabled
-Break flow does not start at t=0                t_break set to positive value             Set t_break = 0 if break is intended from start
-UA fails on distribution validation             Lower >= upper, or sigma <= 0            Fix bounds in the variable editor before running
-UA sample fails mid-run                         Input pushes property lookup out of range Check per-sample log; the variable is held constant at base
-
-## Tips for LOHS and Pump Trip Cases
-
-- Set PORV_setpoint_kPa and PORV_area_m2 explicitly.
-- Enable a pressurizer model (pzr_area, pzr_height, pzr_level_init) when pressure-control behavior matters.
-- Use scram_on_PORV = 1 only when PORV opening should initiate scram.
-- Set sg_nat_frac to represent post-trip natural-circulation SG heat removal.
-- Remove deprecated pzr_hold_kPa and pzr_pressure_hold inputs from older cases.
-
-## Tips for LOCA Cases
-
-- Use the intended slip model and document the choice (Fauske is the default).
-- HPSI and LPSI rated flows default to zero -- set them explicitly.
-- Confirm accumulator gas volume, total volume, and initial inventory before interpreting refill timing.
-- Review vessel level and heat-transfer regime together with PCT.
-- For cold-leg breaks, consider post_chf_model = 'cold_leg'.
-
-## Tips for FLARECON Cases
-
-- Use endtime = 86400 s for long-term containment heat-up studies.
-- Use Step skip in the Plant Analyzer for 24-hour runs.
-- Confirm source_mode before interpreting post-blowdown steam addition.
-- Review both H2 concentration and steam concentration before interpreting flammability status.
-- Use the Shapiro diagram to understand the mixture trajectory, not only the peak.
-- Check that air_volume_m3 and wall_surf_area_m2 are consistent with the plant design.
-
-
-# CHAPTER 13 — FLARECON CONTAINMENT MODEL
-
-## Overview
-
-FLARECON is a single-node dry-containment response simulator. It tracks transient pressure, gas temperature, wall temperature, sump temperature, steam and hydrogen concentration, heat removal, and sump accumulation. It runs automatically when the input workbook contains a sheet named FLARECON and produces CaseName-CON.csv. The mathematical models are in Chapter 7 of the Code Theory Manual.
-
-## What FLARECON Models
-
-FLARECON tracks dry air, steam, and hydrogen masses in a well-mixed containment gas volume. RCS break flow and enthalpy provide the principal source during blowdown. Wall and floor heat transfer, condensation, containment spray, and optional long-term heat removal remove energy. Hydrogen from zirconium oxidation is injected as a noncondensable gas source.
-
-Wall condensation models: Uchida (1965) empirical heat-transfer model (default) or Diffusion Layer Model with Film/Mist (DLM-FM). The wall model includes a multi-layer finite-difference solver for the steel liner, an optional gap, and a concrete backing. Spray removal uses a Ranz-Marshall droplet heat-transfer model scaled by a lumped effectiveness parameter.
-
-## Key FLARECON Input Parameters
-
-Section                   Parameter               Default     Description
-DESIGN PARAMETERS         air_volume_m3           50000       Free gas volume [m3]
-DESIGN PARAMETERS         floor_area_m2           600         Projected floor area [m2]
-DESIGN PARAMETERS         wall_surf_area_m2        8000        Inner condensing wall/liner area [m2]
-DESIGN PARAMETERS         sump_area_m2            25          Engineered sump plan area [m2]
-DESIGN PARAMETERS         sump_depth_m            2.0         Sump depth before overflow [m]
-DESIGN PARAMETERS         wall_thickness_m        0.044       Steel liner thickness [m]
-DESIGN PARAMETERS         condensation_model      'uchida'    Model: 'uchida' or 'dlm_fm'
-DESIGN PARAMETERS         uchida_multiplier       1.0         Multiplier on condensation HTC (uncertainty range 0.5-1.5)
-DESIGN PARAMETERS         pcc_fraction            0.0         Fraction of wall with active outer cooling (0=adiabatic, 1=PCC)
-INITIAL CONDITIONS        P0_kPa                  101.325     Initial total pressure [kPa]
-INITIAL CONDITIONS        T0_C                    27.0        Initial gas temperature [deg C]
-INITIAL CONDITIONS        T_wall0_C               27.0        Initial wall/liner temperature [deg C]
-RUN CONTROL               endtime                 --          End time [s] (required)
-RUN CONTROL               timestep                --          Integration timestep [s] (required)
-RUN CONTROL               source_mode             'flare_then_decay_steam'  Source coupling mode
-SPRAY OPTIONS             spray_from_flare_nbt    False       Activate spray from FLARE NBT signal
-SPRAY OPTIONS             spray_effectiveness     0.80        Spray heat-transfer effectiveness
-SPRAY OPTIONS             spray_sauter_mean_um    500         Spray droplet Sauter mean diameter [um]
-
-## Source Modes
-
-source_mode                      Description
-flare_then_decay_steam           Default integrated mode. RCS break flow during blowdown, then decay-heat steam. Recommended for LOCA cases.
-flare_csv                        Uses only RCS CSV break-flow data for the full containment simulation.
-decay_steam                      Simplified decay-heat steam source; no RCS CSV needed.
-
-## Hydrogen Flammability Assessment
-
-FLARECON evaluates the steam-air-hydrogen mixture against a Shapiro-style flammability envelope:
-  Non-flammable or steam-inerted: H2 < 4 vol% or steam >= 55 vol%
-  Deflagration region: 4 to 75 vol% H2 and steam < 55 vol%
-  Detonation screening: 18 to 59 vol% H2 and steam < 35 vol%
-
-FLARECON flags envelope entry but does not simulate combustion, flame acceleration, pressure spikes, or thermal loads from hydrogen burning.
-
-## Limitations
-
-- Single well-mixed gas node; no local hydrogen stratification.
-- Containment pressure does not feed back to RCS break flow (one-way coupling).
-- Spray behavior is lumped effectiveness, not spray ring geometry.
-- Hydrogen combustion is assessed but not dynamically simulated.
-- Long-term heat removal uses wall conduction and spray only.
-
-
-# CHAPTER 14 — WORKER-PROCESS EXECUTION ARCHITECTURE
-
-## Why FLARE Uses Workers
-
-Run All Cases, UA, and Risk Assessment can take many minutes. Workers move the calculation into an independent process that writes status and output files independently of the browser session.
-
-## Common Worker Pattern
-
-Each worker: creates a timestamped output folder, writes configuration data, runs simulations, writes per-case logs, updates a status JSON file, and checks for an abort-request file between major steps.
-
-Worker                  Primary output structure
-flare_risk_worker       risk_{timestamp}/ -- status JSON, per-case logs, output workbooks, FLARE_risk_results.csv
-flare_ua_worker         ua_{case}_{timestamp}/ -- status JSON, samples CSV, results CSV, per-sample logs
-flare_sim_batch_worker  sim_{case}_{timestamp}/ folders per case plus control and status files
-
-## Monitoring, Abort, and Reload
-
-The UI monitors the status JSON. When an abort control is available, selecting it writes an abort-request file. If the browser appears stale, reload the page and use the previous-run selector. Check the run folder for current output files and the status JSON before concluding that the worker stopped.
-
-## Concurrency Guidance
-
-Avoid running Risk, UA, and Run All Cases simultaneously from the same FLARE folder. For simultaneous studies, copy the FLARE folder to separate working directories and run one major worker per directory.
-
-
-# APPENDIX A — QUICK START CHECKLIST
-
+12.4 Tips for FLARECON Cases
+Use endtime = 86400 s (24 hours) for long-term containment heat-up studies.
+Use Step skip in the Plant Analyzer for long containment transients.
+Confirm source_mode before interpreting post-blowdown steam addition.
+Review both hydrogen concentration and steam concentration before interpreting flammability status.
+Use the Shapiro diagram to understand the mixture trajectory, not only the peak value.
+Check that air_volume_m3 and wall_surf_area_m2 are consistent with the plant design; the defaults are for a large PWR.
+Chapter 13 — FLARECON Containment Model
+This chapter gives the user-facing description of the FLARECON containment model. It explains what FLARECON calculates, how it is connected to the RCS output, which inputs are most important, and how to interpret the containment output products. The mathematical theory is documented in the Code Theory Manual.
+13.1 Overview
+FLARECON is a single-node dry-containment response simulator. It tracks transient pressure, gas temperature, wall temperature, sump temperature, steam concentration, hydrogen concentration, heat removal, and sump accumulation. It runs automatically when the input workbook contains a sheet named FLARECON and produces CaseName-CON.csv.
+13.2 What FLARECON Models
+FLARECON tracks dry air, steam, and hydrogen masses in a well-mixed containment gas volume. RCS break flow and enthalpy provide the principal source during blowdown. Wall and floor heat transfer, condensation, containment spray, and optional long-term heat removal remove energy. Hydrogen generated by zirconium oxidation in the RCS calculation is injected as a noncondensable gas source.
+Wall condensation can use either the Uchida (1965) empirical heat-transfer model or the Diffusion Layer Model with Film/Mist (DLM-FM). The wall model includes a multi-layer finite-difference solver for the steel liner, an optional gap between liner and concrete, and a concrete backing. Spray removal is represented by a Ranz-Marshall droplet heat-transfer model scaled by a lumped effectiveness parameter.
+Sump accumulation is tracked by a reduced-order model that distinguishes engineered sump capacity and floor flood depth. Condensate draining from walls wets the full containment floor before standing liquid accumulates to sump overflow.
+13.3 FLARECON Input Parameters
+Section | Parameter | Default | Typical meaning
+DESIGN PARAMETERS | air_volume_m3 | 50000 | Free gas volume inside containment [m³].
+DESIGN PARAMETERS | floor_area_m2 | 600 | Projected containment floor area [m²].
+DESIGN PARAMETERS | wall_surf_area_m2 | 8000 | Total inner condensing wall/liner area [m²].
+DESIGN PARAMETERS | sump_area_m2 | 25 | Engineered sump plan area [m²].
+DESIGN PARAMETERS | sump_depth_m | 2.0 | Sump depth before overflow onto floor [m].
+DESIGN PARAMETERS | wall_thickness_m | 0.044 | Steel liner thickness [m].
+DESIGN PARAMETERS | condensation_model | 'uchida' | Condensation model: 'uchida' or 'dlm_fm'.
+DESIGN PARAMETERS | uchida_multiplier | 1.0 | Multiplier on condensation HTC (uncertainty: 0.5–1.5 for Uchida).
+DESIGN PARAMETERS | pcc_fraction | 0.0 | Fraction of wall with active outer cooling (0 = adiabatic, 1 = AP1000-style PCC).
+INITIAL CONDITIONS | P0_kPa | 101.325 | Initial total pressure [kPa].
+INITIAL CONDITIONS | T0_C | 27.0 | Initial gas temperature [°C].
+INITIAL CONDITIONS | T_wall0_C | 27.0 | Initial wall/liner temperature [°C].
+RUN CONTROL | endtime | — | Containment simulation end time [s].
+RUN CONTROL | timestep | — | Containment integration timestep [s].
+RUN CONTROL | source_mode | 'flare_then_decay_steam' | Source coupling mode (see Table 13-2).
+SPRAY OPTIONS | spray_from_flare_nbt | False | Activate spray based on FLARE NBT signal.
+SPRAY OPTIONS | spray_effectiveness | 0.80 | Spray heat-transfer effectiveness multiplier.
+SPRAY OPTIONS | spray_sauter_mean_diameter_um | 500 | Spray droplet Sauter mean diameter [μm].
+Table 13-1. Key FLARECON input parameters.
+13.4 Source Modes
+source_mode | Description
+flare_then_decay_steam | Default integrated mode. Uses RCS break flow during blowdown and transitions to a decay-heat steam source after depressurization. Recommended for LOCA cases.
+flare_csv | Uses only RCS CSV break-flow data for the full containment simulation. Suitable when the break flow CSV represents the complete source.
+decay_steam | Uses a simplified decay-heat steam source. Does not require RCS CSV output. Useful for standalone containment heat-up studies.
+Table 13-2. FLARECON source modes.
+13.5 Hydrogen Flammability Assessment
+FLARECON evaluates the steam-air-hydrogen mixture against a Shapiro-style flammability envelope. The output status is reported as non-flammable or steam-inerted, deflagration region, or detonation region. The model flags envelope entry but does not simulate combustion, flame acceleration, pressure spikes, or thermal loads from hydrogen burning. The Shapiro diagram in the PWR Simulator Containment Response tab shows the trajectory of the mixture over time.
+13.6 Limitations
+The gas volume is single-node and well-mixed. Local hydrogen stratification and local hot spots are not represented.
+Containment pressure does not feed back to RCS break flow.
+Spray behavior is represented by a lumped droplet effectiveness model, not spray ring geometry.
+Hydrogen combustion is assessed but not dynamically simulated.
+LHSI/RHR sump cooling is not explicitly modeled; long-term heat removal is represented by wall conduction and spray only.
+Chapter 14 — Worker-Process Execution Architecture
+Several FLARE operations are too long or too fragile to run purely as interactive browser tasks. The worker-process architecture lets the UI launch a separate process, monitor status files, and recover useful output even if the browser reloads. This chapter explains what the user should expect from worker-based operations and how to avoid conflicts.
+14.1 Why FLARE Uses Workers
+Run All Cases, Uncertainty Analysis, and Risk Assessment can take many minutes or longer. A browser tab or Streamlit session can refresh, disconnect, or become stale during that time. Workers reduce that fragility by moving the calculation into an independent process that writes status and output files to a run folder independent of the browser session.
+14.2 Common Worker Pattern
+Each worker follows the same pattern: create a timestamped output folder, write configuration data, run the required simulations, write per-case logs, update a status JSON file, and check for an abort-request file between major steps. This makes failed runs easier to diagnose because the inputs, logs, and partial outputs are preserved.
+Worker | Primary output structure
+flare_risk_worker.py | risk_{timestamp}/ with status JSON, per-case logs, output workbooks, and FLARE_risk_results.csv.
+flare_ua_worker.py | ua_{case}_{timestamp}/ with status JSON, samples CSV, results CSV, and per-sample logs.
+flare_sim_batch_worker.py | sim_{case}_{timestamp}/ folders for each case plus control and status files.
+Table 14-1. Worker processes and output structures.
+14.3 Monitoring, Abort, and Reload
+The UI monitors a worker by polling the status JSON in the run folder. When an abort control is available, selecting it writes an abort-request file that the worker checks between major steps. If the browser appears stale, reload the page and use the previous-run selector where available. Do not assume the worker stopped merely because the UI stopped updating; check the run folder for current output files and the status JSON.
+14.4 Concurrency Guidance
+Avoid running Risk, UA, and Run All Cases simultaneously from the same FLARE folder. These tools may contend for input files, output names, configuration files, or available memory. For simultaneous studies, copy the FLARE folder to separate working directories and run one major worker process per directory.
+Appendix A — Quick Start Checklist
+Use this checklist when setting up a new RCS case. The checklist is intentionally concise; detailed discussion appears in Chapter 9.
 1. System definition
-   pressure_kPa, temp_core_exit, total_power, loop_vol_m3
-
+pressure_kPa        # initial RCS pressure
+temp_core_exit      # core outlet temperature [°C]
+total_power         # rated thermal power [MWt]
+loop_vol_m3         # additional loop volume [m³]
 2. Break / initiating event
-   diameter_break, t_break, pump_trip_time (when applicable)
-
+diameter_break      # break diameter [m]; 0 = no break
+t_break             # break opening time [s]
+pump_trip_time      # RCP trip time when applicable [s]
 3. PORV
-   PORV_setpoint_kPa, PORV_area_m2, PORV_reseat_kPa
-
-4. Pressurizer (when pressure-control behavior matters)
-   pzr_area, pzr_height, pzr_level_init
-   pzr_control_enabled = 1 for startup/power-ascension cases
-
+PORV_setpoint_kPa   # opening setpoint
+PORV_area_m2        # throat area; 0 = disabled
+PORV_reseat_kPa     # reseating setpoint
+4. Pressurizer
+pzr_area, pzr_height, pzr_level_init   # when pressure-control matters
+pzr_control_enabled = 1                # for startup/power-ascension cases
 5. Core
-   core_flag = 1, F_r, F_z (~1.55 fresh core), h_gap
-
+core_flag = 1
+F_r                 # radial peaking factor
+F_z                 # axial peaking factor (~1.55 fresh core)
+h_gap               # fuel-clad gap conductance [W/m²K]
 6. Protection and ECCS
-   trip_P_lo_kPa, trip_P_hi_kPa, trip_delay
-   hpsi_mdot_rated (kg/s; 0 = disabled)
-   lpsi_mdot_rated (kg/s; 0 = disabled)
-   acc_gasvol, acc_totvol
-
+trip_P_lo_kPa, trip_P_hi_kPa, trip_delay
+hpsi_mdot_rated     # kg/s; 0 = disabled
+lpsi_mdot_rated     # kg/s; 0 = disabled
+acc_gasvol, acc_totvol  # accumulator geometry
 7. Dose and risk
-   source_term_model, nbt_distance_eab_m, nbt_containment_volume_ft3, nbt_leak_rate_frac_per_day
-
-8. Containment (add FLARECON sheet when needed)
-   air_volume_m3, wall_surf_area_m2, floor_area_m2
-   P0_kPa, T0_C, T_wall0_C
-   endtime (= 86400 s for long-term studies)
-   source_mode = 'flare_then_decay_steam' for LOCA
-   spray_from_flare_nbt = True
-
-
-# APPENDIX B — SIDEBAR OVERRIDE PARAMETERS
-
-Parameter          Label                    Description
-endtime            End time [s]             Simulation end time
-F_r                Radial peaking F_r       Radial hot-channel factor; drives hot-pin temperature and DNBR
-F_z                Axial peaking F_z        Axial peaking factor; ~1.55 for fresh core
-h_gap              Gap conductance [W/m2K]  Fuel-clad gap conductance; lower values raise fuel temperature
-trip_delay         Trip delay [s]           RPS signal-processing delay applied to all scram setpoints
-trip_power_frac    High-power trip frac     High-flux scram setpoint as fraction of rated power
-trip_P_lo_kPa      Low-P trip [kPa]         Low-pressure scram setpoint
-total_power        Rated power [MW]         Rated thermal power
-pressure_kPa       Initial pressure [kPa]  Initial RCS pressure
-temp_core_exit     Core-exit temp [deg C]   Initial bulk coolant temperature at core exit
-
-Overrides are temporary and do not modify the input workbook. Drawn from Runtime/flare_ui_params.json.
-
-
-FLARE -- R.P. Martin -- Proprietary
+source_term_model   # thermal_failure or RG1183_LOCA etc.
+nbt_distance_eab_m  # EAB distance [m]
+nbt_containment_volume_ft3
+nbt_leak_rate_frac_per_day
+nbt_burnup_gwdmtu  # plant burnup [GWd/MTU]; scales inventory vs. 33 GWd/MTU NUREG-1465 basis
+nbt_chi_q_eab, nbt_chi_q_lpz  # site-specific χ/Q overrides [s/m³], if benchmarking to an FSAR/SSAR
+8. Containment
+# Add a FLARECON sheet when containment response is needed.
+air_volume_m3, wall_surf_area_m2, floor_area_m2
+P0_kPa, T0_C, T_wall0_C
+endtime             # 86400 s for long-term studies
+source_mode         # 'flare_then_decay_steam' for LOCA
+spray_from_flare_nbt = True
+Appendix B — Sidebar Override Parameters
+The following parameters are available as sidebar overrides in the PWR Simulator. Overrides are temporary and do not modify the input workbook. They are drawn from the definitions in Runtime/flare_ui_params.json.
+Parameter | Label | Description
+endtime | End time [s] | Simulation end time. Runtime scales roughly linearly.
+F_r | Radial peaking F_r | Radial hot-channel factor. Drives hot-pin clad temperature and DNBR.
+F_z | Axial peaking F_z | Axial peaking factor. Typical fresh-core value ∼1.55.
+h_gap | Gap conductance [W/m²K] | Fuel-clad gap conductance. Lower values raise fuel temperature.
+trip_delay | Trip delay [s] | RPS signal-processing delay applied to all scram setpoints.
+trip_power_frac | High-power trip frac | High-flux scram setpoint as fraction of rated power.
+trip_P_lo_kPa | Low-P trip [kPa] | Low-pressure scram setpoint.
+total_power | Rated power [MW] | Rated thermal power.
+pressure_kPa | Initial pressure [kPa] | Initial RCS pressure.
+temp_core_exit | Core-exit temp [°C] | Initial bulk coolant temperature at core exit.
+Table B-1. Available sidebar override parameters.
