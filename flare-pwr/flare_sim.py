@@ -911,7 +911,9 @@ def post_processing(time, Pressure, Temperature, massflow_break,
                     Q_sg=None,
                     alpha_void_out=None,
                     TTwall_out=None, alpha_out=None,
-                    rkpower_total_out=None, core_flag=False,
+                    rkpower_total_out=None,
+                    fission_power_out=None, decay_heat_power_out=None,
+                    core_flag=False,
                     DNBR_out=None, q_chf_out=None, q_hot_out=None,
                     F_r=1.0, F_z=1.0,
                     massflow_PORV_out=None,
@@ -1118,6 +1120,8 @@ def post_processing(time, Pressure, Temperature, massflow_break,
         "Total Mass Scaled":           Total_Mass_scaled,
         "Vessel Level (m)":            ves_ll,
         "Core Power (MW)":             net_heat_total / 1e6,
+        "Fission Power (MW)":          (fission_power_out if fission_power_out is not None else _zeros) / 1e6,
+        "Decay Heat Power (MW)":       (decay_heat_power_out if decay_heat_power_out is not None else _zeros) / 1e6,
         # PATCH 5b/8c additions
         # Steam Cooling Velocity: upward steam velocity in the core channel
         # driven by decay-heat boil-off.  v = (Q_decay/h_fg) / (rhoV * A_flow_core).
@@ -2071,6 +2075,129 @@ def dhp_act(t, T, R):
              0.00000341/(0.000491-0.00000341)*
              (1-np.exp(-0.000491*T))*np.exp(-0.000491*t)))
     return U239 + NP239
+
+
+
+
+# ── Dynamic ANSI/ANS decay-heat inventory model ──────────────────────────────
+def _dhp_alplam_from_function(func, stdd):
+    """Return the ANSI/ANS exponential coefficient table used by dhp_u*().
+
+    The legacy FLARE decay-heat functions store the ANS coefficient arrays
+    locally.  This helper extracts those arrays so the same coefficients can be
+    used as dynamic inventory groups rather than only as a post-scram lookup.
+    """
+    try:
+        import inspect as _inspect, re as _re, ast as _ast
+        src = _inspect.getsource(func)
+        matches = _re.findall(r"alplam\s*=\s*np\.array\(\s*(\[[\s\S]*?\])\s*\)", src)
+        if not matches:
+            return np.empty((0, 2), dtype=float)
+        idx = 0 if int(stdd) == 1979 else min(1, len(matches)-1)
+        return np.array(_ast.literal_eval(matches[idx]), dtype=float)
+    except Exception as _err:
+        print(f"WARNING: could not extract ANS decay coefficients from {getattr(func, '__name__', func)}: {_err}")
+        return np.empty((0, 2), dtype=float)
+
+
+def _ans_decay_G_factor(age_s):
+    """ANSI/ANS 1979 G-factor interpolation used by the legacy dhp() path."""
+    Gtab = np.array([
+        [0e+00,1.02],[1e+00,1.020],[1.5e+00,1.020],[2e+00,1.020],[4e+00,1.021],
+        [6e+00,1.022],[8e+00,1.022],[1e+01,1.022],[1.5e+01,1.022],[2e+01,1.022],
+        [4e+01,1.022],[6e+01,1.022],[8e+01,1.022],[1e+02,1.023],[1.5e+02,1.024],
+        [2e+02,1.025],[4e+02,1.028],[6e+02,1.030],[8e+02,1.032],[1e+03,1.033],
+        [1.5e+03,1.037],[2e+03,1.039],[4e+03,1.048],[6e+03,1.054],[8e+03,1.060],
+        [1e+04,1.064],[1.5e+04,1.074],[2e+04,1.081],[4e+04,1.098],[6e+04,1.111],
+        [8e+04,1.119],[1e+05,1.124],[1.5e+05,1.130],[2e+05,1.131],[4e+05,1.126],
+        [6e+05,1.124],[8e+05,1.123],[1e+06,1.124],[1.5e+06,1.125],[2e+06,1.127],
+        [4e+06,1.134],[6e+06,1.146],[8e+06,1.162],[1e+07,1.181],[1.5e+07,1.233],
+        [2e+07,1.284],[4e+07,1.444],[6e+07,1.535],[8e+07,1.586],[1e+08,1.598],
+        [1.5e+08,1.498],[2e+08,1.343],[4e+08,1.065],[6e+08,1.021],[8e+08,1.012],
+        [1e+09,1.007]])
+    return float(np.interp(max(float(age_s), 0.0), Gtab[:,0], Gtab[:,1]))
+
+
+def _ans_decay_init(power_source_W, Efis, Tirr_s, U239yield, fr35, fr38, fr39, stdd):
+    """Initialise dynamic ANSI/ANS fission-product decay groups.
+
+    State variables are in the same scaled units as the legacy expression
+        power_source_W / Efis * dhp(t, Tirr, ...).
+    The fission-product exponential groups are advanced dynamically.  The
+    actinide contribution is retained as a legacy pre-transient correction
+    because the existing actinide expression is not stored as independent
+    dynamic production groups.
+    """
+    power_source_W = max(float(power_source_W), 0.0)
+    Efis = max(float(Efis), 1.0e-30)
+    Tirr_s = max(float(Tirr_s), 0.0)
+    rows = []
+    for frac, func in ((fr35, dhp_u235), (fr38, dhp_u238), (fr39, dhp_pu239)):
+        try:
+            frac = float(frac)
+        except Exception:
+            frac = 0.0
+        if frac == 0.0:
+            continue
+        alplam = _dhp_alplam_from_function(func, stdd)
+        for a, lam in alplam:
+            lam = float(lam)
+            if lam <= 0.0:
+                continue
+            a_eff = float(frac) * float(a)
+            # source coefficient [scaled heat units/s] for this group
+            source0 = (power_source_W / Efis) * a_eff
+            state0  = (source0 / lam) * (1.0 - np.exp(-lam * Tirr_s))
+            rows.append([state0, lam, a_eff])
+    arr = np.array(rows, dtype=float) if rows else np.empty((0, 3), dtype=float)
+    return {
+        "groups": arr,  # columns: state, lambda, a_eff
+        "Efis": Efis,
+        "source_power0_W": power_source_W,
+        "Tirr_s": Tirr_s,
+        "U239yield": float(U239yield),
+        "fr35": float(fr35), "fr38": float(fr38), "fr39": float(fr39),
+        "stdd": int(stdd),
+        "t_since_start": 0.0,
+    }
+
+
+def _ans_decay_advance(state, fission_source_power_W, dt_s):
+    """Advance ANSI/ANS fission-product decay groups over one timestep."""
+    if state is None:
+        return 0.0
+    dt_s = max(float(dt_s), 0.0)
+    state["t_since_start"] = float(state.get("t_since_start", 0.0)) + dt_s
+    groups = state.get("groups")
+    if groups is None or len(groups) == 0 or dt_s <= 0.0:
+        return _ans_decay_power(state)
+    Efis = max(float(state.get("Efis", 200.0)), 1.0e-30)
+    Psrc = max(float(fission_source_power_W), 0.0)
+    lam = groups[:, 1]
+    a_eff = groups[:, 2]
+    expf = np.exp(-lam * dt_s)
+    # Exact constant-source update over the timestep.
+    groups[:, 0] = groups[:, 0] * expf + (Psrc / Efis) * a_eff / lam * (1.0 - expf)
+    return _ans_decay_power(state)
+
+
+def _ans_decay_power(state):
+    """Return current dynamic ANSI/ANS decay heat power [W]."""
+    if state is None:
+        return 0.0
+    groups = state.get("groups")
+    fp = float(np.sum(groups[:, 0])) if groups is not None and len(groups) else 0.0
+    # Apply the same G-factor correction used by the legacy fission-product path.
+    fp *= _ans_decay_G_factor(state.get("t_since_start", 0.0))
+    # Retain the existing actinide correction as a pre-transient inventory term.
+    try:
+        act = (state.get("source_power0_W", 0.0) / max(state.get("Efis", 200.0), 1.0e-30)
+               * dhp_act(state.get("t_since_start", 0.0),
+                         state.get("Tirr_s", 0.0),
+                         state.get("U239yield", 1.0)))
+    except Exception:
+        act = 0.0
+    return max(fp + act, 0.0)
 
 
 def get_saturation_prop(pressure):
@@ -3373,6 +3500,13 @@ def pwr_sim(wkstbase, minimum_output=0):
     alpha_void       = np.full(number_timesteps, np.nan)  # volumetric void fraction [-]
     massflow_break   = np.full(number_timesteps, np.nan)
     rkpower_total    = np.full(number_timesteps, np.nan)
+    # Dynamic power split: RK/point-kinetics chain source, decay heat, and total core heat.
+    # _rk_chain_power is retained as a diagnostic of the raw fission-chain source
+    # before subtracting the equilibrium delayed-energy fraction and adding the
+    # independently advanced ANSI/ANS decay-heat inventory.
+    _rk_chain_power  = np.full(number_timesteps, np.nan)
+    fission_power    = np.full(number_timesteps, np.nan)
+    decay_heat_power = np.full(number_timesteps, np.nan)
     cond_heat        = np.full(number_timesteps, np.nan)
     Total_Mass       = np.zeros(number_timesteps)
     net_heat_total   = np.full(number_timesteps, np.nan)
@@ -3634,6 +3768,20 @@ def pwr_sim(wkstbase, minimum_output=0):
     _rho_table_power_target_latched = False
     _rho_table_power_target_latch_t = None
     _rho_table_power_target_latch_value = None
+
+    # ── Dynamic ANSI/ANS decay-heat model state ─────────────────────────────
+    # Decay heat is now computed at all times, independent of scram status.
+    # The point-kinetics/RK path computes the fission-chain source power; this
+    # state carries the fission-product inventory generated by the pre-transient
+    # irradiation and by the transient fission-power history.
+    _decay_state = _ans_decay_init(1.0e6 * total_power, Efis, Tinf, U239yield,
+                                   fr35, fr38, fr39, stdd)
+    _decay_heat_initial_W = _ans_decay_power(_decay_state)
+    _decay_equil_frac = (_decay_heat_initial_W / max(1.0e6 * total_power, 1.0))
+    _last_chain_power_for_decay_W = 1.0e6 * total_power
+    print(f"Dynamic ANSI/ANS decay heat initialized: initial decay heat = {_decay_heat_initial_W/1.0e6:.3f} MW "
+          f"({_decay_equil_frac*100.0:.3f}% of total_power).", flush=True)
+
     for t in range(number_timesteps - 1):
 
         # ── periodic progress print (parsed by flare_ui.py) ──────────────────
@@ -3690,9 +3838,12 @@ def pwr_sim(wkstbase, minimum_output=0):
             # Initialise RCS boron mass now that Total_Mass is known
             _rcs_boron_mass = rcs_boron_ppm_init * 1e-6 * Total_Mass
             Total_Mass_scaled[0] = 1
-            rkpower_total[t]     = total_power * 1e6   # rated power at t=0
+            rkpower_total[t]     = total_power * 1e6   # fission-chain power at t=0 before decay split
+            _rk_chain_power[t]   = rkpower_total[t]
+            decay_heat_power[t]  = _decay_heat_initial_W
+            fission_power[t]     = max(rkpower_total[t] - _decay_equil_frac * rkpower_total[t], 0.0)
             cond_heat[t]         = 0
-            net_heat_total[t]    = total_power * 1e6   # rated power at t=0
+            net_heat_total[t]    = total_power * 1e6   # preserve exact rated-power initial condition
         else:
             timestep = time[t] - time[t-1]
             # Accumulator injection [kg/s]
@@ -3705,6 +3856,14 @@ def pwr_sim(wkstbase, minimum_output=0):
                            - massflow_break[t-1] - massflow_PORV[t-1])*timestep
             Total_Mass_scaled[t] = Total_Mass / init_cond["Total_Mass_RCS"]
             acc_liqvol[t]        = acc_liqvol[t-1] - acc_wdot[t-1]*timestep
+
+        # Advance decay-heat inventory from t-1 to t using the last available
+        # fission-chain source power.  This is independent of whether a scram
+        # has occurred.
+        if t > 0:
+            decay_heat_power[t] = _ans_decay_advance(_decay_state,
+                                                      _last_chain_power_for_decay_W,
+                                                      timestep)
 
         # ── fission + decay heat ─────────────────────────────────────────────
         # t_rel: time since the break/scram event (zero before t_break)
@@ -4128,8 +4287,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                 # No break, no scram — steady full power
                 rkpower_total[t] = 1e6 * total_power
             else:
-                _decay_heat_W = 1e6*total_power/Efis*dhp(t_rel,Tinf,U239yield,
-                                                          fr35,fr38,fr39,stdd)
+                _decay_heat_W = decay_heat_power[t] if np.isfinite(decay_heat_power[t]) else _ans_decay_power(_decay_state)
 
                 # Use the current ramped rod worth in the post-scram fission
                 # decay model. Earlier code used the final full rod worth
@@ -4144,7 +4302,6 @@ def pwr_sim(wkstbase, minimum_output=0):
 
                 rkpower_total[t] = (
                     1e6*total_power*fission_scram(t_rel, _rho_scram_now_dollars)
-                    + _decay_heat_W
                 )
 
                 # ── Hybrid post-scram PK: excess fission power ────────────────
@@ -4172,6 +4329,23 @@ def pwr_sim(wkstbase, minimum_output=0):
 
             if not np.isnan(power_input[t]):
                 rkpower_total[t] += power_input[t]
+
+        # ── Finalize dynamic fission/decay/core heat source for this timestep ─
+        # At this point rkpower_total[t] is the fission-chain/source power from
+        # the existing point-kinetics or post-scram model.  Split it into a
+        # non-decay heat component plus the independently advanced ANSI/ANS
+        # decay-heat inventory.  Subtracting the equilibrium delayed fraction
+        # from the chain power preserves the original full-power initial
+        # condition while still giving a nonzero decay-heat floor if fission
+        # power collapses.
+        _chain_power_now_W = max(float(rkpower_total[t]) if np.isfinite(rkpower_total[t]) else 0.0, 0.0)
+        _rk_chain_power[t] = _chain_power_now_W
+        if not np.isfinite(decay_heat_power[t]):
+            decay_heat_power[t] = _ans_decay_power(_decay_state)
+        fission_power[t] = max(_chain_power_now_W - _decay_equil_frac * _chain_power_now_W, 0.0)
+        rkpower_total[t] = fission_power[t] + decay_heat_power[t]
+        _last_chain_power_for_decay_W = _chain_power_now_W
+        _decay_heat_W = decay_heat_power[t]
 
         # Bug 2 fix: when core_flag=1, cond_heat[t_break] is stale from SS.
         # At the first post-break step, use rkpower directly so the energy
@@ -6684,7 +6858,7 @@ def pwr_sim(wkstbase, minimum_output=0):
             sg_UA_eff, sg_C_primary, sg_flow_frac, sg_open_frac,
             sg_Q_forced_raw, sg_Q_forced, sg_Q_nat,
             sg_flow_cap_W, sg_flow_cap_ratio, sg_flow_cap_warn,
-            TTwall, alpha, rkpower_total, DNBR, q_chf, q_hot,
+            TTwall, alpha, rkpower_total, _rk_chain_power, fission_power, decay_heat_power, DNBR, q_chf, q_hot,
             massflow_PORV, h_break_arr, cvcs_mdot, cvcs_makeup_arr, cvcs_letdown_arr, hpsi_mdot_arr,
             lpsi_mdot_arr, si_pumped_mdot,
             T_fuel_arr, T_hot_clad_arr, T_hot_fuel_arr,
@@ -6729,6 +6903,9 @@ def pwr_sim(wkstbase, minimum_output=0):
             "SG Secondary Temperature (K)": np.full(number_timesteps, T_sec_K),
             "Total Power Input (MW)": np.full(number_timesteps, float(total_power)),
             "RK Total Power (MW)": rkpower_total / 1.0e6,
+            "RK Chain/Fission Source Power (MW)": _rk_chain_power / 1.0e6,
+            "Fission Power (MW)": fission_power / 1.0e6,
+            "Decay Heat Power (MW)": decay_heat_power / 1.0e6,
             "SG Flow-Capacity Limit (MW)": sg_flow_cap_W / 1.0e6,
             "Core Power / SG Flow Capacity (-)": sg_flow_cap_ratio,
             "SG Flow-Capacity Warning (-)": sg_flow_cap_warn,
@@ -6784,6 +6961,8 @@ def pwr_sim(wkstbase, minimum_output=0):
             "Total Mass Scaled":           Total_Mass_scaled,
             "Vessel Level (m)":            ves_ll,
             "Core Power (MW)":             net_heat_total / 1e6,
+            "Fission Power (MW)":          fission_power / 1e6,
+            "Decay Heat Power (MW)":       decay_heat_power / 1e6,
             "Pump Speed (rpm)":            pump_omega,
             "Pump Mass Flow (kg/s)":       pump_mdot,
             "Core Coolant Velocity (m/s)": pump_velocity,
@@ -6824,6 +7003,8 @@ def pwr_sim(wkstbase, minimum_output=0):
         alpha_void_out=alpha_void,
         TTwall_out=TTwall, alpha_out=alpha,
         rkpower_total_out=rkpower_total,
+        fission_power_out=fission_power,
+        decay_heat_power_out=decay_heat_power,
         core_flag=bool(core_flag),
         DNBR_out=DNBR if core_flag else None,
         q_chf_out=q_chf if core_flag else None,
