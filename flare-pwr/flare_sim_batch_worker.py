@@ -1014,10 +1014,12 @@ def main() -> int:
 
     cfg_path = Path(sys.argv[1])
     cfg = read_json(cfg_path, {})
+    # Keep the application/code directory separate from the user-selected
+    # output location. ``work_dir`` contains flare_sim.py and support modules;
+    # it must not be used as the parent directory for batch run artifacts.
     work_dir = Path(cfg.get("work_dir", ".")).resolve()
-    # run_dir is now a small regular control/status directory.  Simulation outputs
-    # are written to ordinary per-case sim_<case>_<timestamp> folders.
-    run_dir = Path(cfg.get("run_dir", work_dir / f"sim_all_{time.strftime('%Y%m%d_%H%M%S')}"))
+    run_dir = Path(cfg.get("run_dir", work_dir / f"sim_all_{time.strftime('%Y%m%d_%H%M%S')}")).resolve()
+    output_parent = Path(cfg.get("output_parent", run_dir.parent)).resolve()
     case_entries = list(cfg.get("case_entries") or [])
     if case_entries:
         cases = [str(e.get("case")) for e in case_entries]
@@ -1052,6 +1054,7 @@ def main() -> int:
         "current_case_console_log": None,
         "run_dir": str(run_dir),
         "control_dir": str(run_dir),
+        "output_parent": str(output_parent),
         "output_mode": "per_case_sim_dirs",
         "batch_tag": batch_tag,
         "final_report": final_report,
@@ -1083,7 +1086,11 @@ def main() -> int:
             write_json_resilient(status_path, status)
             return 130
 
-        case_run_dir = work_dir / f"sim_{case}_{batch_tag}"
+        # Store every per-case run folder in the selected Working folder,
+        # alongside the sim_all_<timestamp> control folder.  Previously this
+        # used work_dir (the FLARE application folder), which caused Run All
+        # Cases artifacts to leak into the app root.
+        case_run_dir = output_parent / f"sim_{case}_{batch_tag}"
         case_run_dir.mkdir(parents=True, exist_ok=True)
         console_log = case_run_dir / f"{case}_console.log"
         src = input_path
