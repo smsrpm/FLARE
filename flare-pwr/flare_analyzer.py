@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="FLARE Plant Analyzer", page_icon="🔥")
 APP_DIR = Path(__file__).parent
@@ -531,13 +532,13 @@ html = HTML_TEMPLATE.replace("__PAYLOAD_JSON__", json.dumps(payload, ensure_asci
 # Give the embedded browser-side analyzer enough vertical room so the iframe itself
 # does not need an internal scrollbar. The Streamlit page can still scroll normally.
 #
-# Streamlit deprecated the older HTML component API and now recommends st.iframe for
-# iframe-style embedded content. Keep the browser-side analyzer as a self-contained
-# HTML document, encode it as a data URL, and display it with st.iframe.
+# Do not place the complete analyzer document in a base64 data URL. Large transient
+# files can produce several megabytes of JSON; base64 expands that payload by another
+# third and can exceed browser/iframe URL limits. components.html sends the document
+# as iframe content rather than encoding it into the iframe URL, so long or densely
+# sampled cases load reliably without discarding timesteps.
 component_height = int(758 * zoom) + 565
-_html_b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
-_iframe_src = f"data:text/html;base64,{_html_b64}"
-st.iframe(_iframe_src, height=component_height)
+components.html(html, height=component_height, scrolling=False)
 
 with st.sidebar:
     st.divider()
