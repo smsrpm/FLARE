@@ -261,8 +261,48 @@ if df_con is not None and not df_con.empty and "Pressure [kPa]" in df_con.column
 else:
     P_con_min = P_con_max = 101.0
 
-records = df.where(pd.notnull(df), None).to_dict(orient="records")
-con_records = [] if df_con is None else df_con.where(pd.notnull(df_con), None).to_dict(orient="records")
+# Keep the browser payload small enough for iOS/iPadOS WebKit.
+# The previous implementation sent every column from *_out.csv and every column
+# from the optional FLARECON -CON.csv into the embedded JavaScript document.  That
+# is workable on desktop browsers, but iPhone/iPad WebKit can terminate the iframe
+# when the srcdoc/JavaScript payload becomes large.  FLARECON cases are the worst
+# case because they add a second, often wide, time-history table.
+#
+# The animation only needs the variables below.  The "Variables — current timestep"
+# table therefore shows the same compact set used by the browser animation.  This
+# is intentional: it prevents FLARECON cases from crashing mobile devices while
+# preserving all displayed analyzer behavior.
+_JS_ROW_COLUMNS = [
+    "Time (s)",
+    "RCS Temperature (K)",
+    "RCS Pressure (kPa)",
+    "Clad Surface Temp (K)",
+    "Core Power (MW)",
+    "SI Pumped Total (kg/s)",
+    "Break Flow (kg/s)",
+    "PORV Mass Flow (kg/s)",
+    "CVCS Makeup (kg/s)",
+    "CVCS Letdown (kg/s)",
+    "Total Mass Scaled",
+    "Accumulator Liquid Volume (m3)",
+    "Pump Speed (rpm)",
+]
+_JS_CON_COLUMNS = [
+    "Pressure [kPa]",
+    "Gas Temp [C]",
+]
+
+def _compact_records(frame, columns: list[str]) -> list[dict]:
+    if frame is None or frame.empty:
+        return []
+    keep = [c for c in columns if c in frame.columns]
+    if not keep:
+        return []
+    compact = frame.loc[:, keep]
+    return compact.where(pd.notnull(compact), None).to_dict(orient="records")
+
+records = _compact_records(df, _JS_ROW_COLUMNS)
+con_records = _compact_records(df_con, _JS_CON_COLUMNS)
 payload = {
     "case_name": _sel_path.name.replace("_out.csv", ""),
     "csv_name": _sel_path.name,
@@ -528,7 +568,7 @@ render(0);
 </html>
 '''
 
-html = HTML_TEMPLATE.replace("__PAYLOAD_JSON__", json.dumps(payload, ensure_ascii=False))
+html = HTML_TEMPLATE.replace("__PAYLOAD_JSON__", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 # Give the embedded browser-side analyzer enough vertical room so the iframe itself
 # does not need an internal scrollbar. The Streamlit page can still scroll normally.
 #
