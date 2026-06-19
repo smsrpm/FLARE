@@ -157,6 +157,202 @@ section[data-testid="stSidebar"] code {
     border-radius: 4px;
 }
 
+
+/* ── Sticky FLARE banner: constrained to the main display panel ──────────── */
+/* Keep Streamlit's own header and sidebar controls above the FLARE banner.
+   The banner itself sits flush with the top edge of the main display panel. */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    z-index: 1003 !important;
+}
+section[data-testid="stSidebar"] {
+    z-index: 1002 !important;
+}
+
+/* Sidebar open/close control: FLARE orange, visible above the sticky banner. */
+button[data-testid="stSidebarCollapsedControl"],
+button[data-testid="stSidebarCollapseButton"],
+div[data-testid="stSidebarCollapsedControl"] > button,
+div[data-testid="stSidebarCollapseButton"] > button {
+    background: #f97316 !important;
+    color: #ffffff !important;
+    border: 1px solid #fb923c !important;
+    border-radius: 6px !important;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.28) !important;
+    opacity: 1 !important;
+    z-index: 1005 !important;
+}
+button[data-testid="stSidebarCollapsedControl"]:hover,
+button[data-testid="stSidebarCollapseButton"]:hover,
+div[data-testid="stSidebarCollapsedControl"] > button:hover,
+div[data-testid="stSidebarCollapseButton"] > button:hover {
+    background: #ea580c !important;
+    border-color: #fdba74 !important;
+}
+button[data-testid="stSidebarCollapsedControl"] svg,
+button[data-testid="stSidebarCollapseButton"] svg,
+div[data-testid="stSidebarCollapsedControl"] > button svg,
+div[data-testid="stSidebarCollapseButton"] > button svg {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+}
+/* Streamlit has used several DOM/test-id variants for the sidebar toggle.
+   Target the control wrapper, its button, and the chevron SVG so the toggle
+   remains unmistakably FLARE orange on desktop and mobile. */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"] > button,
+[data-testid="stSidebarCollapseButton"] > button,
+[data-testid="collapsedControl"] > button,
+button[aria-label="Open sidebar"],
+button[aria-label="Close sidebar"] {
+    background: #f97316 !important;
+    border: 1px solid #fb923c !important;
+    border-radius: 6px !important;
+    opacity: 1 !important;
+    z-index: 1006 !important;
+}
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="stSidebarCollapseButton"] svg,
+[data-testid="collapsedControl"] svg,
+button[aria-label="Open sidebar"] svg,
+button[aria-label="Close sidebar"] svg,
+[data-testid="stSidebarCollapsedControl"] svg path,
+[data-testid="stSidebarCollapseButton"] svg path,
+[data-testid="collapsedControl"] svg path,
+button[aria-label="Open sidebar"] svg path,
+button[aria-label="Close sidebar"] svg path {
+    color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+    opacity: 1 !important;
+}
+
+/* Newer Streamlit mobile builds render the collapsed-sidebar chevrons as a
+   Material icon/text glyph rather than an SVG.  Force both the wrapper and
+   every possible icon descendant to full-strength FLARE orange. */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {
+    opacity: 1 !important;
+    visibility: visible !important;
+    filter: none !important;
+}
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="collapsedControl"] button,
+button[aria-label*="sidebar" i] {
+    opacity: 1 !important;
+    visibility: visible !important;
+    filter: none !important;
+}
+[data-testid="stSidebarCollapsedControl"] *,
+[data-testid="collapsedControl"] *,
+button[aria-label*="sidebar" i] *,
+[data-testid="stSidebarCollapsedControl"] span[data-testid="stIconMaterial"],
+[data-testid="collapsedControl"] span[data-testid="stIconMaterial"] {
+    color: #f97316 !important;
+    -webkit-text-fill-color: #f97316 !important;
+    fill: #f97316 !important;
+    stroke: #f97316 !important;
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+/* Streamlit 1.45+ uses stExpandSidebarButton for the control shown when the
+   sidebar is closed.  Style that exact current control and its icon. */
+[data-testid="stExpandSidebarButton"],
+[data-testid="stExpandSidebarButton"] > button,
+button[data-testid="stExpandSidebarButton"] {
+    background: #f97316 !important;
+    border: 1px solid #fb923c !important;
+    border-radius: 6px !important;
+    color: #ffffff !important;
+    opacity: 1 !important;
+    filter: none !important;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.28) !important;
+    z-index: 1007 !important;
+}
+[data-testid="stExpandSidebarButton"] svg,
+[data-testid="stExpandSidebarButton"] svg path,
+[data-testid="stExpandSidebarButton"] span,
+[data-testid="stExpandSidebarButton"] * {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+.block-container {
+    padding-top: 0 !important;
+}
+
+/* Streamlit wraps each markdown block in an element container.  Making that
+   main-panel wrapper sticky is more reliable than making only the inner HTML
+   sticky, and it prevents the banner from spanning across the sidebar. */
+.block-container div[data-testid="stElementContainer"]:has(.flare-fixed-banner) {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 50 !important;
+    margin: 0 !important;
+}
+.flare-fixed-banner {
+    position: relative;
+    width: 100%;
+    height: 5.35rem;
+    margin: 0 0 1.05rem 0;
+    background: radial-gradient(circle at 52% 0%, #3a210f 0%, #10151f 50%, #05070c 100%);
+    border-bottom: 1px solid rgba(249,115,22,0.55);
+    box-shadow: 0 2px 14px rgba(0,0,0,0.35);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+}
+.flare-fixed-banner-inner {
+    width: min(980px, 94%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.15rem;
+}
+.flare-fixed-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: clamp(2.4rem, 8.0vw, 4.2rem);
+    letter-spacing: 0.26em;
+    color: #f97316;
+    line-height: 1;
+    text-shadow: 0 0 18px rgba(249,115,22,0.35);
+}
+.flare-fixed-buddy {
+    height: clamp(3.0rem, 9vw, 4.35rem);
+    width: auto;
+    object-fit: contain;
+}
+@media (max-width: 640px) {
+    .block-container div[data-testid="stElementContainer"]:has(.flare-fixed-banner) {
+        top: 0 !important;
+    }
+    .block-container {
+        padding-top: 0 !important;
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+    }
+    .flare-fixed-banner {
+        height: 4.75rem;
+        margin-top: 0;
+    }
+    .flare-fixed-banner-inner {
+        gap: 0.55rem;
+    }
+    .flare-fixed-title {
+        letter-spacing: 0.20em;
+    }
+}
+
 /* Keep expander header dark when expanded so label stays visible */
 section[data-testid="stSidebar"] details,
 section[data-testid="stSidebar"] details[open],
@@ -201,9 +397,10 @@ button[role="tab"][aria-selected="true"] {
 }
 
 .metric-grid {
-    display:grid;
-    grid-template-columns:repeat(4,1fr);
-    gap:0.75rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    overflow: visible;
 }
 .metric-tile {
     background: var(--surface);
@@ -211,6 +408,47 @@ button[role="tab"][aria-selected="true"] {
     border-radius: 6px;
     padding: 1rem;
     text-align: center;
+    aspect-ratio: 1 / 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+/* Streamlit normally stacks st.columns vertically on narrow screens.  These
+   keyed containers deliberately preserve the requested two-column plot grid. */
+.st-key-flare_main_plots_2up [data-testid="stHorizontalBlock"],
+.st-key-flare_containment_plots_2up [data-testid="stHorizontalBlock"] {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    align-items: flex-start !important;
+    gap: 0.75rem !important;
+}
+.st-key-flare_main_plots_2up [data-testid="stColumn"],
+.st-key-flare_containment_plots_2up [data-testid="stColumn"] {
+    flex: 1 1 0 !important;
+    width: 50% !important;
+    min-width: 0 !important;
+}
+
+@media (max-width: 768px) {
+    /* Keep the four summary tiles square and at a readable size.  The row is
+       intentionally wider than the phone viewport instead of compressing. */
+    .metric-grid {
+        grid-template-columns: repeat(4, 10rem) !important;
+        width: max-content !important;
+        min-width: max-content !important;
+    }
+    .metric-tile {
+        width: 10rem !important;
+        height: 10rem !important;
+        min-width: 10rem !important;
+        min-height: 10rem !important;
+        aspect-ratio: 1 / 1 !important;
+    }
 }
 .metric-tile .val {
     font-family: 'IBM Plex Mono', monospace;
@@ -263,6 +501,27 @@ def _load_buddy_b64():
     return None
 
 _BUDDY_B64 = _load_buddy_b64()
+
+def _render_fixed_flare_banner():
+    """Render the sticky FLARE banner inside the main display panel."""
+    buddy_html = (
+        f"<img class='flare-fixed-buddy' src='{_BUDDY_B64}' alt='FLARE Buddy'/>"
+        if _BUDDY_B64 else
+        "<span class='flare-fixed-buddy' style='font-size:3.4rem;line-height:1;'>🔥</span>"
+    )
+    st.markdown(
+        f"""
+        <div class="flare-fixed-banner">
+          <div class="flare-fixed-banner-inner">
+            <div class="flare-fixed-title">FLARE</div>
+            {buddy_html}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+_render_fixed_flare_banner()
 
 def _buddy_expander_label(title: str) -> str:
     """Return an expander label with an inline FLARE Buddy thumbnail, or fall back to 🤖."""
@@ -2636,23 +2895,35 @@ def scalar_summary(df, use_english=False, init_power_mw=None, diag_df=None):
     _dnb_label = "Dryout" if _has_break else "DNB"
     # DNB/Dryout: reported as impacted rods only (not a gap release trigger)
     # Gap release: only T(clad) > 800°C; Early IV: T(clad) > 1204°C
-    _fail_cols = [
-        ("Rod Failures DNB (est.)",     f"Rods with {_dnb_label}",              False),
-        ("Rod Failures PCT (est.)",     "T(clad) ≥1204°C  (early in-vessel)",   True),
-        ("Rod Failures Gap (est.)",     "T(clad) ≥800°C  (gap release)",        True),
-        ("Rod Failures EarlyIV (est.)", "T(clad) ≥1204°C  (early in-vessel)",   True),
-    ]
-    _seen_eiv = False
-    for col, label, small in _fail_cols:
-        # Avoid showing early IV twice (PCT and EarlyIV map to same thing)
-        if label.startswith("T(clad) ≥1204"):
-            if _seen_eiv:
-                continue
-            _seen_eiv = True
-        if col in df.columns:
-            n = int(df[col].max())
-            cls = "danger" if n > 1000 else "warn" if n > 0 else "ok"
-            metrics.append((f"{n:,}", label, cls, small))
+    # DNB/dryout remains a separate tile.
+    if "Rod Failures DNB (est.)" in df.columns:
+        n_dnb = int(df["Rod Failures DNB (est.)"].max())
+        cls = "danger" if n_dnb > 1000 else "warn" if n_dnb > 0 else "ok"
+        metrics.append((f"{n_dnb:,}", f"Rods with {_dnb_label}", cls, False))
+
+    # Combine the two clad-temperature rod counts into one tile.  Prefer the
+    # PCT field for the 1204°C count, with EarlyIV retained as a fallback for
+    # older result files.
+    n_1204 = None
+    for _col in ("Rod Failures PCT (est.)", "Rod Failures EarlyIV (est.)"):
+        if _col in df.columns:
+            n_1204 = int(df[_col].max())
+            break
+    n_800 = (int(df["Rod Failures Gap (est.)"].max())
+             if "Rod Failures Gap (est.)" in df.columns else None)
+
+    if n_1204 is not None or n_800 is not None:
+        _n1204_text = f"{n_1204:,}" if n_1204 is not None else "—"
+        _n800_text = f"{n_800:,}" if n_800 is not None else "—"
+        _counts = [n for n in (n_1204, n_800) if n is not None]
+        _nmax = max(_counts) if _counts else 0
+        cls = "danger" if _nmax > 1000 else "warn" if _nmax > 0 else "ok"
+        metrics.append((
+            f"{_n1204_text} / {_n800_text}",
+            "T(clad) ≥1204°C / T(clad) ≥800°C",
+            cls,
+            True,
+        ))
 
     # ── Zircaloy oxidation / hydrogen generation ────────────────────────────
     if "Zr Oxidation Hot Pin ECR (%)" in df.columns:
@@ -2702,6 +2973,12 @@ with st.sidebar:
     st.markdown('<div class="app-title">⚛ flare</div>', unsafe_allow_html=True)
     st.markdown('<div class="app-sub">Reactor Safety Analysis</div>',
                 unsafe_allow_html=True)
+
+    two_up_plots = st.checkbox(
+        "Show plots 2-up",
+        value=True,
+        help="When checked, result plots are displayed in two columns. Uncheck for one full-width plot per row.",
+    )
 
     _working_folders = discover_working_folders()
     if not _working_folders:
@@ -2978,6 +3255,186 @@ with st.sidebar:
     st.caption("flare_sim.py")
     st.caption(f"FLARE root: `{WORK_DIR}`")
     st.caption(f"Working folder: `{_selected_working_rel}`")
+
+    st.markdown('<div class="hdiv"></div>', unsafe_allow_html=True)
+    st.markdown("### Display")
+    compact_display = st.checkbox(
+        "Compact display (66%)",
+        value=False,
+        key="flare_compact_display",
+        help=(
+            "Reduces the application's typography, spacing, tiles, controls, banner, and plot sizing "
+            "to approximately 66% of the normal presentation. This is a compact layout mode, not browser zoom."
+        ),
+    )
+
+# Compact mode uses a smaller root font size so Streamlit's rem-based typography,
+# spacing, controls, banner, and FLARE tile dimensions reflow naturally instead
+# of being stretched by CSS transform/zoom. Plotly's pixel-based figure sizing is
+# handled separately immediately before each chart is displayed.
+if compact_display:
+    st.markdown(
+        """
+        <style>
+        html { font-size: 66% !important; }
+        body, .stApp { font-size: 1rem !important; }
+
+        /* Keep minimum tap targets usable while making the interface compact. */
+        button, input, select, textarea { min-height: 2.1rem !important; }
+
+        /* Streamlit occasionally supplies pixel-based gaps/padding. */
+        main[data-testid="stMain"] {
+            overflow-x: hidden !important;
+        }
+        main[data-testid="stMain"] .block-container,
+        main[data-testid="stMain"] [data-testid="stMainBlockContainer"] {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            padding-left: 0.50rem !important;
+            padding-right: 0.50rem !important;
+            padding-bottom: 1rem !important;
+            box-sizing: border-box !important;
+            overflow-x: hidden !important;
+        }
+        main[data-testid="stMain"] [data-testid="stVerticalBlock"] {
+            min-width: 0 !important;
+            gap: 0.65rem !important;
+        }
+        main[data-testid="stMain"] [data-testid="stHorizontalBlock"] {
+            min-width: 0 !important;
+            gap: 0.40rem !important;
+        }
+
+        /* In compact mode the complete four-tile row must fit within the
+           phone viewport.  This intentionally overrides the normal mobile
+           rule that keeps 10-rem tiles and allows horizontal scrolling. */
+        @media (max-width: 768px) {
+            .metric-grid {
+                display: grid !important;
+                grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+                width: 100% !important;
+                min-width: 0 !important;
+                max-width: 100% !important;
+                gap: 0.35rem !important;
+                overflow: hidden !important;
+            }
+            .metric-tile {
+                width: auto !important;
+                height: auto !important;
+                min-width: 0 !important;
+                min-height: 0 !important;
+                max-width: 100% !important;
+                aspect-ratio: 1 / 1 !important;
+                padding: 0.30rem !important;
+                overflow: hidden !important;
+            }
+            .metric-tile .val {
+                font-size: 1.60rem !important;
+                line-height: 1.08 !important;
+                overflow-wrap: anywhere !important;
+            }
+            .metric-tile .val.small {
+                font-size: 0.88rem !important;
+                line-height: 1.15 !important;
+            }
+            .metric-tile .lbl {
+                font-size: 0.90rem !important;
+                line-height: 1.12 !important;
+                overflow-wrap: anywhere !important;
+            }
+            .metric-tile .lbl.small {
+                font-size: 0.72rem !important;
+            }
+
+            /* Preserve true 2-up presentation while allowing each Plotly
+               chart to shrink to one-half of the available phone width. */
+            .st-key-flare_main_plots_2up [data-testid="stHorizontalBlock"],
+            .st-key-flare_containment_plots_2up [data-testid="stHorizontalBlock"] {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                gap: 0.35rem !important;
+                overflow: hidden !important;
+            }
+            .st-key-flare_main_plots_2up [data-testid="stColumn"],
+            .st-key-flare_containment_plots_2up [data-testid="stColumn"],
+            .st-key-flare_main_plots_2up .stColumn,
+            .st-key-flare_containment_plots_2up .stColumn {
+                flex: 0 0 calc(50% - 0.175rem) !important;
+                width: calc(50% - 0.175rem) !important;
+                max-width: calc(50% - 0.175rem) !important;
+                min-width: 0 !important;
+                overflow: hidden !important;
+                box-sizing: border-box !important;
+            }
+            .st-key-flare_main_plots_2up [data-testid="stPlotlyChart"],
+            .st-key-flare_containment_plots_2up [data-testid="stPlotlyChart"],
+            .st-key-flare_main_plots_2up .js-plotly-plot,
+            .st-key-flare_containment_plots_2up .js-plotly-plot,
+            .st-key-flare_main_plots_2up .plot-container,
+            .st-key-flare_containment_plots_2up .plot-container,
+            .st-key-flare_main_plots_2up .svg-container,
+            .st-key-flare_containment_plots_2up .svg-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _compact_plotly_figure(fig):
+    """Apply the 66% compact presentation to a Plotly figure in place."""
+    if not compact_display or fig is None:
+        return fig
+
+    scale = 0.66
+    layout = fig.layout
+    current_height = layout.height if layout.height else 430
+
+    # Plotly must remain responsive to the Streamlit column width.  Setting a
+    # pixel width (especially with a 320-pixel minimum) forces each chart wider
+    # than a half-phone column and creates the horizontal clipping seen in the
+    # prior compact build.  Scale only height, typography, and margins; clear
+    # any fixed width and let width="stretch" determine the rendered width.
+    update = {
+        "height": max(190, int(current_height * scale)),
+        "width": None,
+        "autosize": True,
+    }
+
+    margin = layout.margin
+    if margin:
+        update["margin"] = dict(
+            l=max(20, int((margin.l or 60) * scale)),
+            r=max(10, int((margin.r or 30) * scale)),
+            t=max(25, int((margin.t or 55) * scale)),
+            b=max(25, int((margin.b or 55) * scale)),
+        )
+
+    base_font_size = 12
+    try:
+        if layout.font and layout.font.size:
+            base_font_size = layout.font.size
+    except Exception:
+        pass
+    update["font"] = dict(size=max(8, int(base_font_size * scale)))
+    fig.update_layout(**update)
+
+    axis_font = max(8, int(12 * scale))
+    title_font = max(9, int(14 * scale))
+    fig.update_xaxes(tickfont=dict(size=axis_font), title_font=dict(size=title_font))
+    fig.update_yaxes(tickfont=dict(size=axis_font), title_font=dict(size=title_font))
+
+    try:
+        fig.update_layout(legend=dict(font=dict(size=axis_font)))
+    except Exception:
+        pass
+    return fig
 
 
 # ── Main panel ─────────────────────────────────────────────────────────────────
@@ -3282,23 +3739,61 @@ with tab_results:
             import traceback; st.code(traceback.format_exc())
             figs = {}
 
-        all_keys  = [f"fig{i}" for i in range(1, 18)]
+        # Requested presentation order.  The first six are promoted to the
+        # front; all remaining figures retain their prior relative order.
+        _first_six = ["fig1", "fig14", "fig5", "fig2", "fig10", "fig17"]
+        _original_order = [f"fig{i}" for i in range(1, 18)]
+        all_keys = _first_six + [k for k in _original_order if k not in _first_six]
         for _fk in ["fig_pzr", "fig18_zr_ecr", "fig19_h2_generation"]:
             if _fk in figs:
                 all_keys.append(_fk)
+        all_keys = [k for k in all_keys if k in figs]
+
+        # Renumber titles to match the displayed sequence.  The requested first
+        # six titles are set explicitly; later titles preserve their wording.
+        import re as _re
+        _first_titles = {
+            "fig1": "RCS Pressure",
+            "fig14": "Core Temperatures",
+            "fig5": "Break Flow",
+            "fig2": "Equilibrium Quality and Void",
+            "fig10": "Core Power",
+            "fig17": "Reactivity",
+        }
+        for _num, _key in enumerate(all_keys, start=1):
+            _fig = figs[_key]
+            if _key in _first_titles:
+                _body = _first_titles[_key]
+            else:
+                _old_title = (_fig.layout.title.text or _key)
+                _body = _re.sub(r"^Fig\s*\d+(?:\s*[-–—:]\s*)?", "", _old_title).strip()
+            _fig.update_layout(title_text=f"Fig {_num}  -  {_body}")
+
         left_keys  = all_keys[::2]
         right_keys = all_keys[1::2]
 
-        col_l, col_r = st.columns(2)
-        for keys, col in [(left_keys, col_l), (right_keys, col_r)]:
-            with col:
-                for k in keys:
-                    if k in figs:
-                        try:
-                            st.plotly_chart(figs[k], width="stretch",
-                                            config={"displayModeBar": False})
-                        except Exception as _pe:
-                            st.warning(f"Plot {k} error: {_pe}")
+        if two_up_plots:
+            # A keyed container lets the CSS override Streamlit's default
+            # mobile behavior, which otherwise stacks columns into 1-up.
+            with st.container(key="flare_main_plots_2up"):
+                col_l, col_r = st.columns(2)
+                for keys, col in [(left_keys, col_l), (right_keys, col_r)]:
+                    with col:
+                        for k in keys:
+                            if k in figs:
+                                try:
+                                    st.plotly_chart(_compact_plotly_figure(figs[k]), width="stretch",
+                                                    config={"displayModeBar": False})
+                                except Exception as _pe:
+                                    st.warning(f"Plot {k} error: {_pe}")
+        else:
+            for k in all_keys:
+                if k in figs:
+                    try:
+                        st.plotly_chart(_compact_plotly_figure(figs[k]), width="stretch",
+                                        config={"displayModeBar": False})
+                    except Exception as _pe:
+                        st.warning(f"Plot {k} error: {_pe}")
 
         # ── Integrated FLARECON containment response ─────────────────────────
         con_df = load_containment_results(run_case, run_dir=_run_dir)
@@ -3325,13 +3820,19 @@ with tab_results:
                 except Exception as _ce:
                     st.error(f"Containment plot generation error: {_ce}")
                     con_figs = {}
-                con_left, con_right = st.columns(2)
                 con_keys = ["pressure", "temperature", "liquid", "composition", "heat", "masses"]
-                for _keys, _col in [(con_keys[::2], con_left), (con_keys[1::2], con_right)]:
-                    with _col:
-                        for _k in _keys:
-                            if _k in con_figs:
-                                st.plotly_chart(con_figs[_k], width="stretch", config={"displayModeBar": False})
+                if two_up_plots:
+                    with st.container(key="flare_containment_plots_2up"):
+                        con_left, con_right = st.columns(2)
+                        for _keys, _col in [(con_keys[::2], con_left), (con_keys[1::2], con_right)]:
+                            with _col:
+                                for _k in _keys:
+                                    if _k in con_figs:
+                                        st.plotly_chart(_compact_plotly_figure(con_figs[_k]), width="stretch", config={"displayModeBar": False})
+                else:
+                    for _k in con_keys:
+                        if _k in con_figs:
+                            st.plotly_chart(_compact_plotly_figure(con_figs[_k]), width="stretch", config={"displayModeBar": False})
                 _shapiro_png = Path(_run_dir) / f"{run_case}-CON_shapiro.png"
                 if _shapiro_png.exists():
                     st.markdown("#### Shapiro Steam–Air–Hydrogen Flammability Diagram")
