@@ -312,6 +312,55 @@ def _add_flare_layer_panes(m: folium.Map) -> None:
     macro.add_to(m)
 
 
+def _add_touch_gesture_handling(m: folium.Map) -> None:
+    """Require two fingers to pan the map on touch devices.
+
+    scroll_wheel_zoom=False governs the mouse wheel only, so it has no effect on
+    a phone or tablet: Leaflet's dragging and touchZoom handlers stay enabled and
+    a one-finger swipe over the map pans it instead of scrolling the page. That
+    made the Dose Map awkward to scroll past on an iPhone while behaving as
+    intended on the desktop.
+
+    leaflet-gesture-handling restores the intent on touch: one finger scrolls the
+    page, two fingers pan and zoom the map, with a brief on-screen hint.
+
+    The handler is enabled only when Leaflet reports a touch device, so desktop
+    behaviour is untouched - plain scrolling still scrolls the page and the
+    +/- buttons still zoom. If the CDN is unreachable the guard simply finds no
+    handler and the map keeps its previous behaviour rather than erroring.
+    """
+    map_name = m.get_name()
+    m.get_root().header.add_child(Element(
+        '<link rel="stylesheet" '
+        'href="https://unpkg.com/leaflet-gesture-handling@1.2.2/'
+        'dist/leaflet-gesture-handling.min.css"/>'
+        '<script src="https://unpkg.com/leaflet-gesture-handling@1.2.2/'
+        'dist/leaflet-gesture-handling.min.js"></script>'
+    ))
+    script = f"""
+    {{% macro script(this, kwargs) %}}
+    (function() {{
+      var map = {map_name};
+      try {{
+        if (!L.Browser.touch) return;          // desktop unchanged
+        if (!map.gestureHandling) return;      // plugin did not load
+        map.gestureHandling.enable();
+        if (map.gestureHandlingOptions) {{
+          map.gestureHandlingOptions.text = {{
+            touch: "Use two fingers to move the map",
+            scroll: "Use ctrl + scroll to zoom the map",
+            scrollMac: "Use \u2318 + scroll to zoom the map"
+          }};
+        }}
+      }} catch (error) {{}}
+    }})();
+    {{% endmacro %}}
+    """
+    macro = MacroElement()
+    macro._template = Template(script)
+    macro.add_to(m)
+
+
 def _add_zoom_refresh(m: folium.Map, overlays: list) -> None:
     """Force Leaflet raster overlays to redraw after zooming."""
     if not overlays:
@@ -1709,7 +1758,11 @@ def make_map(
         scroll_wheel_zoom=False,
         zoom_snap=0.05,
         zoom_delta=0.25,
+        # Registers the plugin's handler; it is switched on for touch devices
+        # only, in _add_touch_gesture_handling below.
+        gestureHandling=False,
     )
+    _add_touch_gesture_handling(m)
     m.get_root().header.add_child(Element(
         "<style>.leaflet-image-layer{image-rendering:auto!important;}</style>"
     ))
