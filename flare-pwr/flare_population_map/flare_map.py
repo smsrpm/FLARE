@@ -42,6 +42,11 @@ SITE_LOCATION_FILE = ROOT / "data" / "site_location.json"
 # Outer analysis radius applied when a workbook is loaded. Ten miles is the
 # conventional plume-exposure EPZ radius and matches the documented default
 # for the circular map viewport.
+# Root of the FLARE installation. flare_analyzer_shell.py injects FLARE_WORK_DIR
+# when the Dose Map runs as a Plant Analyzer screen; standalone, the Dose Map
+# package sits one level below the FLARE folder.
+FLARE_APP_DIR = Path(globals().get("FLARE_WORK_DIR") or ROOT.parent).resolve()
+
 DEFAULT_RADIUS_MILES = 10.0
 DEFAULT_SITE_LAT = 37.4138
 DEFAULT_SITE_LON = -79.1422
@@ -140,6 +145,66 @@ def load_user_settings():
     except Exception as exc:
         st.warning(f"Could not read saved user settings {USER_SETTINGS_FILE}: {exc}")
         return None
+
+
+def discover_workbook_folders(app_dir: Path) -> list[Path]:
+    """Return folders that directly contain FLARE output workbooks.
+
+    Mirrors the Working Folder selector used by the other FLARE tools. The Plant
+    Analyzer discovers folders holding *_out.csv; the Dose Map needs the
+    *_out.xlsx workbooks, which carry the Input Echo and Dose sheets it reads.
+
+    The selector descends to the run/output folder itself, so a large UA run does
+    not crowd the case list with outputs from every other run at once.
+    """
+    excluded = {
+        "examples", "icons", "install", "manuals", "runtime",
+        "__pycache__", ".git", ".streamlit", "flare_env", "build",
+    }
+    candidates: list[Path] = []
+
+    def _is_excluded(path: Path) -> bool:
+        try:
+            parts = path.relative_to(app_dir).parts
+        except Exception:
+            return True
+        return any(part.lower() in excluded for part in parts if part)
+
+    try:
+        if any(app_dir.glob("*_out.xlsx")):
+            candidates.append(app_dir)
+        for workbook in app_dir.rglob("*_out.xlsx"):
+            folder = workbook.parent
+            try:
+                rel = folder.relative_to(app_dir)
+            except Exception:
+                continue
+            if len(rel.parts) > 4 or _is_excluded(folder):
+                continue
+            candidates.append(folder)
+    except Exception:
+        pass
+
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for folder in sorted(candidates, key=lambda x: str(x).lower()):
+        try:
+            resolved = folder.resolve()
+        except Exception:
+            resolved = folder
+        if resolved not in seen:
+            seen.add(resolved)
+            out.append(folder)
+    return out
+
+
+def working_folder_label(folder: Path) -> str:
+    """Path relative to the FLARE folder, matching the other tools' selectors."""
+    try:
+        rel = folder.resolve().relative_to(FLARE_APP_DIR)
+        return "." if str(rel) == "." else str(rel)
+    except Exception:
+        return str(folder)
 
 
 def safe_workbook_filename(name) -> str:
@@ -564,12 +629,73 @@ with st.sidebar:
 
     st.divider()
     st.header("FLARE radiological case")
+
+    # Working Folder / Case selection, matching the other FLARE tools. The
+    # Dose Map previously accepted a workbook only by upload, which meant
+    # browsing the filesystem for a file the FLARE run had just written into
+    # the case folder alongside it.
+    selected_workbook = None
+    _workbook_folders = discover_workbook_folders(FLARE_APP_DIR)
+    if _workbook_folders:
+        _selected_folder = st.selectbox(
+            "Working Folder",
+            options=_workbook_folders,
+            index=0,
+            format_func=working_folder_label,
+            key="flare_map_working_folder",
+            help="Run/output folder holding the FLARE *_out.xlsx workbooks.",
+        )
+        _folder_workbooks = sorted(Path(_selected_folder).glob("*_out.xlsx"))
+        if _folder_workbooks:
+            _case_labels = ["(none - use upload below)"] + [w.name for w in _folder_workbooks]
+            _selected_case = st.selectbox(
+                "Case",
+                _case_labels,
+                key="flare_map_working_case",
+                help="Select a FLARE output workbook from the working folder.",
+            )
+            if _selected_case != _case_labels[0]:
+                selected_workbook = next(
+                    w for w in _folder_workbooks if w.name == _selected_case
+                )
+        else:
+            st.caption("No *_out.xlsx workbooks in this folder.")
+    else:
+        st.caption(
+            "No FLARE output workbooks found under the FLARE folder. "
+            "Run a case, or upload a workbook below."
+        )
+
     uploader_key = f"flare_workbook_upload_{int(st.session_state.get('workbook_uploader_revision', 0))}"
-    uploaded = st.file_uploader("FLARE output workbook", type=["xlsx"], key=uploader_key)
-    st.caption("Upload a FLARE output workbook to calculate the time-evolving footprint. A geometric preview is shown.")
+    uploaded = st.file_uploader("Or upload a workbook", type=["xlsx"], key=uploader_key)
+    st.caption("Select a case above, or upload a FLARE output workbook, to calculate the time-evolving footprint. A geometric preview is shown.")
     active_workbook_name = None
     restored_workbook_path = st.session_state.pop("restored_workbook_path", None)
-    if restored_workbook_path:
+    # A case chosen from the working folder takes precedence: it is an explicit
+    # selection made this run, unlike a restored or previously stored workbook.
+    if selected_workbook is not None:
+        try:
+            case = load_flare_output(selected_workbook)
+            active_workbook_name = selected_workbook.name
+            tmp_path = selected_workbook
+            st.session_state.active_workbook_name = selected_workbook.name
+            st.session_state.active_workbook_path = str(selected_workbook)
+            st.session_state.active_workbook_saved = False
+            st.caption(f"Working folder case: {selected_workbook.name}")
+            # Same first-load framing as an upload: open on the off-site annulus.
+            _case_signature = f"{selected_workbook}:{selected_workbook.stat().st_mtime}"
+            if st.session_state.get("radius_case_signature") != _case_signature:
+                _eab_miles = case.eab_distance_m / 1609.344
+                _inner_miles = (
+                    _eab_miles if 0.0 < _eab_miles < DEFAULT_RADIUS_MILES else 0.0
+                )
+                st.session_state["radius_range"] = (_inner_miles, DEFAULT_RADIUS_MILES)
+                st.session_state.pop("radius_range_widget_v1", None)
+                st.session_state["radius_case_signature"] = _case_signature
+                st.session_state.pop("export_bytes", None)
+        except Exception as exc:
+            st.error(f"Could not read {selected_workbook.name}: {exc}")
+    elif restored_workbook_path:
         try:
             saved_path = Path(restored_workbook_path).expanduser().resolve()
             if not saved_path.exists():
