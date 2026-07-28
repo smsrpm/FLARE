@@ -312,46 +312,35 @@ def _add_flare_layer_panes(m: folium.Map) -> None:
     macro.add_to(m)
 
 
-def _add_touch_gesture_handling(m: folium.Map) -> None:
-    """Require two fingers to pan the map on touch devices.
+def _add_touch_scroll_release(m: folium.Map) -> None:
+    """Let a one-finger swipe scroll the page on touch devices.
 
-    scroll_wheel_zoom=False governs the mouse wheel only, so it has no effect on
-    a phone or tablet: Leaflet's dragging and touchZoom handlers stay enabled and
-    a one-finger swipe over the map pans it instead of scrolling the page. That
-    made the Dose Map awkward to scroll past on an iPhone while behaving as
-    intended on the desktop.
+    scroll_wheel_zoom=False governs the mouse wheel only, so it does nothing on a
+    phone or tablet. There, Leaflet's dragging handler captures the swipe and pans
+    the map, leaving no way to scroll past the Dose Map.
 
-    leaflet-gesture-handling restores the intent on touch: one finger scrolls the
-    page, two fingers pan and zoom the map, with a brief on-screen hint.
+    Disabling dragging on touch devices releases the swipe back to the page.
+    Pinch-to-zoom is deliberately left enabled, and the +/- buttons and Reset View
+    still work, so the map remains usable.
 
-    The handler is enabled only when Leaflet reports a touch device, so desktop
-    behaviour is untouched - plain scrolling still scrolls the page and the
-    +/- buttons still zoom. If the CDN is unreachable the guard simply finds no
-    handler and the map keeps its previous behaviour rather than erroring.
+    This is applied at runtime rather than through folium.Map(dragging=False)
+    because that option is static and would disable panning on the desktop too,
+    where it is needed to position the site before clicking.
+
+    A previous attempt used leaflet-gesture-handling to get two-finger panning.
+    It was withdrawn: that plugin re-enables scrollWheelZoom whenever its handler
+    is not active, which silently undid scroll_wheel_zoom=False and let the mouse
+    wheel zoom the map on the desktop.
     """
     map_name = m.get_name()
-    m.get_root().header.add_child(Element(
-        '<link rel="stylesheet" '
-        'href="https://unpkg.com/leaflet-gesture-handling@1.2.2/'
-        'dist/leaflet-gesture-handling.min.css"/>'
-        '<script src="https://unpkg.com/leaflet-gesture-handling@1.2.2/'
-        'dist/leaflet-gesture-handling.min.js"></script>'
-    ))
     script = f"""
     {{% macro script(this, kwargs) %}}
     (function() {{
       var map = {map_name};
       try {{
-        if (!L.Browser.touch) return;          // desktop unchanged
-        if (!map.gestureHandling) return;      // plugin did not load
-        map.gestureHandling.enable();
-        if (map.gestureHandlingOptions) {{
-          map.gestureHandlingOptions.text = {{
-            touch: "Use two fingers to move the map",
-            scroll: "Use ctrl + scroll to zoom the map",
-            scrollMac: "Use \u2318 + scroll to zoom the map"
-          }};
-        }}
+        if (!L.Browser.mobile) return;     // desktop unchanged
+        if (map.dragging) map.dragging.disable();
+        if (map.tap) map.tap.disable();
       }} catch (error) {{}}
     }})();
     {{% endmacro %}}
@@ -1758,11 +1747,8 @@ def make_map(
         scroll_wheel_zoom=False,
         zoom_snap=0.05,
         zoom_delta=0.25,
-        # Registers the plugin's handler; it is switched on for touch devices
-        # only, in _add_touch_gesture_handling below.
-        gestureHandling=False,
     )
-    _add_touch_gesture_handling(m)
+    _add_touch_scroll_release(m)
     m.get_root().header.add_child(Element(
         "<style>.leaflet-image-layer{image-rendering:auto!important;}</style>"
     ))
