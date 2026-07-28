@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# FLARE — merged Python environment
+#
+# One environment (flare_env) now serves the whole FLARE suite, including the
+# Dose Map screen of the Plant Analyzer.  The Dose Map's former private .venv
+# is no longer used; flare_population_map/requirements.txt is retained only so
+# the Dose Map package stays self-describing.
+#
+# Install:  flare_env\Scripts\activate
+#           python -m pip install -r requirements.txt
+#
+# Named requirements.txt, not requirements-flare.txt, so Streamlit Community
+# Cloud picks it up. Cloud recognises only specific file names, searching the
+# entrypoint file's directory and then the repository root. flare_home.py sits
+# at the root beside this file.
+#
+# Python 3.11 or 3.12, 64-bit.
+# ---------------------------------------------------------------------------
+
+# --- Core FLARE suite -------------------------------------------------------
+numpy
+scipy
+pandas
+openpyxl
+matplotlib
+XSteamPython
+plotly
+reportlab
+python-docx
+anthropic
+
+# --- Streamlit UI -----------------------------------------------------------
+# Floor: >=1.56. FLARE renders its browser-side controls with st.iframe, which
+# was introduced in 1.56.0 when st.components.v1.html was deprecated. The older
+# >=1.37 floor applied before that migration.
+#
+# Ceiling: <2 blocks a major release, which could change layout or component
+# behaviour without notice. FLARE has been verified against 1.60.
+#
+# st.components.v1.html is no longer used anywhere in FLARE. The remaining v1
+# API in use is components.declare_component (the Dose Map radius-commit
+# control), which is a separate interface and was not part of that deprecation.
+streamlit>=1.56,<2
+
+# --- Dose Map screen (flare_population_map) ---------------------------------
+folium
+streamlit-folium>=0.15.1
+branca
+Pillow
+streamlit-current-location
+
+# --- National population database builder (development utility) -------------
+duckdb
+dbfread
+
+# --- Test suite -------------------------------------------------------------
+pytest

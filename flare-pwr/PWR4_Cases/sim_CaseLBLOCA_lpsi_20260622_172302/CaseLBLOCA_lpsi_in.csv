@@ -1,0 +1,366 @@
+"# CaseLBLOCA_lpsi — Cold-leg DEGB LOCA with delayed LPSI reflood, 4-loop W PWR (3411 MWt)",,,,,
+# Same DEGB as CaseLBLOCA_cold but emphasises the late-phase LPSI reflood.,,,,,
+# Extended endtime (1600 s) captures accumulator depletion and LPSI takeover.,,,,,
+# 4-loop LPSI: 350 kg/s (vs 40 kg/s SMR); LPSI actuation at ~218 psia.,,,,,
+# ── 4-Loop Westinghouse PWR — 3411 MWt Reference Plant ──────────────────────,,,,,
+"# 193 fuel assemblies (17x17), 50952 Zircaloy-4 clad fuel pins.",,,,,
+# Cold-leg ID: 27.5 in (0.699 m). Hot-leg ID: 29 in (0.737 m).,,,,,
+# Active fuel length: 12 ft (3.658 m). RPV ID: 173 in (4.394 m).,,,,,
+"# RCS total volume: 14,974 ft³ (424 m³); pressurizer: 1,800 ft³ (51 m³).",,,,,
+"# Loop piping (hot legs, cold legs, crossover legs, pump casings, SG primary):",,,,,
+# 424 - 51 (PZR) - 139 (RPV) = ~234 m³  — loop >> pressurizer by ~4.6x.,,,,,
+#,,,,,
+# Plant Design,Value,Units,Description,,
+plant_design = 'westinghouse_4_loop',westinghouse_4_loop,,"Selects core geometry (N_pins, pin OD/pitch, clad thickness, fuel pellet radius, active fuel length) from plant_designs.json",,
+,,,,,
+"# RCS Geometry — 173-inch RPV ID, 20 ft lower CV, 10 ft upper CV",,,,,
+R5_area          = math.pi * (173*0.0254/2)**2  # [m²]  173-in RPV ID = 15.17 m²,15.165248,m²,173-in RPV ID = 15.17 m²,,
+R5_lowCV_height  = 20 * 0.3048                  # [m]   lower barrel + lower plenum (~20 ft),6.096,m,lower barrel + lower plenum (~20 ft),,
+R5_highCV_height = 10 * 0.3048                  # [m]   upper plenum + upper head (~10 ft),3.048,m,upper plenum + upper head (~10 ft),,
+loop_vol_m3      = 234.0 ,234,m³,4 hot legs + 8 cold legs + crossover legs + 4 RCP casings + 4 SG primary sides,,
+,,,,,
+"# Pressurizer — 1,800 ft³, 52 ft 9 in tall, 7 ft 8 in dia (W 4-loop reference)",,,,,
+,,,,,
+pzr_height     = 16.1                           # [m]   52 ft 9 in,16.1,m,52 ft 9 in,,
+,,,,,
+pzr_level_init = 0.65 * pzr_height              # [m]   65% level at full power,,m,65% level at full power,,
+pzr_level_hi   = 0.90 * pzr_height              # [m]   high level limit,,m,high level limit,,
+,,,,,
+"# Accumulators — 4 × 1300 ft³ total, 4 × 900 ft³ liquid = 3600 ft³; 1600 ft³ N₂ gas",,,,,
+acc_totvol = 5200.0 * 0.02832                   # [m³]  5200 ft³ total (4 tanks),147.264,m³,5200 ft³ total (4 tanks),,
+acc_gasvol = 1600.0 * 0.02832                   # [m³]  1600 ft³ N₂ gas space,45.312,m³,1600 ft³ N₂ gas space,,
+acc_area   = 4 * 66.63 * 0.3048**2             # [m²]  4× cross-section (for level calc),24.760518,m²,4× cross-section (for level calc),,
+acc_length = acc_totvol / acc_area              # [m]   derived length,,m,derived length,,
+acc_narea  = 4 * 0.032 * 0.3048**2             # [m²]  4 injection nozzles,0.011892,m²,4 injection nozzles,,
+,,,,,
+# Initial Conditions — 4-loop W PWR full-power operating state,,,,,
+pressure_kPa       = 15513.0       # [kPa] 2250 psia — standard 4-loop operating pressure,15513,kPa,2250 psia — standard 4-loop operating pressure,,
+temp_core_exit     = 324.7         # [°C] ~616°F — standard 4-loop core-exit temperature,324.7,°C,~616°F — standard 4-loop core-exit temperature,,
+# Reactor Power and Decay Heat,,,,,
+total_power        = 3411          # [MWt] 4-loop W reference (Watts Bar / standard W design),3411,MWt,4-loop W reference (Watts Bar / standard W design),,
+fr35 = 0.81,0.81,,,,
+fr38 = 0.13,0.13,,,,
+fr39 = 0.06,0.06,,,,
+# Peaking factors — 4-loop W PWR design values,,,,,
+F_r = 1.65                         # radial hot-pin peaking factor (larger core),1.65,,radial hot-pin peaking factor (larger core),,
+F_z = 1.55                         # axial peaking factor (chopped cosine),1.55,,axial peaking factor (chopped cosine),,
+# Break discharge coefficients,,,,,
+Cd_sub = 0.93,0.93,,,,
+Cd_sat = 0.93,0.93,,,,
+transition_mixture_mass = 0.463,0.463,,,,
+"# PORV — 2 PORVs, each 0.018 m² effective area",,,,,
+PORV_setpoint_kPa = 15990          # [kPa] ~2320 psia,15990,kPa,~2320 psia,,
+PORV_area_m2      = 0.036          # [m²] 2 PORVs combined,0.036,m²,2 PORVs combined,,
+P_relax = 0.4,0.4,,,,
+# ECCS — HPSI and LPSI for 4-loop W plant,,,,,
+p_si_setpoint_Pa    = 11.7e6       # [Pa] ~1700 psia SI actuation setpoint,11700000,Pa,~1700 psia SI actuation setpoint,,
+hpsi_mdot_rated     = 160.0        # [kg/s] 4 trains × 40 kg/s each,160,kg/s,4 trains × 40 kg/s each,,
+hpsi_p_shutoff_Pa   = 12.5e6       # [Pa] ~1813 psia,12500000,Pa,~1813 psia,,
+hpsi_p_rated_Pa     = 4.0e6        # [Pa] rated backpressure,4000000,Pa,rated backpressure,,
+hpsi_delay_s        = 25.0         # [s] actuation delay,25,s,actuation delay,,
+lpsi_mdot_rated     = 350.0        # [kg/s] low-head SI + core spray,350,kg/s,low-head SI + core spray,,
+lpsi_delay_s        = 35.0         # [s],35,s,,,
+rwst_mass_initial   = 9.0e6        # [kg] RWST for 4-loop (~2.4M gal),9000000,kg,RWST for 4-loop (~2.4M gal),,
+# Kinetics defaults,,,,,
+trip_rod_insertion_time_s = 2.0    # [s] rod insertion ramp (4-loop: 2 s vs 0 for SMR),2,s,rod insertion ramp (4-loop: 2 s vs 0 for SMR),,
+rcs_enthalpy_relax_tau_s = 25.0,25,,,,
+,,,,,
+# NOTBADTRAD dose screening — 4-loop PWR containment,,,,,
+nbt_containment_volume_ft3  = 2.6e6   # [ft³] large dry PWR containment,2600000,ft³,large dry PWR containment,,
+nbt_sprays_on = False,False,,,,
+nbt_wind_speed_m_s = .33    # Conservative value,0.33,,Conservative value,,
+nbt_distance_eab_m          = 695.0    # [m] 0.43 miles,695,m,0.43 miles,,
+nbt_distance_lpz_m          = 8050.0   # [m] 5 miles,8050,m,5 miles,,
+nbt_cr_flow_cfm = 600.0,600,,,,
+nbt_cr_volume_ft3           = 80000.0,80000,,,,
+nbt_lpz_integration_hr = 24.0   # time [hr] this is 24 hours at the 2 hr chi/Q,24,hr,time  this is 24 hours at the 2 hr chi/Q,,
+nbt_burnup_gwdmtu = 40    # GWd/MTU ,40,,GWd/MTU,,
+,,,,,
+,,,,,
+# Simulation flags,,,,,
+endtime    = 300,1600,,,,
+# Cold-leg DEGB,,,,,
+diameter_break = 27.5 * 0.0254,0.6985,,,,
+# Post-CHF model,,,,,
+"post_chf_model = ""cold_leg""    # bromley: film boiling on DNBR<1 or level trigger; cold_leg Trigger-a2 fires spuriously at high pump flow",cold_leg,,bromley: film boiling on DNBR<1 or level trigger; cold_leg Trigger-a2 fires spuriously at high pump flow,,
+htc_post_chf   = 450,450,,,,
+"film_boiling_level_m        = 4.0    # [m] film boiling when level < 4.0 m (~upper half of core uncovered; fuel bottom ~1.5 m, top ~5.2 m)",4,m,"film boiling when level < 4.0 m (~upper half of core uncovered; fuel bottom ~1.5 m, top ~5.2 m)",,
+dry_core_trigger_level_m    = 2.0    # [m] dry-core model when level < 2.0 m (just above bottom of active fuel),2,m,dry-core model when level < 2.0 m (just above bottom of active fuel),,
+# Source term,,,,,
+"source_term_model = ""RG1183_LOCA""",RG1183_LOCA,,,,
+,,,,,
+"# RCP pump parameters — 4 x 107,800 gpm = 431,200 gpm total (4-loop W reference)",,,,,
+"pump_rated_flow_m3s      = 27.204       # [m³/s]  4 × 107,800 gpm",27.204,m³/s,"4 × 107,800 gpm",,
+pump_rated_head_m        = 82.30        # [m]     270 ft per pump,82.3,m,270 ft per pump,,
+pump_rated_torque_Nm     = 56063.6,56063.6,,,,
+pump_rated_density_kg_m3 = 720.0,720,,,,
+pump_inertia_kg_m2       = 129.357,129.357,,,,
+pump_flow_area_m2        = 2.1988,2.1988,,,,
+pump_friction_torque_Nm  = 226.476,226.476,,,,
+pump_friction_speed2_Nm  = 226.476,226.476,,,,
+,,,,,
+"# Time-Series Table  —  B=Structure Q, C=Decay Heat, D=SG Q, E=SI Flow, F=rho_ext",,,,,
+,,,,,
+Time (s),Structure Q (MW),Decay Heat (MW),SG Q (MW),SI Flow (kg/s),rho_ext (pcm)
+0,0,0,0,0,0
+0.5018985,0,0,0,0,0
+1.001899,0,0,0,0,0
+1.501899,0,0,0,0,0
+2.001899,0,0,0,0,0
+2.501899,0,0,0,0,0
+3.001899,0,0,0,0,0
+3.501899,0,0,0,0,0
+4.001898,0,0,0,0,0
+4.501898,0,0,0,0,0
+5.001898,0,0,0,0,0
+5.501898,0,0,0,0,0
+6.001898,0,0,0,0,0
+6.501898,0,0,0,0,0
+7.001898,0,0,0,0,0
+7.501898,0,0,0,0,0
+8.001899,0,0,0,0,0
+8.501899,0,0,0,0,0
+9.001899,0,0,0,0,0
+9.501899,0,0,0,0,0
+10.0019,0,0,0,0,0
+10.5019,0,0,0,0,0
+11.0019,0,0,0,0,0
+11.5019,0,0,0,0,0
+12.0019,0,0,0,0,0
+12.5019,0,0,0,0,0
+13.0019,0,0,0,0,0
+13.5019,0,0,0,0,0
+14.0019,0,0,0,0,0
+14.5019,0,0,0,0,0
+15.0009,0,0,0,0,0
+16.00145,0,0,0,0,0
+17.00123,0,0,0,0,0
+18.00143,0,0,0,0,0
+19.00205,0,0,0,0,0
+20.00134,0,0,0,0,0
+21.00207,0,0,0,0,0
+22.00146,0,0,0,0,0
+23.00175,0,0,0,0,0
+24.00228,0,0,0,0,0
+25.00255,0,0,0,0,0
+26.00186,0,0,0,0,0
+27.00222,0,0,0,0,0
+28.00129,0,0,0,0,0
+29.00226,0,0,0,0,0
+30.00151,0,0,0,0,0
+31.00233,0,0,0,0,0
+32.0022,0,0,0,0,0
+33.00128,0,0,0,0,0
+34.00151,0,0,0,0,0
+35.00241,0,0,0,0,0
+36.00114,0,0,0,0,0
+37.00129,0,0,0,0,0
+38.00191,0,0,0,0,0
+39.00264,0,0,0,0,0
+40.00231,0,0,0,0,0
+41.00219,0,0,0,0,0
+42.00234,0,0,0,0,0
+43.00148,0,0,0,0,0
+44.0009,0,0,0,0,0
+45.0009,0,0,0,0,0
+46.00302,0,0,0,0,0
+47.00115,0,0,0,0,0
+48.00106,0,0,0,0,0
+49.00153,0,0,0,0,0
+50.00215,0,0,0,0,0
+51.00227,0,0,0,0,0
+52.00236,0,0,0,0,0
+53.00134,0,0,0,0,0
+54.0028,0,0,0,0,0
+55.00189,0,0,0,0,0
+56.00219,0,0,0,0,0
+57.00259,0,0,0,0,0
+58.00272,0,0,0,0,0
+59.00132,0,0,0,0,0
+60.00243,0,0,0,0,0
+61.00312,0,0,0,0,0
+62.00296,0,0,0,0,0
+63.00141,0,0,0,0,0
+64.00125,0,0,0,0,0
+65.00156,0,0,0,0,0
+66.00135,0,0,0,0,0
+67.00175,0,0,0,0,0
+68.00215,0,0,0,0,0
+69.00203,0,0,0,0,0
+70.00179,0,0,0,0,0
+71.00185,0,0,0,0,0
+72.00232,0,0,0,0,0
+73.00151,0,0,0,0,0
+74.00222,0,0,0,0,0
+75.00156,0,0,0,0,0
+76.00105,0,0,0,0,0
+77.00217,0,0,0,0,0
+78.00243,0,0,0,0,0
+79.00249,0,0,0,0,0
+80.00157,0,0,0,0,0
+81.00143,0,0,0,0,0
+82.0023,0,0,0,0,0
+83.00165,0,0,0,0,0
+84.00195,0,0,0,0,0
+85.00212,0,0,0,0,0
+86.00098,0,0,0,0,0
+87.00189,0,0,0,0,0
+88.00129,0,0,0,0,0
+89.00154,0,0,0,0,0
+90.00187,0,0,0,0,0
+91.00144,0,0,0,0,0
+92.00104,0,0,0,0,0
+93.0014,0,0,0,0,0
+94.00131,0,0,0,0,0
+95.00197,0,0,0,0,0
+96.00201,0,0,0,0,0
+97.0017,0,0,0,0,0
+98.00154,0,0,0,0,0
+99.00185,0,0,0,0,0
+100.0011,0,0,0,0,0
+110.0013,0,0,0,0,0
+120.0018,0,0,0,0,0
+130.0021,0,0,0,0,0
+140.0014,0,0,0,0,0
+150.0019,0,0,0,0,0
+160.0022,0,0,0,0,0
+170.0022,0,0,0,0,0
+180.0017,0,0,0,0,0
+190.0019,0,0,0,0,0
+200.0019,0,0,0,0,0
+210.0012,0,0,0,0,0
+220.0012,0,0,0,0,0
+230.0017,0,0,0,0,0
+240.002,0,0,0,0,0
+250.0013,0,0,0,0,0
+260.0018,0,0,0,0,0
+270.0012,0,0,0,0,0
+280.0017,0,0,0,0,0
+290.0015,0,0,0,0,0
+300.0016,0,0,0,0,0
+310.0019,0,0,0,0,0
+320.0017,0,0,0,0,0
+330.0015,0,0,0,0,0
+340.0019,0,0,0,0,0
+350.0017,0,0,0,0,0
+360.0015,0,0,0,0,0
+370.0015,0,0,0,0,0
+380.0014,0,0,0,0,0
+390.002,0,0,0,0,0
+400.002,0,0,0,0,0
+410.0016,0,0,0,0,0
+420.0016,0,0,0,0,0
+430.002,0,0,0,0,0
+440.0019,0,0,0,0,0
+450.0017,0,0,0,0,0
+460.0018,0,0,0,0,0
+470.0013,0,0,0,0,0
+480.0015,0,0,0,0,0
+490.0016,0,0,0,0,0
+500.002,0,0,0,0,0
+510.0025,0,0,0,0,0
+520.002,0,0,0,0,0
+530.0014,0,0,0,0,0
+540.0021,0,0,0,0,0
+550.0018,0,0,0,0,0
+560.0022,0,0,0,0,0
+570.0018,0,0,0,0,0
+580.0022,0,0,0,0,0
+590.0013,0,0,0,0,0
+600.0012,0,0,0,0,0
+610.0012,0,0,0,0,0
+620.0013,0,0,0,0,0
+630.0016,0,0,0,0,0
+640.0024,0,0,0,0,0
+650.0023,0,0,0,0,0
+660.0018,0,0,0,0,0
+670.0025,0,0,0,0,0
+680.0012,0,0,0,0,0
+690.0018,0,0,0,0,0
+700.0015,0,0,0,0,0
+710.0018,0,0,0,0,0
+720.0015,0,0,0,0,0
+730.0015,0,0,0,0,0
+740.0024,0,0,0,0,0
+750.0024,0,0,0,0,0
+760.002,0,0,0,0,0
+770.0021,0,0,0,0,0
+780.0016,0,0,0,0,0
+790.0016,0,0,0,0,0
+800.0021,0,0,0,0,0
+810.0024,0,0,0,0,0
+820.0017,0,0,0,0,0
+830.0017,0,0,0,0,0
+840.002,0,0,0,0,0
+850.0017,0,0,0,0,0
+860.0022,0,0,0,0,0
+870.0022,0,0,0,0,0
+880.0027,0,0,0,0,0
+890.0014,0,0,0,0,0
+900.0018,0,0,0,0,0
+910.0021,0,0,0,0,0
+920.0014,0,0,0,0,0
+930.002,0,0,0,0,0
+940.0016,0,0,0,0,0
+950.0013,0,0,0,0,0
+960.0021,0,0,0,0,0
+970.0012,0,0,0,0,0
+980.0018,0,0,0,0,0
+990.0022,0,0,0,0,0
+1000.002,0,0,0,0,0
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,
+,,,,,

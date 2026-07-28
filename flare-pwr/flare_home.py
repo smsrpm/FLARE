@@ -216,7 +216,14 @@ if st.session_state.page != "home":
     elif page == "editor":
         target = "flare_model_editor.py"
     elif page == "analyzer":
-        target = "flare_analyzer.py"
+        # The Plant Analyzer is a multi-screen tool.  flare_analyzer_shell.py
+        # draws the folder-tab strip and then runs exactly one screen:
+        # flare_analyzer.py (Plant Replay) or
+        # flare_population_map/flare_map.py (Dose Map).
+        # Fall back to the single-screen analyzer if the shell is absent.
+        target = "flare_analyzer_shell.py"
+        if not (WORK_DIR / target).exists():
+            target = "flare_analyzer.py"
     elif page == "risk":
         target = "flare_risk.py"
     else:
@@ -382,137 +389,6 @@ section[data-testid="stSidebar"] {{ display:none; }}
     font-family:'Share Tech Mono',monospace; font-size:0.65rem;
     letter-spacing:0.1em; color:#5a7a99; opacity:0.5;
 }}
-
-/* ── Home-page tool icon grids ───────────────────────────────────────────── */
-.flare-tool-grid {{
-    display:grid;
-    grid-template-columns:repeat(5, minmax(0, 1fr));
-    gap:clamp(0.45rem,1.6vw,1.35rem);
-    align-items:center;
-    justify-items:center;
-    width:100%;
-    max-width:1400px;
-    margin:1.0rem auto 1.3rem auto;
-    position:relative;
-    z-index:1;
-}}
-.flare-tool-card {{
-    display:block;
-    width:100%;
-    max-width:260px;
-    text-decoration:none !important;
-}}
-.flare-tool-card img {{
-    width:100%;
-    height:auto;
-    display:block;
-    border-radius:12px;
-    border:2px solid #1c2d44;
-    transition:transform 0.15s ease,border-color 0.15s ease,box-shadow 0.15s ease;
-}}
-.flare-tool-card:hover img {{
-    transform:scale(1.02);
-    border-color:#e8530a;
-    box-shadow:0 0 28px rgba(232,83,10,0.45);
-}}
-.flare-tool-fallback {{
-    border:2px solid #1c2d44;
-    border-radius:12px;
-    padding:1rem;
-    text-align:center;
-    background:#0d1a28;
-    color:#e8530a;
-    font-family:'Share Tech Mono',monospace;
-    font-size:0.9rem;
-    cursor:pointer;
-}}
-.flare-manual-grid {{
-    display:grid;
-    grid-template-columns:repeat(2, minmax(0, 1fr));
-    gap:clamp(0.75rem,2vw,1.4rem);
-    justify-content:center;
-    align-items:center;
-    width:min(360px, 38vw);
-    margin:1.2rem auto 2.2rem auto;
-    position:relative;
-    z-index:1;
-}}
-.flare-manual-card {{
-    display:block;
-    width:100%;
-    text-decoration:none !important;
-}}
-.flare-manual-card img {{
-    width:100%;
-    height:auto;
-    display:block;
-    border-radius:12px;
-    border:2px solid #1c2d44;
-    cursor:pointer;
-    transition:transform 0.15s ease,border-color 0.15s ease,box-shadow 0.15s ease;
-}}
-.flare-manual-card:hover img {{
-    transform:scale(1.02);
-    border-color:#e8530a;
-    box-shadow:0 0 28px rgba(232,83,10,0.45);
-}}
-.flare-manual-missing {{
-    color:#5a7a99;
-    font-size:0.75rem;
-    margin-top:0.3rem;
-}}
-
-/* Keep the launcher compact on phones instead of allowing Streamlit columns
-   to stack the icon cards into a long single-column mobile page. */
-@media (max-width: 700px) {{
-    .block-container {{
-        padding-left:0.45rem !important;
-        padding-right:0.45rem !important;
-    }}
-    .hero {{
-        padding:0.25rem 0.35rem 0.65rem !important;
-    }}
-    .flare-title {{
-        font-size:clamp(3.5rem,17vw,6rem) !important;
-        letter-spacing:0.10em !important;
-    }}
-    .flare-sub {{
-        font-size:clamp(0.60rem,2.65vw,0.95rem) !important;
-        letter-spacing:0.14em !important;
-        line-height:1.45 !important;
-    }}
-    .divider {{
-        margin:0.65rem auto 0.75rem !important;
-    }}
-    .flare-tool-grid {{
-        grid-template-columns:repeat(5, minmax(0, 1fr));
-        gap:0.32rem;
-        margin:0.25rem auto 0.65rem auto;
-    }}
-    .flare-tool-card img {{
-        border-radius:7px;
-        border-width:1px;
-    }}
-    .flare-tool-fallback {{
-        border-radius:7px;
-        border-width:1px;
-        padding:0.35rem 0.1rem;
-        font-size:0.42rem;
-    }}
-    .flare-manual-grid {{
-        width:min(150px, 42vw);
-        gap:0.45rem;
-        margin:0.55rem auto 1.0rem auto;
-    }}
-    .flare-manual-card img {{
-        border-radius:7px;
-        border-width:1px;
-    }}
-    .chat-wrap {{
-        margin-top:0.8rem !important;
-    }}
-}}
-
 /* FLARE Assistant chat */
 .chat-wrap {{
     max-width:1200px; margin:1.5rem auto 0; position:relative; z-index:1;
@@ -719,7 +595,7 @@ _TOOL_TIPS = {
     "simulator":  "PWR Simulator — run design-basis accident simulations",
     "ua":         "Uncertainty Analysis — Monte Carlo parameter sensitivity",
     "editor":     "Model Editor — create and edit FLARE input decks",
-    "analyzer":   "Plant Analyzer — replay and compare simulation results",
+    "analyzer":   "Plant Analyzer — plant replay and dose-map consequence footprint",
     "risk":       "Risk Assessment — probabilistic safety screening",
 }
 
@@ -727,33 +603,54 @@ def image_link(img_base64, page, label):
     if img_base64 is None:
         return ""
     tip = _TOOL_TIPS.get(page, label)
-    return (
-        f'<a class="flare-tool-card" href="?page={page}" target="_self" title="{tip}">'
-        f'<img src="{img_base64}" alt="{label}"/>'
-        f'</a>'
-    )
+    return f"""
+    <a href="?page={page}" target="_self" style="text-decoration:none;display:block;"
+       title="{tip}">
+        <img src="{img_base64}" style="
+            width:100%;
+            border-radius:12px;
+            border:2px solid #1c2d44;
+            transition:transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        "
+        onmouseover="this.style.transform='scale(1.02)';this.style.borderColor='#e8530a';this.style.boxShadow='0 0 28px rgba(232,83,10,0.45)';"
+        onmouseout="this.style.transform='scale(1.0)';this.style.borderColor='#1c2d44';this.style.boxShadow='none';"
+        alt="{label}"/>
+    </a>
+    """
 
-# ── Home Screen Layout — fixed desktop-style grid ──────────────────────────
-_risk_card = (
-    image_link(IMG_RISK, "risk", "Risk Assessment")
-    if IMG_RISK
-    else (
-        '<a class="flare-tool-card" href="?page=risk" target="_self" title="Risk Assessment — probabilistic safety screening">'
-        '<div class="flare-tool-fallback">⚛️<br><br>RISK<br>ASSESSMENT</div>'
-        '</a>'
-    )
-)
+# ── Home Screen Layout — five equal columns ───────────────────────────────
+col1, col2, col3, col4, col5 = st.columns(5)
 
-st.markdown(
-    '<div class="flare-tool-grid">'
-    f'{image_link(IMG_SIM,  "simulator", "PWR Simulator")}'
-    f'{image_link(IMG_UA,   "ua",        "Uncertainty Analysis")}'
-    f'{image_link(IMG_EDIT, "editor",    "Model Editor")}'
-    f'{image_link(IMG_PA,   "analyzer",  "Plant Analyzer")}'
-    f'{_risk_card}'
-    '</div>',
-    unsafe_allow_html=True,
-)
+with col1:
+    if IMG_SIM:  st.markdown(image_link(IMG_SIM,  "simulator", "PWR Simulator"),      unsafe_allow_html=True)
+
+with col2:
+    if IMG_UA:   st.markdown(image_link(IMG_UA,   "ua",         "Uncertainty Analysis"), unsafe_allow_html=True)
+
+with col3:
+    if IMG_EDIT: st.markdown(image_link(IMG_EDIT, "editor",     "Model Editor"),       unsafe_allow_html=True)
+
+with col4:
+    if IMG_PA:   st.markdown(image_link(IMG_PA,   "analyzer",   "Plant Analyzer"),     unsafe_allow_html=True)
+
+with col5:
+    if IMG_RISK:
+        st.markdown(image_link(IMG_RISK, "risk", "Risk Assessment"), unsafe_allow_html=True)
+    else:
+        # Text fallback if icon not yet available
+        st.markdown(
+            f'<a href="?page=risk" target="_self" style="text-decoration:none;display:block;">'
+            f'<div style="border:2px solid #1c2d44;border-radius:12px;padding:1rem;'
+            f'text-align:center;background:#0d1a28;color:#e8530a;'
+            f'font-family:Share Tech Mono,monospace;font-size:0.9rem;cursor:pointer;'
+            f'transition:border-color 0.15s ease,box-shadow 0.15s ease;"'
+            f' onmouseover="this.style.borderColor=\'#e8530a\';'
+            f'this.style.boxShadow=\'0 0 28px rgba(232,83,10,0.45)\';"'
+            f' onmouseout="this.style.borderColor=\'#1c2d44\';'
+            f'this.style.boxShadow=\'none\';">'
+            f'⚛️<br><br>RISK<br>ASSESSMENT</div></a>',
+            unsafe_allow_html=True,
+        )
 
 # ── FLARE Assistant ───────────────────────────────────────────────────────────
 if "chat_history" not in st.session_state:
@@ -839,26 +736,44 @@ def manual_icon_html(img_b64, docx_name, label):
         b64_doc = base64.b64encode(docx_bytes).decode()
         href = f"data:{DOCX_MIME};base64,{b64_doc}"
         return (
-            f'<a class="flare-manual-card" href="{href}" download="{docx_name}" target="_self">'
-            f'<img src="{img_src}" alt="{label}"/>'
-            f'</a>'
+            f'<a href="{href}" download="{docx_name}" target="_self"'
+            f' style="text-decoration:none;display:block;">'
+            f'<img src="{img_src}" alt="{label}" style="'
+            f'width:100%;display:block;border-radius:12px;'
+            f'border:2px solid #1c2d44;cursor:pointer;'
+            f'transition:transform 0.15s ease,border-color 0.15s ease,box-shadow 0.15s ease;"'
+            f' onmouseover="this.style.transform=\'scale(1.02)\';'
+            f'this.style.borderColor=\'#e8530a\';'
+            f'this.style.boxShadow=\'0 0 28px rgba(232,83,10,0.45)\';"'
+            f' onmouseout="this.style.transform=\'scale(1.0)\';'
+            f'this.style.borderColor=\'#1c2d44\';'
+            f'this.style.boxShadow=\'none\';"'
+            f'/></a>'
         )
     elif img_b64:
         return (
-            f'<div class="flare-manual-card">'
-            f'<img src="{img_src}" alt="{label}" style="opacity:0.4;"/>'
-            f'<p class="flare-manual-missing">{docx_name} not found in manuals/ or Manuals/.</p>'
-            f'</div>'
+            f'<img src="{img_src}" alt="{label}" style="'
+            f'width:100%;display:block;border-radius:12px;'
+            f'border:2px solid #1c2d44;opacity:0.4;"/>'
+            f'<p style="color:#5a7a99;font-size:0.75rem;margin-top:0.3rem;">'
+            f'{docx_name} not found in manuals/ or Manuals/.</p>'
         )
     return ""
 
-st.markdown(
-    '<div class="flare-manual-grid">'
-    f'{manual_icon_html(IMG_TM, "FLARE_Code_Theory_Manual.docx", "Theory Manual")}'
-    f'{manual_icon_html(IMG_UM, "FLARE_Users_Manual.docx", "User\'s Manual")}'
-    '</div>',
-    unsafe_allow_html=True,
-)
+st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
+_, mcol1, mcol2, _ = st.columns([3, 1, 1, 3])
+
+with mcol1:
+    st.markdown(
+        manual_icon_html(IMG_TM, "FLARE_Code_Theory_Manual.docx", "Theory Manual"),
+        unsafe_allow_html=True,
+    )
+
+with mcol2:
+    st.markdown(
+        manual_icon_html(IMG_UM, "FLARE_Users_Manual.docx", "User's Manual"),
+        unsafe_allow_html=True,
+    )
 
 
 # ── Optional FLARE file context for Assistant ────────────────────────────────
@@ -1482,9 +1397,21 @@ try:
         "data:text/html;base64,"
         + base64.b64encode(_input_hardening_html.encode("utf-8")).decode("ascii")
     )
-    # st.components.v1.html is deprecated. Use st.iframe for this hidden,
-    # best-effort browser-side input hardening shim.
-    st.iframe(_input_hardening_src, height=0, width=0, scrolling=False)
+    # Hidden, best-effort browser-side input hardening shim.
+    #
+    # This previously called st.iframe(..., height=0, width=0, scrolling=False),
+    # which could never succeed: st.iframe takes no "scrolling" argument, and it
+    # rejects width=0 and height=0 as invalid. All three raised, and the bare
+    # "except Exception: pass" below swallowed them, so the shim silently never
+    # ran. st.iframe requires a positive size, so the frame is created at 1x1
+    # and collapsed with CSS instead.
+    st.markdown(
+        "<style>div[data-testid=\"stIFrame\"]:has(iframe[src^=\"data:text/html\"])"
+        "{height:0 !important;min-height:0 !important;margin:0 !important;"
+        "padding:0 !important;overflow:hidden !important;}</style>",
+        unsafe_allow_html=True,
+    )
+    st.iframe(_input_hardening_src, height=1, width=1)
 except Exception:
     pass
 

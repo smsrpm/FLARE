@@ -27,6 +27,8 @@ CONTENTS
 
   OS          Windows 10 or Windows 11 (64-bit)
   Python      3.11 or 3.12 -- from python.org, must be added to PATH
+  Note        One environment (flare_env) now serves the whole suite,
+              including the Plant Analyzer Dose Map screen.
   RAM         4 GB minimum; 8 GB recommended for batch UA runs
   Disk        ~500 MB for the virtual environment; ~50 MB per run directory
   Network     Required only for AI narrative (Anthropic API) and ngrok
@@ -61,10 +63,13 @@ CONTENTS
 
   Open PowerShell and run:
 
-    cd C:\Users\%USERNAME%
+    cd "C:\Users\<you>\Documents\FLARE\Install"
     python -m venv flare_env
 
-  This creates an isolated Python environment at C:\Users\<you>\flare_env.
+  NOTE: launch_flare.bat and start_streamlit.ps1 create and repair this
+  environment automatically, so this step is usually unnecessary.
+
+  This creates an isolated Python environment at FLARE\Install\flare_env.
   The environment only needs to be created once -- it persists between sessions.
 
   NOTE: The launch_flare.bat launcher activates the flare_env environment
@@ -78,7 +83,7 @@ CONTENTS
   Activate the new environment, then install all packages with one command:
 
     flare_env\Scripts\activate
-    python -m pip install numpy pandas scipy openpyxl matplotlib XSteamPython plotly streamlit reportlab python-docx anthropic
+    python -m pip install -r ..\requirements.txt
 
   Packages installed:
 
@@ -93,11 +98,19 @@ CONTENTS
     python-docx         Word document generation
     anthropic           Anthropic Claude API client for AI narrative features
 
-  Verify the key packages installed correctly:
+  Additional packages for the Plant Analyzer Dose Map screen:
 
-    python -c "import openpyxl; import streamlit; import XSteamPython; print('OK')"
+    folium / streamlit-folium   Interactive map viewport
+    branca                      Map overlays and legends
+    Pillow                      Dose and deposition raster overlays
+    streamlit-current-location  Browser geolocation for the release site
+    duckdb / dbfread            National Census population database builder
 
-  Expected output: OK
+  Verify the whole installation, including the Dose Map screen:
+
+    python verify_flare_environment.py
+
+  It reports every missing library and file, and exits 0 when FLARE can start.
 
 
   2.4  EXTRACT THE FLARE PACKAGE
@@ -112,7 +125,10 @@ CONTENTS
     Python modules
       flare_home.py, flare_sim.py, flare_ui.py, flare_ua.py, flare_risk.py
       flare_sim_batch_worker.py, flare_ua_worker.py, flare_risk_worker.py
-      flare_model_editor.py, flare_analyzer.py
+      flare_model_editor.py, flare_analyzer.py, flare_analyzer_shell.py
+
+    Plant Analyzer Dose Map screen
+      flare_population_map\  (flare_map.py, flare_map_core\, data\)
 
     Launcher scripts
       launch_flare.bat

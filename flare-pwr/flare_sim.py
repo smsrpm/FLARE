@@ -5,7 +5,7 @@ Original author: R. P. Martin  Version 1.0  May 20 2026
 """
 
 from __future__ import annotations
-import sys, shutil, subprocess, importlib, importlib.util, os, functools, tempfile
+import sys, shutil, subprocess, importlib, importlib.util, os, functools, tempfile, json
 from typing import Dict, Iterable, Optional, Tuple
 from pathlib import Path
 
@@ -2399,6 +2399,100 @@ def get_variable(namespace, var_name, default):
     return value
 
 
+
+
+def _normalise_design_name(value) -> str:
+    """Return a forgiving comparison key for plant-design names and aliases."""
+    import re
+    text = str(value or "").strip().lower()
+    text = text.replace("&", " and ")
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _load_plant_design_database(base_dir: Path | None = None) -> tuple[dict, Path]:
+    """Load Runtime/plant_designs.json and return its designs dictionary."""
+    base = Path(base_dir) if base_dir is not None else SCRIPT_DIR
+    candidates = [base / "Runtime" / "plant_designs.json",
+                  base / "runtime" / "plant_designs.json"]
+    design_path = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    if not design_path.exists():
+        raise FileNotFoundError(
+            f"Plant-design database not found. Checked: "
+            + ", ".join(str(candidate) for candidate in candidates)
+            + ". Place plant_designs.json in the FLARE Runtime folder."
+        )
+    try:
+        payload = json.loads(design_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Could not parse plant-design database '{design_path}': {exc}") from exc
+    designs = payload.get("designs")
+    if not isinstance(designs, dict) or not designs:
+        raise ValueError(f"Plant-design database '{design_path}' contains no designs dictionary.")
+    return designs, design_path
+
+
+def _select_plant_design(designs: dict, requested, total_power_MWt: float) -> tuple[str, dict, str]:
+    """Resolve an explicit design or choose the closest auto-eligible design."""
+    requested_text = "" if requested is None else str(requested).strip().strip("'\"")
+    automatic = (not requested_text) or requested_text.lower() == "auto"
+
+    if automatic:
+        eligible = [
+            (key, record) for key, record in designs.items()
+            if bool(record.get("auto_eligible", False))
+        ]
+        if not eligible:
+            raise ValueError("plant_designs.json contains no auto-eligible designs.")
+        key, record = min(
+            eligible,
+            key=lambda item: abs(float(item[1]["reference_thermal_power_MWt"]) - float(total_power_MWt)),
+        )
+        return key, record, "automatic"
+
+    target = _normalise_design_name(requested_text)
+    lookup = {}
+    for key, record in designs.items():
+        names = [key, record.get("display_name", ""), *record.get("aliases", [])]
+        for name in names:
+            norm = _normalise_design_name(name)
+            if norm:
+                lookup.setdefault(norm, (key, record))
+    if target in lookup:
+        key, record = lookup[target]
+        return key, record, "explicit"
+
+    # Give a concise, useful error rather than silently selecting another plant.
+    import difflib
+    candidates = list(designs.keys())
+    suggestions = difflib.get_close_matches(requested_text, candidates, n=5, cutoff=0.25)
+    suffix = f" Closest design keys: {', '.join(suggestions)}." if suggestions else ""
+    raise ValueError(f"Unknown plant_design '{requested_text}'.{suffix}")
+
+
+def _plant_design_defaults(record: dict) -> dict:
+    """Convert one JSON design record into FLARE core-geometry defaults."""
+    required = (
+        "fuel_assemblies", "fuel_rods_per_assembly", "active_fuel_length_m",
+        "fuel_rod_outer_diameter_mm", "fuel_rod_pitch_mm",
+        "cladding_wall_thickness_mm", "fuel_pellet_radius_mm",
+    )
+    missing = [name for name in required if record.get(name) is None]
+    if missing:
+        raise ValueError("Selected plant design is missing required field(s): " + ", ".join(missing))
+    n_pins = int(record["fuel_assemblies"]) * int(record["fuel_rods_per_assembly"])
+    return {
+        "N_pins": n_pins,
+        "d_pin": float(record["fuel_rod_outer_diameter_mm"]) / 1000.0,
+        "pitch_pin": float(record["fuel_rod_pitch_mm"]) / 1000.0,
+        "L_heated": float(record["active_fuel_length_m"]),
+        "delta_clad": float(record["cladding_wall_thickness_mm"]) / 1000.0,
+        "r_fuel_m": float(record["fuel_pellet_radius_mm"]) / 1000.0,
+        "nbt_n_fuel_rods": n_pins,
+        "nf_H_active_m": float(record["active_fuel_length_m"]),
+        "nbt_fuel_active_length_m": float(record["active_fuel_length_m"]),
+        "nbt_fuel_radius_m": float(record["fuel_pellet_radius_mm"]) / 1000.0,
+    }
+
 # Module-level log — reset at the start of each pwr_sim call
 _input_echo_log = []
 
@@ -2646,6 +2740,50 @@ def pwr_sim(wkstbase, minimum_output=0):
                     exec(_cmd, {}, local_namespace)
             except Exception as e:
                 print(f"Warning: Could not execute '{command}': {e}")
+
+    # ── plant design selection and design-specific core defaults ───────────
+    # total_power must be known before geometry defaults so an omitted
+    # plant_design can be selected by nearest reference thermal power.
+    total_power = float(get_variable(local_namespace, "total_power", 575.0))  # MWt
+    plant_design_requested = get_variable(local_namespace, "plant_design", None)
+    try:
+        _plant_designs, _plant_design_path = _load_plant_design_database(SCRIPT_DIR)
+        _plant_design_key, _plant_design_record, _plant_design_mode = _select_plant_design(
+            _plant_designs, plant_design_requested, total_power
+        )
+        _plant_defaults = _plant_design_defaults(_plant_design_record)
+        plant_design_selected = _plant_design_key
+        print(
+            f"Plant design: {_plant_design_record.get('display_name', _plant_design_key)} "
+            f"[{_plant_design_key}] ({_plant_design_mode}; "
+            f"reference={float(_plant_design_record['reference_thermal_power_MWt']):.0f} MWt, "
+            f"model={total_power:.1f} MWt)"
+        )
+        # Internal defaults used later by NOTBADTRAD without mislabeling them as
+        # user assignments in the input echo.
+        local_namespace["_plant_design_N_pins"] = _plant_defaults["N_pins"]
+        local_namespace["_plant_design_r_fuel_m"] = _plant_defaults["r_fuel_m"]
+        local_namespace["_plant_design_L_heated"] = _plant_defaults["L_heated"]
+        _input_echo_log.append({
+            "Variable": "plant_design_selected",
+            "Value": plant_design_selected,
+            "Default": "nearest auto-eligible design by total_power",
+            "Source": _plant_design_mode,
+        })
+    except Exception as _design_err:
+        if plant_design_requested not in (None, "", "auto", "AUTO"):
+            raise
+        print(f"WARNING: {_design_err} Using legacy FLARE 575-MWt core geometry defaults.")
+        plant_design_selected = "legacy_flare_575"
+        _plant_defaults = {
+            "N_pins": 18200, "d_pin": 0.0095, "pitch_pin": 0.0126,
+            "L_heated": 2.4, "delta_clad": 0.00057, "r_fuel_m": 0.00418,
+            "nbt_n_fuel_rods": 18200, "nf_H_active_m": 2.44,
+            "nbt_fuel_active_length_m": 2.44, "nbt_fuel_radius_m": 0.00418,
+        }
+        local_namespace["_plant_design_N_pins"] = _plant_defaults["N_pins"]
+        local_namespace["_plant_design_r_fuel_m"] = _plant_defaults["r_fuel_m"]
+        local_namespace["_plant_design_L_heated"] = _plant_defaults["L_heated"]
 
     # ── time / geometry defaults ────────────────────────────────────────────
     timestep   = 1
@@ -2983,7 +3121,6 @@ def pwr_sim(wkstbase, minimum_output=0):
           f"rated_flow={pump_model_config['pump_rated_flow_m3s']:.4f} m3/s, "
           f"rated_head={pump_model_config['pump_rated_head_m']:.2f} m")
 
-    total_power = get_variable(local_namespace, "total_power", 575)  # MW
 
     # ── PATCH 6: SG parameters ───────────────────────────────────────────────
     P_sec_kPa     = get_variable(local_namespace, "P_sec_kPa",   6895.0)  # kPa
@@ -3139,13 +3276,14 @@ def pwr_sim(wkstbase, minimum_output=0):
 
     # ── Core heat transfer model (core_flag = 1) ─────────────────────────────
     # Slab = fuel cladding; fission+decay heat in at inner surface, convection out.
-    # Default geometry: typPWR 575 MWt — 18200 Zircaloy-clad pins.
-    core_flag    = int(get_variable(local_namespace, "core_flag",    1))
-    N_pins       = get_variable(local_namespace, "N_pins",       18200)
-    d_pin        = get_variable(local_namespace, "d_pin",        0.0095)  # [m] pin OD
-    pitch_pin    = get_variable(local_namespace, "pitch_pin",    0.0126)  # [m] square pitch
-    L_heated     = get_variable(local_namespace, "L_heated",     2.4)     # [m]
-    delta_clad   = get_variable(local_namespace, "delta_clad",   0.00057) # [m]
+    # Core geometry defaults come from the selected plant-design record.
+    # Explicit input assignments always take precedence over these defaults.
+    core_flag    = int(get_variable(local_namespace, "core_flag", 1))
+    N_pins       = int(get_variable(local_namespace, "N_pins", _plant_defaults["N_pins"]))
+    d_pin        = float(get_variable(local_namespace, "d_pin", _plant_defaults["d_pin"]))
+    pitch_pin    = float(get_variable(local_namespace, "pitch_pin", _plant_defaults["pitch_pin"]))
+    L_heated     = float(get_variable(local_namespace, "L_heated", _plant_defaults["L_heated"]))
+    delta_clad   = float(get_variable(local_namespace, "delta_clad", _plant_defaults["delta_clad"]))
     lambda_clad  = get_variable(local_namespace, "lambda_clad",  13.0)    # [W/m-K] Zirc-4
     rho_clad     = get_variable(local_namespace, "rho_clad",     6500.0)  # [kg/m3]
     cp_clad      = get_variable(local_namespace, "cp_clad",      330.0)   # [J/kg-K]
@@ -3368,10 +3506,9 @@ def pwr_sim(wkstbase, minimum_output=0):
     # BOL He-filled gap with modest contact conductance (as-fabricated clearance
     # ~80-100 µm).  This adds ~50-100°C at rated power and scales with power.
     h_gap          = float(get_variable(local_namespace, "h_gap",         6000.0))
-    # r_fuel_m: fuel pellet outer radius [m] for gap area calculation.
-    # Default = pin outer radius minus clad thickness (zero-gap geometry).
+    # r_fuel_m: design-specific fuel pellet outer radius [m].
     r_fuel_m       = float(get_variable(local_namespace, "r_fuel_m",
-                                         d_pin / 2.0 - delta_clad))
+                                         _plant_defaults["r_fuel_m"]))
     # UO2 thermal properties for fuel stored-energy time constant.
     # tau_fuel = rho_fuel*cp_fuel*r_fuel_m^2 / (4*k_fuel) ≈ 5 s
     rho_fuel       = float(get_variable(local_namespace, "rho_fuel", 10400.0))
@@ -3400,7 +3537,8 @@ def pwr_sim(wkstbase, minimum_output=0):
     # replaced by NF sub-integration.  Set Lambda_prompt=0 to disable.
     Lambda_prompt  = float(get_variable(local_namespace, "Lambda_prompt", 5e-5))
     # Active fuel height for total fuel heat capacity C_f [m].
-    nf_H_active_m  = float(get_variable(local_namespace, "nf_H_active_m", 2.44))
+    nf_H_active_m  = float(get_variable(local_namespace, "nf_H_active_m",
+                                             _plant_defaults["nf_H_active_m"]))
     # Fuel enthalpy failure threshold [cal/g].  200 cal/g is the NRC
     # criterion for fresh fuel; ~150 cal/g for high-burnup irradiated fuel.
     H_fuel_limit_calg = float(get_variable(local_namespace, "H_fuel_limit_calg", 200.0))
@@ -7216,7 +7354,8 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
     if _model in ("fixed", "legacy", "static"):
         return groups, {"model": _model, "n_fissions": None}
 
-    _n_pins_th = float(get_variable(local_namespace, "N_pins", 18200.0))
+    _design_n_pins = float(local_namespace.get("_plant_design_N_pins", 18200.0))
+    _n_pins_th = float(get_variable(local_namespace, "N_pins", _design_n_pins))
     _n_rods = float(get_variable(local_namespace, "nbt_n_fuel_rods", _n_pins_th))
     if _n_rods != _n_pins_th:
         print(
@@ -7227,8 +7366,10 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
             f"file to suppress this warning.",
             flush=True,
         )
-    _r_fuel = float(get_variable(local_namespace, "nbt_fuel_radius_m", 0.00418))
-    _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", 3.66))
+    _design_r_fuel = float(local_namespace.get("_plant_design_r_fuel_m", 0.00418))
+    _design_l_fuel = float(local_namespace.get("_plant_design_L_heated", 3.66))
+    _r_fuel = float(get_variable(local_namespace, "nbt_fuel_radius_m", _design_r_fuel))
+    _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", _design_l_fuel))
     _rho    = float(get_variable(local_namespace, "nbt_rho_uo2_kg_m3", 10400.0))
     _enr    = float(get_variable(local_namespace, "nbt_u235_enrichment", 0.05))
     _burn   = float(get_variable(local_namespace, "nbt_fissile_burned_fraction", 0.05))

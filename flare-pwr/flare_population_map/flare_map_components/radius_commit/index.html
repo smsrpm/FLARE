@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body { margin: 0; padding: 0; width: 0; height: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+<script>
+(function () {
+  const processed = new Set();
+
+  function sendToStreamlit(type, payload) {
+    window.parent.postMessage(Object.assign({
+      isStreamlitMessage: true,
+      type: type
+    }, payload || {}), '*');
+  }
+
+  function broadcast(message) {
+    try {
+      window.parent.document.querySelectorAll('iframe').forEach(function (frame) {
+        if (frame.contentWindow) frame.contentWindow.postMessage(message, '*');
+      });
+    } catch (error) {}
+  }
+
+  window.addEventListener('message', function (event) {
+    const data = event && event.data ? event.data : {};
+    if (data.type === 'streamlit:render') {
+      sendToStreamlit('streamlit:setFrameHeight', {height: 0});
+      return;
+    }
+    if (data.type !== 'flare-radius-expansion-request') return;
+
+    const requestId = String(data.requestId || '');
+    const minimum = Number(data.minimum);
+    const maximum = Number(data.maximum);
+    if (!requestId || !Number.isFinite(minimum) || !Number.isFinite(maximum)) return;
+
+    broadcast({
+      type: 'flare-radius-expansion-accepted',
+      requestId: requestId
+    });
+    if (processed.has(requestId)) return;
+    processed.add(requestId);
+
+    sendToStreamlit('streamlit:setComponentValue', {
+      dataType: 'json',
+      value: {
+        requestId: requestId,
+        minimum: minimum,
+        maximum: maximum
+      }
+    });
+  });
+
+  sendToStreamlit('streamlit:componentReady', {apiVersion: 1});
+  sendToStreamlit('streamlit:setFrameHeight', {height: 0});
+})();
+</script>
+</body>
+</html>

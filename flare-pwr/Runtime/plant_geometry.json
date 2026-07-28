@@ -1,0 +1,603 @@
+{
+  "schema_version": 1,
+  "description": "Optional plant/system geometry used internally to establish defaults for existing FLARE model parameters. Missing values fall back to power-scaled generic_smr geometry or legacy defaults.",
+  "units": "SI unless a field name states otherwise",
+  "scaling_policy": {
+    "reference_record": "generic_smr",
+    "fallback": "Scale extensive reference quantities linearly with total thermal power.",
+    "design_adjustment": "When model power differs from a design reference power, lengths scale with power^(1/3), diameter-derived areas with power^(2/3), and extensive volumes/flows/inventories with power.",
+    "pump_rated_flow": "Use selected design documented total rated flow, multiplied by modeled_power/reference_power. Never use another design as a pump-flow surrogate. If missing, warn and use the unscaled FLARE legacy rated flow.",
+    "plant_geometry": "Do not power-scale plant geometry, volumes, areas, or inventories."
+  },
+  "designs": {
+    "generic_smr": {
+      "reference_thermal_power_MWt": 575.0,
+      "source_references": [
+        {
+          "id": "FLARE_LEGACY_DEFAULTS_2026",
+          "title": "FLARE legacy 575-MWt model defaults",
+          "type": "code_baseline",
+          "location": "flare_sim.py defaults before plant_geometry implementation",
+          "note": "Provides the common scaling reference when published design-specific geometry is unavailable.",
+          "recommended_search": "FLARE flare_sim.py legacy 575-MWt defaults",
+          "data_used": "Provides the common scaling reference when published design-specific geometry is unavailable.",
+          "publisher": "FLARE project",
+          "document_type": "internal software baseline",
+          "filename": "flare_sim.py",
+          "date": "2026",
+          "sha256": "77c3c53b9bbc40e56acae4e84a8c1ce5b1149ec847034c6d61f86b037009a314",
+          "retrieval_note": "Locate the identified flare_sim.py version in the FLARE repository or project archive, then search the source for the legacy 575-MWt default assignments. Use the SHA-256 hash to confirm the exact file version when available."
+        }
+      ],
+      "reactor_vessel": {
+        "effective_area_m2": 3.06580032,
+        "lower_cv_height_m": 21.336000000000002,
+        "upper_cv_height_m": 2.1336,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      },
+      "primary_system": {
+        "external_loop_volume_m3": 0.0,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      },
+      "pressurizer": {
+        "cross_section_area_m2": 0.0,
+        "height_m": 0.0,
+        "initial_liquid_level_m": 0.0,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      },
+      "accumulator": {
+        "equivalent_cross_section_area_m2": 6.1901295552,
+        "equivalent_length_m": 3.2004,
+        "equivalent_total_volume_m3": 19.810890628462083,
+        "equivalent_initial_gas_volume_m3": 1.9712772755020807,
+        "equivalent_injection_area_m2": 0.00297289728,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "rated_speed_rpm": 3550.0,
+        "rated_total_flow_m3_s": 5.747086,
+        "rated_head_m": 41.51376,
+        "rated_total_torque_Nm": 5661.909968,
+        "total_rotating_inertia_kg_m2": 32.339143,
+        "effective_flow_area_m2": 0.464516,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      },
+      "safety_injection": {
+        "hpsi_rated_total_kg_s": 0.0,
+        "lpsi_rated_total_kg_s": 0.0,
+        "rwst_usable_mass_kg": 1500000.0,
+        "source_ids": [
+          "FLARE_LEGACY_DEFAULTS_2026"
+        ]
+      }
+    },
+    "ap1000": {
+      "reference_thermal_power_MWt": 3415.0,
+      "source_references": [
+        {
+          "id": "AP1000_IAEA_GAIO_2013",
+          "title": "AP1000: The PWR Revisited",
+          "publisher": "International Atomic Energy Agency conference material",
+          "url": "https://www-pub.iaea.org/MTCD/publications/PDF/P1500_CD_Web/htm/pdf/topic3/3S05_P.%20Gaio_PM.pdf",
+          "data_used": "Reactor vessel inside diameter 157 in; vessel thermal design flow 299,880 gpm; four reactor coolant pumps at 78,750 gpm each; pressurizer volume 2,100 ft3.",
+          "author": "P. Gaio",
+          "year": 2013,
+          "document_type": "IAEA conference presentation",
+          "report_or_proceedings": "IAEA International Conference on Opportunities and Challenges for Water Cooled Reactors in the 21st Century",
+          "retrieval_note": "Open the direct PDF URL or search the exact title together with author 'P. Gaio' and 'IAEA'.",
+          "recommended_search": "\"AP1000: The PWR Revisited\" International Atomic Energy Agency conference material"
+        },
+        {
+          "id": "AP1000_TECHNICAL_OVERVIEW",
+          "title": "The Westinghouse AP1000 Advanced Nuclear Plant",
+          "url": "https://www.apcnean.org.ar/arch/3e139fc91ebe2e675db2194460badc7c.pdf",
+          "data_used": "Pump rated flow 4.97 m3/s each, rated head 111.3 m, speed 1750 rpm; pressurizer total volume 59.47 m3, nominal steam volume 31.14 m3, inside diameter 2.28 m, total height 16.27 m.",
+          "publisher": "Westinghouse Electric Company LLC",
+          "year": 2003,
+          "document_type": "plant description / technical overview",
+          "retrieval_note": "Open the direct PDF URL or search the exact title in quotation marks with 'Westinghouse AP1000'.",
+          "recommended_search": "\"The Westinghouse AP1000 Advanced Nuclear Plant\" Westinghouse Electric Company LLC"
+        },
+        {
+          "id": "WESTINGHOUSE_AP1000_OVERVIEW",
+          "title": "AP1000 Nuclear Power Plant Design Overview",
+          "publisher": "Westinghouse Electric Company",
+          "url": "https://westinghousenuclear.com/new-plants/ap1000-pwr/overview/",
+          "data_used": "Two-loop PWR, 3,415 MWt, four canned-motor reactor coolant pumps.",
+          "document_type": "vendor design overview webpage",
+          "retrieval_note": "Use the direct Westinghouse URL or search 'Westinghouse AP1000 Nuclear Power Plant Design Overview'.",
+          "recommended_search": "\"AP1000 Nuclear Power Plant Design Overview\" Westinghouse Electric Company"
+        },
+        {
+          "id": "NRC_PART52_APPENDIX_D",
+          "title": "10 CFR Part 52, Appendix D — AP1000 Design Certification Rule",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reading-rm/doc-collections/cfr/part052/part052-appd",
+          "data_used": "Confirms NRC design certification status.",
+          "document_type": "Code of Federal Regulations design-certification rule",
+          "citation": "10 CFR Part 52, Appendix D",
+          "retrieval_note": "Use the direct NRC Appendix D URL or search the NRC site for '10 CFR Part 52 Appendix D'.",
+          "recommended_search": "\"10 CFR Part 52, Appendix D — AP1000 Design Certification Rule\" U.S. Nuclear Regulatory Commission"
+        }
+      ],
+      "reactor_vessel": {
+        "inside_diameter_m": 3.9878,
+        "source_ids": [
+          "AP1000_IAEA_GAIO_2013"
+        ]
+      },
+      "primary_system": {
+        "type": "two_loop",
+        "loop_count": 2,
+        "source_ids": [
+          "WESTINGHOUSE_AP1000_OVERVIEW"
+        ]
+      },
+      "pressurizer": {
+        "total_volume_m3": 59.47,
+        "inside_diameter_m": 2.28,
+        "height_m": 16.27,
+        "initial_steam_volume_m3": 31.14,
+        "initial_liquid_volume_m3": 28.33,
+        "source_ids": [
+          "AP1000_TECHNICAL_OVERVIEW"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "rated_flow_each_m3_s": 4.97,
+        "rated_total_flow_m3_s": 19.88,
+        "rated_head_m": 111.3,
+        "rated_speed_rpm": 1750.0,
+        "source_ids": [
+          "AP1000_TECHNICAL_OVERVIEW",
+          "AP1000_IAEA_GAIO_2013"
+        ],
+        "pump_data_status": "documented"
+      },
+      "certification_status": "NRC design certified"
+    },
+    "voygr": {
+      "reference_thermal_power_MWt": 250.0,
+      "source_references": [
+        {
+          "id": "NRC_NUSCALE_DESIGN_2016",
+          "title": "The NuScale Design",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML1616/ML16161A723.pdf",
+          "data_used": "Integral reactor module; natural-circulation primary coolant system without reactor coolant pumps.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"The NuScale Design\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_NUSCALE_OVERVIEW_2021",
+          "title": "NuScale Small Modular Reactor Design",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML2128/ML21288A274.pdf",
+          "data_used": "Reactor vessel approximately 65 ft high and 9 ft in diameter.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"NuScale Small Modular Reactor Design\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NUSCALE_PRODUCT_SITE_2026",
+          "title": "NuScale Power's Small Modular Reactor Achieves Standard Design Approval from U.S. Nuclear Regulatory Commission for 77 MWe",
+          "publisher": "NuScale Power",
+          "url": "https://www.nuscalepower.com/press-releases/2025/nuscale-powers-small-modular-reactor-smr-achieves-standard-design-approval-from-us-nuclear-regulatory-commission-for-77-mwe",
+          "data_used": "Current module thermal power of 250 MWt.",
+          "date": "2025-05-29",
+          "document_type": "vendor press release",
+          "retrieval_note": "Use the direct NuScale press-release URL or search the exact title. The release states the uprated module rating of 250 MWt / 77 MWe.",
+          "recommended_search": "\"NuScale Power's Small Modular Reactor Achieves Standard Design Approval from U.S. Nuclear Regulatory Commission for 77 MWe\" NuScale Power"
+        },
+        {
+          "id": "NRC_PART52_APPENDIX_G",
+          "title": "10 CFR Part 52, Appendix G — NuScale Design Certification Rule",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reading-rm/doc-collections/cfr/part052/part052-appg",
+          "data_used": "Confirms NRC design certification status.",
+          "document_type": "Code of Federal Regulations design-certification rule",
+          "citation": "10 CFR Part 52, Appendix G",
+          "retrieval_note": "Use the direct NRC Appendix G URL or search the NRC site for '10 CFR Part 52 Appendix G'.",
+          "recommended_search": "\"10 CFR Part 52, Appendix G — NuScale Design Certification Rule\" U.S. Nuclear Regulatory Commission"
+        }
+      ],
+      "reactor_vessel": {
+        "inside_diameter_m": 2.7432000000000003,
+        "overall_height_m": 19.812,
+        "source_ids": [
+          "NRC_NUSCALE_OVERVIEW_2021"
+        ]
+      },
+      "primary_system": {
+        "type": "integral_natural_circulation",
+        "external_loop_volume_m3": 0.0,
+        "source_ids": [
+          "NRC_NUSCALE_DESIGN_2016"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 0,
+        "count": 0,
+        "source_ids": [
+          "NRC_NUSCALE_DESIGN_2016"
+        ],
+        "pump_data_status": "not_applicable_natural_circulation"
+      },
+      "certification_status": "NRC design certified under 10 CFR Part 52 Appendix G"
+    },
+    "system_80_plus": {
+      "reference_thermal_power_MWt": 3914.0,
+      "certification_status": "NRC design certified; certification expired June 2012",
+      "source_references": [
+        {
+          "id": "NRC_NUREG_1462_V2",
+          "title": "Final Safety Evaluation Report Related to the Certification of the System 80+ Design, Volume 2",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML1004/ML100430017.pdf",
+          "data_used": "System 80+ is a 3,914-MWt pressurized-water reactor; licensing basis and system architecture.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"Final Safety Evaluation Report Related to the Certification of the System 80+ Design, Volume 2\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_PART52_APPENDIX_B",
+          "title": "10 CFR Part 52, Appendix B — System 80+ Design Certification Rule",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reading-rm/doc-collections/cfr/part052/part052-appb",
+          "data_used": "Confirms NRC design certification status.",
+          "document_type": "Code of Federal Regulations design-certification rule",
+          "citation": "10 CFR Part 52, Appendix B",
+          "retrieval_note": "Use the direct NRC Appendix B URL or search the NRC site for '10 CFR Part 52 Appendix B'.",
+          "recommended_search": "\"10 CFR Part 52, Appendix B — System 80+ Design Certification Rule\" U.S. Nuclear Regulatory Commission"
+        }
+      ],
+      "primary_system": {
+        "type": "two_loop",
+        "loop_count": 2,
+        "source_ids": [
+          "NRC_NUREG_1462_V2"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "source_ids": [
+          "NRC_NUREG_1462_V2"
+        ],
+        "pump_data_status": "flow_not_yet_verified",
+        "fallback_policy": "Use FLARE legacy rated pump flow with a visible warning; do not borrow another design."
+      }
+    },
+    "ap600": {
+      "reference_thermal_power_MWt": 1940.0,
+      "certification_status": "NRC design certified; certification expired January 2015",
+      "source_references": [
+        {
+          "id": "NRC_AP600_DCD_CH1_1_2",
+          "title": "AP600 Design Control Document, Chapter 1, Section 1.2",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML0036/ML003691125.pdf",
+          "data_used": "AP600 reactor coolant system arrangement and major components.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"AP600 Design Control Document, Chapter 1, Section 1.2\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_AP600_DCD_CH1_1_3",
+          "title": "AP600 Design Control Document, Chapter 1, Section 1.3",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML0036/ML003691129.pdf",
+          "data_used": "Major AP600 design features and nominal parameters.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"AP600 Design Control Document, Chapter 1, Section 1.3\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_AP600_DCD_CH5",
+          "title": "AP600 Design Control Document, Chapter 5",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML0036/ML003691293.pdf",
+          "data_used": "Reactor coolant system, pressurizer, and reactor coolant pump descriptions.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"AP600 Design Control Document, Chapter 5\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_PART52_APPENDIX_C",
+          "title": "10 CFR Part 52, Appendix C — AP600 Design Certification Rule",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reading-rm/doc-collections/cfr/part052/part052-appc",
+          "data_used": "Confirms NRC design certification status.",
+          "document_type": "Code of Federal Regulations design-certification rule",
+          "citation": "10 CFR Part 52, Appendix C",
+          "retrieval_note": "Use the direct NRC Appendix C URL or search the NRC site for '10 CFR Part 52 Appendix C'.",
+          "recommended_search": "\"10 CFR Part 52, Appendix C — AP600 Design Certification Rule\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_WCAP_15612_AP1000_PLANT_DESCRIPTION",
+          "title": "WCAP-15612, AP1000 Plant Description and Comparison to AP600",
+          "publisher": "Westinghouse Electric Company; submitted to the U.S. Nuclear Regulatory Commission",
+          "document_number": "WCAP-15612",
+          "date": "2000-12-12",
+          "adams_accession_number": "ML003779406",
+          "url": "https://www.nrc.gov/docs/ML0037/ML003779406.pdf",
+          "location": "Table comparing AP1000 and AP600 reactor coolant pump design parameters",
+          "data_used": "AP600 has four reactor coolant pumps; rated flow is 51,000 gpm per pump and rated head is 240 ft.",
+          "retrieval_note": "Open the direct NRC PDF or search NRC ADAMS for ML003779406 and then search within the document for “Reactor Coolant Pump Design Differences - AP1000 and AP600.”",
+          "recommended_search": "\"WCAP-15612\" \"AP600\" \"Rated Flow\""
+        }
+      ],
+      "primary_system": {
+        "type": "two_loop",
+        "loop_count": 2,
+        "source_ids": [
+          "NRC_AP600_DCD_CH1_1_2",
+          "NRC_AP600_DCD_CH1_1_3"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "source_ids": [
+          "NRC_WCAP_15612_AP1000_PLANT_DESCRIPTION"
+        ],
+        "rated_flow_each_gpm": 51000.0,
+        "rated_flow_each_m3_s": 3.2176000164,
+        "rated_total_flow_m3_s": 12.8704000656,
+        "rated_head_ft": 240.0,
+        "rated_head_m": 73.152,
+        "pump_data_status": "documented"
+      }
+    },
+    "apr1400": {
+      "reference_thermal_power_MWt": 4000.0,
+      "certification_status": "NRC design certified April 2019",
+      "source_references": [
+        {
+          "id": "NRC_APR1400_CERT",
+          "title": "Issued Design Certification — Advanced Power Reactor 1400",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reactors/new-reactors/large-lwr/design-cert/apr1400",
+          "data_used": "APR1400 is a 4,000-MWt PWR certified by NRC in April 2019.",
+          "date": "2019-04",
+          "document_type": "NRC design-certification status page",
+          "retrieval_note": "Use the direct NRC APR1400 design-certification page or search the NRC site for 'Issued Design Certification APR1400'.",
+          "recommended_search": "\"Issued Design Certification — Advanced Power Reactor 1400\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_APR1400_DCD_CH5",
+          "title": "APR1400 Design Control Document, Tier 2, Chapter 5",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML1822/ML18228A652.pdf",
+          "data_used": "Reactor coolant system configuration, pump and pressurizer descriptions.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"APR1400 Design Control Document, Tier 2, Chapter 5\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_APR1400_DCD_CH6",
+          "title": "APR1400 Design Control Document, Tier 2, Chapter 6",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML1822/ML18228A653.pdf",
+          "data_used": "Engineered safety features and safety injection system configuration.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"APR1400 Design Control Document, Tier 2, Chapter 6\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_PART52_APPENDIX_F",
+          "title": "10 CFR Part 52, Appendix F — APR1400 Design Certification Rule",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reading-rm/doc-collections/cfr/part052/part052-appf",
+          "data_used": "Confirms NRC design certification status.",
+          "document_type": "Code of Federal Regulations design-certification rule",
+          "citation": "10 CFR Part 52, Appendix F",
+          "retrieval_note": "Use the direct NRC Appendix F URL or search the NRC site for '10 CFR Part 52 Appendix F'.",
+          "recommended_search": "\"10 CFR Part 52, Appendix F — APR1400 Design Certification Rule\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_APR1400_FUEL_CORE_DESIGN",
+          "title": "APR1400 Fuel and Core Design",
+          "publisher": "Korea Hydro & Nuclear Power / U.S. Nuclear Regulatory Commission public document collection",
+          "document_type": "APR1400 design presentation",
+          "adams_accession_number": "ML101160481",
+          "url": "https://www.nrc.gov/docs/ML1011/ML101160481.pdf",
+          "location": "Design-parameter slide listing Reactor Coolant Pump rated flow",
+          "data_used": "APR1400 reactor coolant pump rated flow is 7.67 m3/s per pump; four pumps give a total rated plant flow of 30.68 m3/s.",
+          "retrieval_note": "Open the direct NRC PDF or search NRC ADAMS for ML101160481; search within the document for “Reactor Coolant Pump” and “Rated Flow: 7.67m3/s.”",
+          "recommended_search": "\"ML101160481\" \"Rated Flow\" \"7.67m3/s\""
+        }
+      ],
+      "primary_system": {
+        "type": "two_loop",
+        "loop_count": 2,
+        "source_ids": [
+          "NRC_APR1400_DCD_CH5"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "source_ids": [
+          "NRC_APR1400_FUEL_CORE_DESIGN"
+        ],
+        "rated_flow_each_m3_s": 7.67,
+        "rated_total_flow_m3_s": 30.68,
+        "pump_data_status": "documented"
+      },
+      "accumulator": {
+        "count": 4,
+        "type": "safety_injection_tank_with_fluidic_device",
+        "source_ids": [
+          "NRC_APR1400_DCD_CH6"
+        ]
+      }
+    },
+    "epr": {
+      "reference_thermal_power_MWt": 4500.0,
+      "certification_status": "U.S. design certification application review suspended in 2015; not NRC-certified",
+      "source_references": [
+        {
+          "id": "NRC_US_EPR_STATUS",
+          "title": "U.S. EPR Design Certification Application Review",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/reactors/new-reactors/large-lwr/design-cert/epr",
+          "data_used": "U.S. EPR is a 4,500-MWt PWR; NRC review suspended at applicant request in 2015.",
+          "document_type": "NRC design-certification application status page",
+          "retrieval_note": "Use the direct NRC U.S. EPR review page or search the NRC site for 'U.S. EPR Design Certification Application Review'.",
+          "recommended_search": "\"U.S. EPR Design Certification Application Review\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_US_EPR_DCD_CH5",
+          "title": "U.S. EPR Design Control Document, Tier 2, Chapter 5",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML1322/ML13220A686.pdf",
+          "data_used": "Four-loop RCS with one reactor vessel, four steam generators, four reactor coolant pumps, and one pressurizer.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"U.S. EPR Design Control Document, Tier 2, Chapter 5\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_US_EPR_LBLOCA",
+          "title": "U.S. EPR Realistic Large Break LOCA Analysis",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML0708/ML070880737.pdf",
+          "data_used": "Four-loop RCS configuration and 241-fuel-assembly reactor core.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"U.S. EPR Realistic Large Break LOCA Analysis\" U.S. Nuclear Regulatory Commission"
+        }
+      ],
+      "primary_system": {
+        "type": "four_loop",
+        "loop_count": 4,
+        "source_ids": [
+          "NRC_US_EPR_DCD_CH5",
+          "NRC_US_EPR_LBLOCA"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "source_ids": [
+          "NRC_US_EPR_DCD_CH5"
+        ],
+        "pump_data_status": "flow_not_yet_verified",
+        "fallback_policy": "Use FLARE legacy rated pump flow with a visible warning; do not borrow another design."
+      }
+    },
+    "b_and_w_177": {
+      "reference_thermal_power_MWt": 2670.0,
+      "certification_status": "Legacy operating PWR design; not a 10 CFR Part 52 certified standard design",
+      "source_references": [
+        {
+          "id": "NRC_BW_PLANT_DESCRIPTION",
+          "title": "PWR-04 — Babcock and Wilcox Plant Description",
+          "publisher": "U.S. Nuclear Regulatory Commission, Technical Training Center",
+          "url": "https://www.nrc.gov/docs/ML1215/ML12159A228.pdf",
+          "data_used": "B&W plant arrangement: two reactor coolant loops; each loop has two reactor coolant pumps and one once-through steam generator.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"PWR-04 — Babcock and Wilcox Plant Description\" U.S. Nuclear Regulatory Commission, Technical Training Center"
+        },
+        {
+          "id": "NRC_BW_CROSSTRAIN_RCS",
+          "title": "Pressurized Water Reactor B&W Technology Crosstraining — Reactor Coolant System",
+          "publisher": "U.S. Nuclear Regulatory Commission, Technical Training Center",
+          "url": "https://www.nrc.gov/docs/ML1122/ML11220A280.pdf",
+          "data_used": "Each loop contains two reactor coolant pumps and one steam generator; two passive core flood tanks are provided.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"Pressurized Water Reactor B&W Technology Crosstraining — Reactor Coolant System\" U.S. Nuclear Regulatory Commission, Technical Training Center"
+        },
+        {
+          "id": "NRC_BW_CROSSTRAIN_ECCS",
+          "title": "B&W Technology Cross Training — Chapter 4, Emergency Core Cooling System",
+          "publisher": "U.S. Nuclear Regulatory Commission, Technical Training Center",
+          "url": "https://www.nrc.gov/docs/ML1122/ML11221A150.pdf",
+          "data_used": "Core flooding system consists of two nitrogen-pressurized tanks containing borated water.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"B&W Technology Cross Training — Chapter 4, Emergency Core Cooling System\" U.S. Nuclear Regulatory Commission, Technical Training Center"
+        },
+        {
+          "id": "NRC_BW_AGING_ASSESSMENT",
+          "title": "Aging Assessment of the Combustion Engineering and Babcock & Wilcox Reactor Internals",
+          "publisher": "U.S. Nuclear Regulatory Commission",
+          "url": "https://www.nrc.gov/docs/ML0403/ML040300624.pdf",
+          "data_used": "Confirms the B&W reactor core contains 177 fuel assemblies.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"Aging Assessment of the Combustion Engineering and Babcock & Wilcox Reactor Internals\" U.S. Nuclear Regulatory Commission"
+        },
+        {
+          "id": "NRC_BW_PLANT_DIFFERENCES",
+          "title": "Chapter 20 — B&W Plant Differences",
+          "publisher": "U.S. Nuclear Regulatory Commission, Technical Training Center",
+          "url": "https://www.nrc.gov/docs/ML1122/ML11221A353.pdf",
+          "data_used": "Identifies the 177-fuel-assembly B&W units and their nominal operating pressure basis.",
+          "retrieval_note": "Use the direct NRC URL. If it changes, search the exact title on the NRC website.",
+          "recommended_search": "\"Chapter 20 — B&W Plant Differences\" U.S. Nuclear Regulatory Commission, Technical Training Center"
+        }
+      ],
+      "primary_system": {
+        "type": "two_loop",
+        "loop_count": 2,
+        "source_ids": [
+          "NRC_BW_PLANT_DESCRIPTION",
+          "NRC_BW_CROSSTRAIN_RCS"
+        ]
+      },
+      "steam_generators": {
+        "count": 2,
+        "type": "once_through",
+        "source_ids": [
+          "NRC_BW_PLANT_DESCRIPTION",
+          "NRC_BW_CROSSTRAIN_RCS"
+        ]
+      },
+      "primary_pumps": {
+        "enabled": 1,
+        "count": 4,
+        "source_ids": [
+          "NRC_BW_PLANT_DESCRIPTION",
+          "NRC_BW_CROSSTRAIN_RCS"
+        ],
+        "pump_data_status": "flow_not_yet_verified",
+        "fallback_policy": "Use FLARE legacy rated pump flow with a visible warning; do not borrow another design."
+      },
+      "accumulator": {
+        "count": 2,
+        "type": "core_flood_tank",
+        "source_ids": [
+          "NRC_BW_CROSSTRAIN_RCS",
+          "NRC_BW_CROSSTRAIN_ECCS"
+        ]
+      },
+      "core": {
+        "fuel_assembly_count": 177,
+        "source_ids": [
+          "NRC_BW_AGING_ASSESSMENT",
+          "NRC_BW_PLANT_DIFFERENCES"
+        ]
+      }
+    }
+  },
+  "coverage_note": "Includes all NRC-certified PWR designs represented in FLARE core_designs.json (System 80+, AP600, AP1000, APR1400, and NuScale) plus the requested U.S. EPR design. NRC-certified BWR designs are outside FLARE PWR scope.",
+  "reference_schema": {
+    "purpose": "Fields used to make every cited source independently locatable and auditable.",
+    "fields": {
+      "id": "Stable internal source identifier used by source_ids.",
+      "title": "Exact or readily searchable source title.",
+      "publisher": "Issuing organization.",
+      "document_number": "Formal report or vendor document number when known.",
+      "revision": "Document revision when known.",
+      "date": "Publication or issue date when known.",
+      "adams_accession_number": "NRC ADAMS accession number for NRC documents.",
+      "url": "Direct source or document URL.",
+      "retrieval_note": "How to find the source if the direct URL changes.",
+      "recommended_search": "Suggested exact-title search string.",
+      "data_used": "Specific information supported by the source."
+    }
+  }
+}

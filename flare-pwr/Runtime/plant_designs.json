@@ -1,0 +1,830 @@
+{
+  "schema_version": 1,
+  "description": "PWR fuel and core geometry database for FLARE plant_design selection.",
+  "selection_rule": {
+    "explicit": "Match plant_design against a design key, display name, or alias.",
+    "automatic": "When plant_design is omitted or set to auto, select the auto-eligible design with reference_thermal_power_MWt closest to total_power."
+  },
+  "derived_in_flare_sim": {
+    "N_pins": "fuel_assemblies * fuel_rods_per_assembly",
+    "r_fuel_m": "fuel_pellet_radius_mm / 1000.0",
+    "nbt_n_fuel_rods": "N_pins",
+    "nf_H_active_m": "active_fuel_length_m",
+    "d_pin": "fuel_rod_outer_diameter_mm / 1000.0",
+    "pitch_pin": "fuel_rod_pitch_mm / 1000.0",
+    "delta_clad": "cladding_wall_thickness_mm / 1000.0",
+    "L_heated": "active_fuel_length_m"
+  },
+  "designs": {
+    "generic_smr": {
+      "supplier": "Generic",
+      "display_name": "SMR",
+      "aliases": [
+        "SMR",
+        "generic_smr",
+        "generic 575 MWt SMR",
+        "FLARE baseline SMR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 575.0,
+      "fuel_assemblies": 69,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.44,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "ap1000": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "AP1000",
+      "aliases": [
+        "AP1000",
+        "AP-1000",
+        "AP 1000"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 3415.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.27,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "ap300": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "AP300 (SMR)",
+      "aliases": [
+        "AP300 (SMR)",
+        "AP300",
+        "AP-300",
+        "AP 300"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 900.0,
+      "fuel_assemblies": 69,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.44,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "ap600": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "AP600",
+      "aliases": [
+        "AP600",
+        "AP-600",
+        "AP 600"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 1940.0,
+      "fuel_assemblies": 145,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "system_80": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "System 80 (Heritage CE)",
+      "aliases": [
+        "System 80 (Heritage CE)",
+        "System 80",
+        "CE System 80"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 3800.0,
+      "fuel_assemblies": 241,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 236,
+      "fuel_rod_outer_diameter_mm": 9.7,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.635,
+      "fuel_pellet_radius_mm": 4.1
+    },
+    "system_80_plus": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "System 80+ (Heritage CE)",
+      "aliases": [
+        "System 80+ (Heritage CE)",
+        "System 80+",
+        "System 80 Plus",
+        "CE System 80+"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 3914.0,
+      "fuel_assemblies": 241,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 236,
+      "fuel_rod_outer_diameter_mm": 9.7,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.635,
+      "fuel_pellet_radius_mm": 4.1
+    },
+    "westinghouse_2_loop": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "Westinghouse 2-Loop (Legacy)",
+      "aliases": [
+        "Westinghouse 2-Loop (Legacy)",
+        "Westinghouse 2 Loop",
+        "W 2-loop",
+        "2-loop PWR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 1500.0,
+      "fuel_assemblies": 121,
+      "fuel_lattice_geometry": "14 x 14 / 15 x 15 Square",
+      "active_fuel_length_m": 3.05,
+      "fuel_rods_per_assembly": 179,
+      "fuel_rod_outer_diameter_mm": 10.72,
+      "fuel_rod_pitch_mm": 14.12,
+      "cladding_wall_thickness_mm": 0.617,
+      "fuel_pellet_radius_mm": 4.643
+    },
+    "westinghouse_3_loop": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "Westinghouse 3-Loop (Legacy)",
+      "aliases": [
+        "Westinghouse 3-Loop (Legacy)",
+        "Westinghouse 3 Loop",
+        "W 3-loop",
+        "3-loop PWR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 2500.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "15 x 15 / 17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 204,
+      "fuel_rod_outer_diameter_mm": 10.72,
+      "fuel_rod_pitch_mm": 14.3,
+      "cladding_wall_thickness_mm": 0.617,
+      "fuel_pellet_radius_mm": 4.643
+    },
+    "westinghouse_4_loop": {
+      "supplier": "Westinghouse Electric Company",
+      "display_name": "Westinghouse 4-Loop (Legacy)",
+      "aliases": [
+        "Westinghouse 4-Loop (Legacy)",
+        "Westinghouse 4 Loop",
+        "W 4-loop",
+        "4-loop PWR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 3443.0,
+      "fuel_assemblies": 193,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.96,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "konvoi": {
+      "supplier": "Siemens-KWU",
+      "display_name": "Konvoi",
+      "aliases": [
+        "Konvoi",
+        "KWU Konvoi",
+        "Siemens Konvoi"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3950.0,
+      "fuel_assemblies": 193,
+      "fuel_lattice_geometry": "18 x 18 Square",
+      "active_fuel_length_m": 3.9,
+      "fuel_rods_per_assembly": 300,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.7,
+      "cladding_wall_thickness_mm": 0.615,
+      "fuel_pellet_radius_mm": 4.065
+    },
+    "pre_konvoi": {
+      "supplier": "Siemens-KWU",
+      "display_name": "Pre-Konvoi (1300 MWe)",
+      "aliases": [
+        "Pre-Konvoi (1300 MWe)",
+        "Pre-Konvoi",
+        "KWU Pre-Konvoi"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3765.0,
+      "fuel_assemblies": 193,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.9,
+      "fuel_rods_per_assembly": 236,
+      "fuel_rod_outer_diameter_mm": 10.75,
+      "fuel_rod_pitch_mm": 14.3,
+      "cladding_wall_thickness_mm": 0.725,
+      "fuel_pellet_radius_mm": 4.555
+    },
+    "epr": {
+      "supplier": "Framatome / EDF",
+      "display_name": "EPR (European Pressurized Reactor)",
+      "aliases": [
+        "EPR (European Pressurized Reactor)",
+        "EPR",
+        "European Pressurized Reactor"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 4500.0,
+      "fuel_assemblies": 241,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.2,
+      "fuel_rods_per_assembly": 265,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "cp1_cp2": {
+      "supplier": "Framatome / EDF",
+      "display_name": "CP1 / CP2 (Legacy 900 MWe)",
+      "aliases": [
+        "CP1 / CP2 (Legacy 900 MWe)",
+        "CP1",
+        "CP2",
+        "French 900 MWe PWR"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 2785.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "p4_p4": {
+      "supplier": "Framatome / EDF",
+      "display_name": "P4 / P'4 (Legacy 1300 MWe)",
+      "aliases": [
+        "P4 / P'4 (Legacy 1300 MWe)",
+        "P4",
+        "P'4",
+        "French 1300 MWe PWR"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3810.0,
+      "fuel_assemblies": 193,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.27,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "n4": {
+      "supplier": "Framatome / EDF",
+      "display_name": "N4 (Legacy 1450 MWe)",
+      "aliases": [
+        "N4 (Legacy 1450 MWe)",
+        "N4",
+        "French N4"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 4250.0,
+      "fuel_assemblies": 205,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.27,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "atmea1": {
+      "supplier": "Framatome / EDF",
+      "display_name": "Atmea1",
+      "aliases": [
+        "Atmea1",
+        "ATMEA1",
+        "ATMEA-1"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3150.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.2,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "nuward": {
+      "supplier": "Framatome / EDF",
+      "display_name": "NUWARD (SMR)",
+      "aliases": [
+        "NUWARD (SMR)",
+        "NUWARD",
+        "Nuward SMR"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 500.0,
+      "fuel_assemblies": 76,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.15,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "hualong_one": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "Hualong One (HPR1000)",
+      "aliases": [
+        "Hualong One (HPR1000)",
+        "Hualong One",
+        "HPR1000",
+        "HPR-1000"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3190.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "cnp_300": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "CNP-300",
+      "aliases": [
+        "CNP-300",
+        "CNP300",
+        "CNP 300"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 999.0,
+      "fuel_assemblies": 121,
+      "fuel_lattice_geometry": "15 x 15 Square",
+      "active_fuel_length_m": 2.9,
+      "fuel_rods_per_assembly": 204,
+      "fuel_rod_outer_diameter_mm": 10.0,
+      "fuel_rod_pitch_mm": 13.3,
+      "cladding_wall_thickness_mm": 0.65,
+      "fuel_pellet_radius_mm": 4.22
+    },
+    "cnp_600": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "CNP-600",
+      "aliases": [
+        "CNP-600",
+        "CNP600",
+        "CNP 600"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 1930.0,
+      "fuel_assemblies": 121,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "cnp_1000_cpr_1000": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "CNP-1000 / CPR-1000",
+      "aliases": [
+        "CNP-1000 / CPR-1000",
+        "CNP1000",
+        "CPR1000",
+        "CPR-1000"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 2905.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "acpr1000": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "ACPR1000",
+      "aliases": [
+        "ACPR1000",
+        "ACPR-1000",
+        "ACPR 1000"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3289.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "cap1400": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "CAP1400 (Guohe One)",
+      "aliases": [
+        "CAP1400 (Guohe One)",
+        "CAP1400",
+        "CAP-1400",
+        "Guohe One"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 4040.0,
+      "fuel_assemblies": 193,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.27,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "cap1000": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "CAP1000",
+      "aliases": [
+        "CAP1000",
+        "CAP-1000",
+        "CAP 1000"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3400.0,
+      "fuel_assemblies": 157,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.27,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "acp100": {
+      "supplier": "CNNC / CGN / SPIC (China)",
+      "display_name": "ACP100 (Linglong One)",
+      "aliases": [
+        "ACP100 (Linglong One)",
+        "ACP100",
+        "ACP-100",
+        "Linglong One"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 385.0,
+      "fuel_assemblies": 57,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.15,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.52,
+      "fuel_rod_pitch_mm": 12.66,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "opr1000": {
+      "supplier": "KHNP / KEPCO (South Korea)",
+      "display_name": "OPR1000",
+      "aliases": [
+        "OPR1000",
+        "OPR-1000",
+        "OPR 1000"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 2815.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 236,
+      "fuel_rod_outer_diameter_mm": 9.7,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.635,
+      "fuel_pellet_radius_mm": 4.1
+    },
+    "apr1400": {
+      "supplier": "KHNP / KEPCO (South Korea)",
+      "display_name": "APR1400",
+      "aliases": [
+        "APR1400",
+        "APR-1400",
+        "APR 1400"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 3983.0,
+      "fuel_assemblies": 241,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 256,
+      "fuel_rod_outer_diameter_mm": 9.55,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.571,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "apr_plus": {
+      "supplier": "KHNP / KEPCO (South Korea)",
+      "display_name": "APR+",
+      "aliases": [
+        "APR Plus",
+        "APR+"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 4290.0,
+      "fuel_assemblies": 257,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 256,
+      "fuel_rod_outer_diameter_mm": 9.55,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.571,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "apr1000": {
+      "supplier": "KHNP / KEPCO (South Korea)",
+      "display_name": "APR1000",
+      "aliases": [
+        "APR1000",
+        "APR-1000",
+        "APR 1000"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 2815.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "16 x 16 Square",
+      "active_fuel_length_m": 3.81,
+      "fuel_rods_per_assembly": 256,
+      "fuel_rod_outer_diameter_mm": 9.55,
+      "fuel_rod_pitch_mm": 12.85,
+      "cladding_wall_thickness_mm": 0.571,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "bandi_60": {
+      "supplier": "KHNP / KEPCO (South Korea)",
+      "display_name": "BANDI-60 (SMR)",
+      "aliases": [
+        "BANDI-60 (SMR)",
+        "BANDI-60",
+        "BANDI 60"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 200.0,
+      "fuel_assemblies": 53,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.0,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "apwr": {
+      "supplier": "Mitsubishi Heavy Industries",
+      "display_name": "APWR",
+      "aliases": [
+        "APWR",
+        "Advanced PWR",
+        "Mitsubishi APWR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 4451.0,
+      "fuel_assemblies": 257,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.2,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "apwr_plus": {
+      "supplier": "Mitsubishi Heavy Industries",
+      "display_name": "APWR+",
+      "aliases": [
+        "APWR Plus",
+        "APWR+"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 4900.0,
+      "fuel_assemblies": 357,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 4.2,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "srz_1200": {
+      "supplier": "Mitsubishi Heavy Industries",
+      "display_name": "SRZ-1200",
+      "aliases": [
+        "SRZ-1200",
+        "SRZ1200",
+        "SRZ 1200"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3200.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "b_and_w_177": {
+      "supplier": "Babcock & Wilcox (B&W)",
+      "display_name": "B&W 177",
+      "aliases": [
+        "B&W 177",
+        "BW 177",
+        "Babcock and Wilcox 177"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 2670.0,
+      "fuel_assemblies": 177,
+      "fuel_lattice_geometry": "15 x 15 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 208,
+      "fuel_rod_outer_diameter_mm": 10.92,
+      "fuel_rod_pitch_mm": 14.43,
+      "cladding_wall_thickness_mm": 0.673,
+      "fuel_pellet_radius_mm": 4.699
+    },
+    "b_and_w_205": {
+      "supplier": "Babcock & Wilcox (B&W)",
+      "display_name": "B&W 205",
+      "aliases": [
+        "B&W 205",
+        "BW 205",
+        "Babcock and Wilcox 205"
+      ],
+      "auto_eligible": false,
+      "reference_thermal_power_MWt": 3700.0,
+      "fuel_assemblies": 205,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "ce_reliable": {
+      "supplier": "Combustion Engineering",
+      "display_name": "CE Reliable",
+      "aliases": [
+        "CE Reliable",
+        "Combustion Engineering Reliable",
+        "CE 175"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 2630.0,
+      "fuel_assemblies": 175,
+      "fuel_lattice_geometry": "14 x 14 Square",
+      "active_fuel_length_m": 3.47,
+      "fuel_rods_per_assembly": 176,
+      "fuel_rod_outer_diameter_mm": 11.18,
+      "fuel_rod_pitch_mm": 14.73,
+      "cladding_wall_thickness_mm": 0.711,
+      "fuel_pellet_radius_mm": 4.74
+    },
+    "voygr": {
+      "supplier": "NuScale Power",
+      "display_name": "VOYGR (SMR)",
+      "aliases": [
+        "VOYGR (SMR)",
+        "VOYGR",
+        "NuScale VOYGR",
+        "NuScale"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 250.0,
+      "fuel_assemblies": 37,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.0,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "smr_160": {
+      "supplier": "Holtec International",
+      "display_name": "SMR-160 (SMR)",
+      "aliases": [
+        "SMR-160 (SMR)",
+        "SMR-160",
+        "SMR160",
+        "Holtec SMR-160"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 525.0,
+      "fuel_assemblies": 57,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 3.66,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "rolls_royce_smr": {
+      "supplier": "Rolls-Royce SMR Ltd",
+      "display_name": "Rolls-Royce SMR",
+      "aliases": [
+        "Rolls-Royce SMR",
+        "Rolls Royce SMR",
+        "RR SMR"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 1358.0,
+      "fuel_assemblies": 121,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.8,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "smart": {
+      "supplier": "KAERI",
+      "display_name": "SMART (SMR)",
+      "aliases": [
+        "SMART (SMR)",
+        "SMART",
+        "KAERI SMART"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 330.0,
+      "fuel_assemblies": 57,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.0,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.57,
+      "fuel_pellet_radius_mm": 4.095
+    },
+    "mpower": {
+      "supplier": "Babcock & Wilcox / Bechtel",
+      "display_name": "mPower (SMR - Defunct)",
+      "aliases": [
+        "mPower (SMR - Defunct)",
+        "mPower",
+        "B&W mPower"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 425.0,
+      "fuel_assemblies": 69,
+      "fuel_lattice_geometry": "17 x 17 Square",
+      "active_fuel_length_m": 2.44,
+      "fuel_rods_per_assembly": 264,
+      "fuel_rod_outer_diameter_mm": 9.5,
+      "fuel_rod_pitch_mm": 12.6,
+      "cladding_wall_thickness_mm": 0.572,
+      "fuel_pellet_radius_mm": 4.096
+    },
+    "loft": {
+      "supplier": "INEL / USNRC",
+      "display_name": "Loss-of-Fluid Test (LOFT)",
+      "aliases": [
+        "Loss-of-Fluid Test (LOFT)",
+        "LOFT",
+        "Loss of Fluid Test"
+      ],
+      "auto_eligible": true,
+      "reference_thermal_power_MWt": 50.0,
+      "fuel_assemblies": 9,
+      "fuel_lattice_geometry": "15 x 15 Square",
+      "active_fuel_length_m": 1.68,
+      "fuel_rods_per_assembly": 204,
+      "fuel_rod_outer_diameter_mm": 10.72,
+      "fuel_rod_pitch_mm": 14.3,
+      "cladding_wall_thickness_mm": 0.617,
+      "fuel_pellet_radius_mm": 4.643
+    }
+  }
+}
