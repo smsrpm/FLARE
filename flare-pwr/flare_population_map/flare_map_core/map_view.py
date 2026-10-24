@@ -1180,33 +1180,37 @@ def _add_time_evolving_overlays(
 class _FitCircularViewport(MacroElement):
     """Fit a geographic radius to a circular Leaflet viewport using fractional zoom."""
 
-    def __init__(self, site_lat: float, site_lon: float, radius_miles: float, margin_fraction: float = 0.03):
+    def __init__(self, site_lat: float, site_lon: float, radius_miles: float, margin_fraction: float = 0.03,
+                 auto_fit: bool = True):
         super().__init__()
         self._name = "FitCircularViewport"
         self.site_lat = float(site_lat)
         self.site_lon = float(site_lon)
         self.radius_miles = float(radius_miles)
         self.margin_fraction = float(margin_fraction)
+        self.auto_fit = bool(auto_fit)
         self._template = Template(r"""
 {% macro script(this, kwargs) %}
 (function () {
     const map = {{ this._parent.get_name() }};
     const site = L.latLng({{ this.site_lat }}, {{ this.site_lon }});
     const earthRadiusMiles = 3958.7613;
-    const angularDistance = {{ this.radius_miles }} / earthRadiusMiles;
-    const lat1 = site.lat * Math.PI / 180.0;
-    const lon1 = site.lng * Math.PI / 180.0;
-    const lat2 = Math.asin(
-        Math.sin(lat1) * Math.cos(angularDistance) +
-        Math.cos(lat1) * Math.sin(angularDistance)
-    );
-    const lon2 = lon1 + Math.atan2(
-        Math.sin(angularDistance) * Math.cos(lat1),
-        Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2)
-    );
-    const northPoint = L.latLng(lat2 * 180.0 / Math.PI, lon2 * 180.0 / Math.PI);
+    const loadedRadiusMiles = {{ this.radius_miles }};
+    let selectedRadiusMiles = loadedRadiusMiles;
+    let fitRevision = 0;
 
     function fitRadius() {
+        const revision = ++fitRevision;
+        const angularDistance = selectedRadiusMiles / earthRadiusMiles;
+        const lat1 = site.lat * Math.PI / 180.0;
+        const lat2 = Math.asin(
+            Math.sin(lat1) * Math.cos(angularDistance) +
+            Math.cos(lat1) * Math.sin(angularDistance)
+        );
+        // Due north stays on the site's meridian. A longitude offset measures a
+        // diagonal distance and incorrectly zooms out beyond the requested radius.
+        const northPoint = L.latLng(lat2 * 180.0 / Math.PI, site.lng);
+
         map.stop();
         map.invalidateSize({pan: false, animate: false});
 
@@ -1221,22 +1225,33 @@ class _FitCircularViewport(MacroElement):
         }
 
         const desiredZoom = referenceZoom + Math.log2(targetRadiusPx / referenceRadiusPx);
-        let settled = false;
         const finish = function () {
-            if (settled) return;
-            settled = true;
-            map.off('zoomend', finish);
+            if (revision !== fitRevision) return;
             map.invalidateSize({pan: false, animate: false});
-            map.setView(site, map.getZoom(), {animate: false, reset: true});
+            map.setView(site, desiredZoom, {animate: false, reset: true});
         };
 
-        map.once('zoomend', finish);
         map.setView(site, desiredZoom, {animate: false, reset: true});
-        // If the desired zoom equals the current zoom, Leaflet emits no zoomend.
+        // Center after Leaflet's event stack and layout settle, including when
+        // the requested zoom equals the current zoom and no zoomend is emitted.
+        requestAnimationFrame(function () { requestAnimationFrame(finish); });
         window.setTimeout(finish, 80);
     }
 
+    // The controls send the current slider value, including an edit whose
+    // debounce timer has not fired yet. No Python rerun or tile reload is needed.
+    window.addEventListener('message', function(event) {
+        const data = event && event.data;
+        if (!data) return;
+        if (data.type !== 'flare-set-radius-range' && data.type !== 'flare-reset-view') return;
+        const maximum = Number(data.maximum);
+        if (!Number.isFinite(maximum) || maximum <= 0 || maximum > loadedRadiusMiles * 1.000001) return;
+        selectedRadiusMiles = maximum;
+        if (data.type === 'flare-reset-view') fitRadius();
+    });
+
     map.whenReady(function () {
+        if (!{{ this.auto_fit|tojson }}) return;
         requestAnimationFrame(function () {
             requestAnimationFrame(function () {
                 map.invalidateSize({pan: false, animate: false});
@@ -1759,6 +1774,10 @@ def make_map(
         overlay=False,
         control=False,
         cross_origin=True,
+        # The 0.1-mile option can require zoom >18 near the equator. Reuse
+        # existing level 18 tiles while allowing the fractional view fit.
+        max_zoom=19,
+        max_native_zoom=18,
     ).add_to(m)
 
     _add_flare_layer_panes(m)
@@ -1938,9 +1957,11 @@ def make_map(
             ).add_to(m)
 
 
-    if fit_view_to_radius:
-        _FitCircularViewport(site_lat, site_lon, radius_miles, margin_fraction=0.03).add_to(m)
-    else:
+    _FitCircularViewport(
+        site_lat, site_lon, radius_miles, margin_fraction=0.03,
+        auto_fit=fit_view_to_radius,
+    ).add_to(m)
+    if not fit_view_to_radius:
         m.fit_bounds(
             view_bounds if view_bounds is not None else _radius_bounds(site_lat, site_lon, radius_miles),
             padding=(0, 0) if view_bounds is not None else (12, 12),
