@@ -21,6 +21,7 @@ import time
 import threading
 import queue
 import base64
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 
@@ -1510,12 +1511,12 @@ def _regulatory_fom_lines_for_narrative(df, case_name, run_dir=None, use_english
 
         dose_rows = load_dose(case_name, run_dir=run_dir)
         if dose_rows:
-            bits = [f"{r[0]} TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in dose_rows if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5]
+            bits = [f"{r[0]} TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in dose_rows if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room") and len(r) >= 5]
             if bits:
                 lines.append("Radiological dose FOMs for 10 CFR 50.34(a)(1), 10 CFR 50.67, 10 CFR 100.11, and 10 CFR 100.21(c)(2), as applicable: " + "; ".join(bits))
         isp_rows = load_iodine_spike(case_name, run_dir=run_dir)
         if isp_rows:
-            bits = [f"{r[0]} iodine-spike TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in isp_rows if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5]
+            bits = [f"{r[0]} iodine-spike TEDE {r[1]} rem vs limit {r[2]}: {r[4]}" for r in isp_rows if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room") and len(r) >= 5]
             if bits:
                 lines.append("Iodine-spike dose FOMs: " + "; ".join(bits))
         lines.append("GDC conclusion priority: explain how the accident sequence and FOMs support or challenge the applicable GDC safety functions: reactivity control, RCPB protection, ECCS/core cooling, containment integrity, combustible-gas control, and offsite/control-room dose control.")
@@ -1967,6 +1968,21 @@ def _clean_numeric_columns_for_streamlit(df, numeric_cols=None, text_cols=None):
     return out
 
 
+def _dose_window_caption(rows):
+    """Describe the calculated limiting EAB interval when the workbook has it."""
+    if not any(r and r[0] == "EAB (worst 2 hr)" for r in rows):
+        return None
+    values = {r[0]: r[1] for r in rows if r and len(r) > 1}
+    try:
+        start = float(values["Window start (hr)"])
+        end = float(values["Window end (hr)"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(start) and math.isfinite(end) and end > start):
+        return None
+    return f"Limiting two-hour EAB exposure: {start:.6f}–{end:.6f} hr after accident initiation."
+
+
 def _clean_dose_display_df(df):
     """Normalize common NOTBADTRAD/Iodine Spike display columns."""
     numeric_cols = [
@@ -2106,7 +2122,7 @@ def _source_term_lines_for_narrative(case_name, run_dir=None, max_groups=12):
         if dose_rows:
             dose_bits = []
             for r in dose_rows:
-                if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5:
+                if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room") and len(r) >= 5:
                     dose_bits.append(f"{r[0]} TEDE {r[1]} rem vs limit {r[2]}: {r[4]}")
             if dose_bits:
                 lines.append("NOTBADTRAD dose screening: " + "; ".join(dose_bits))
@@ -2115,7 +2131,7 @@ def _source_term_lines_for_narrative(case_name, run_dir=None, max_groups=12):
         if isp_rows:
             isp_bits = []
             for r in isp_rows:
-                if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5:
+                if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room") and len(r) >= 5:
                     isp_bits.append(f"{r[0]} iodine-spike TEDE {r[1]} rem vs limit {r[2]}: {r[4]}")
             if isp_bits:
                 lines.append("Iodine spike pre-existing coolant activity dose: " + "; ".join(isp_bits))
@@ -2246,7 +2262,15 @@ def build_source_term_dose_report_tables(case_name, run_dir=None):
     # NOTBADTRAD Dose Screening block
     dose_rows = load_dose(case_name, run_dir=run_dir)
     if dose_rows:
-        summary = [r[:5] for r in dose_rows if r and r[0] in ("EAB", "LPZ", "Control Room")]
+        cr_parts = [[r[0].removeprefix("CR ").removesuffix(" (rem)").replace("_", " "), r[1]]
+                    for r in dose_rows if r and r[0] in
+                    ("CR inhalation (rem)", "CR plume_shine (rem)",
+                     "CR containment_shine (rem)", "CR room_shine (rem)")]
+        if cr_parts:
+            tables.append({"section": "NOTBADTRAD Dose Screening", "title": "Control room dose components",
+                           "df": _report_df(pd.DataFrame(cr_parts, columns=["Component", "Dose (rem)"]),
+                                            {"Dose (rem)": "{:.4e}"}, text_cols=["Component"])})
+        summary = [r[:5] for r in dose_rows if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room")]
         if summary:
             sum_df = pd.DataFrame(summary, columns=["Location", "TEDE (rem)", "Limit (rem)", "Margin (rem)", "Result"])
             sum_df = _clean_dose_display_df(sum_df)
@@ -2314,7 +2338,7 @@ def build_source_term_dose_report_tables(case_name, run_dir=None):
                 "title": "Inputs and trigger flags",
                 "df": pd.DataFrame(metric_rows, columns=["Field", "Value"]),
             })
-        summary = [r[:5] for r in isp_rows if r and r[0] in ("EAB", "LPZ", "Control Room")]
+        summary = [r[:5] for r in isp_rows if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room")]
         if summary:
             sum_df = pd.DataFrame(summary, columns=["Location", "TEDE (rem)", "Limit (rem)", "Margin (rem)", "Result"])
             sum_df = _clean_dose_display_df(sum_df)
@@ -2338,6 +2362,113 @@ def build_source_term_dose_report_tables(case_name, run_dir=None):
                     "df": _report_df(grp_df, {"Released (Ci)":"{:.4e}", "EAB (rem)":"{:.4e}", "LPZ (rem)":"{:.4e}", "CR (rem)":"{:.4e}", "Release frac":"{:.4e}"}, text_cols=["Group"]),
                 })
     return tables
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def _nbt_preload_isotopes(output_path, file_version):
+    """Read all groups once per output version, before any popup is clicked."""
+    try:
+        with closing(load_workbook(output_path, read_only=True, data_only=True)) as wb:
+            if "Isotope Inventory" not in wb.sheetnames:
+                return {}, "This output has no recorded isotope inventory."
+            rows = iter(wb["Isotope Inventory"].values)
+            header = next((list(r) for r in rows if r and r[0] == "Nuclide"), None)
+            required = ("Nuclide", "Group", "Core activity (Ci)", "Inventory basis")
+            if header is None or any(c not in header for c in required):
+                return {}, "The recorded isotope inventory has an unsupported layout."
+            pos = {c: header.index(c) for c in required}
+            groups = {}
+            for row in rows:
+                if len(row) <= max(pos.values()) or not row[pos["Nuclide"]]:
+                    continue
+                group = str(row[pos["Group"]])
+                activity = float(row[pos["Core activity (Ci)"]])
+                if not math.isfinite(activity) or activity < 0:
+                    return {}, "The recorded isotope inventory contains an invalid activity."
+                groups.setdefault(group, []).append({
+                    "Nuclide": str(row[pos["Nuclide"]]), "Core activity (Ci)": activity,
+                    "Inventory basis": str(row[pos["Inventory basis"]] or "")})
+            return groups, None
+    except Exception as exc:
+        return {}, f"Could not read this run's isotope inventory: {exc}"
+
+
+def _nbt_prepared_isotope_details(groups, group, released_ci):
+    records = [dict(r) for r in groups.get(group, [])]
+    if not records:
+        return None, "No individual radionuclides are recorded for this group; this does not establish zero physical inventory."
+    total = math.fsum(r["Core activity (Ci)"] for r in records)
+    released_ci = float(released_ci)
+    if not math.isfinite(released_ci) or released_ci < 0 or (total == 0 and released_ci > 0):
+        return None, "The group release cannot be reconciled with the recorded isotope inventory."
+    for row in records:
+        fraction = row["Core activity (Ci)"] / total if total else 0.
+        row["Released (Ci)"] = released_ci * fraction
+        row["Group activity (%)"] = 100. * fraction
+    records.sort(key=lambda r: r["Core activity (Ci)"], reverse=True)
+    records.append({"Nuclide": "TOTAL", "Core activity (Ci)": total,
+                    "Released (Ci)": released_ci, "Group activity (%)": 100. if total else 0.,
+                    "Inventory basis": ""})
+    return records, None
+
+
+def _nbt_group_popup_html(frame, groups, inventory_error=None):
+    """Self-contained HTML: opening/closing details never contacts Streamlit."""
+    from html import escape
+    import csv
+    from urllib.parse import quote
+    columns = ["Group", "Released (Ci)", "EAB (rem)", "LPZ (rem)", "CR (rem)", "Release frac"]
+    body, dialogs = [], []
+    csv_buffer = io.StringIO()
+    writer = csv.writer(csv_buffer)
+    writer.writerow(columns)
+    for i, (_, row) in enumerate(frame.iterrows()):
+        group = str(row["Group"])
+        writer.writerow([row[c] for c in columns])
+        body.append('<tr><td><button class="group" data-popup="g%d">%s</button></td>%s</tr>' %
+                    (i, escape(group), ''.join('<td>%s</td>' % escape(f'{float(row[c]):.4e}') for c in columns[1:])))
+        records, message = _nbt_prepared_isotope_details(groups, group, row["Released (Ci)"])
+        message = inventory_error or message
+        if message:
+            content = '<p>%s</p>' % escape(message)
+        else:
+            detail_columns = ["Nuclide", "Core activity (Ci)", "Released (Ci)", "Group activity (%)", "Inventory basis"]
+            detail_rows = []
+            for record in records:
+                detail_rows.append('<tr>%s</tr>' % ''.join('<td>%s</td>' % escape(
+                    f'{record[c]:.2f}' if c == 'Group activity (%)' else
+                    f'{record[c]:.4e}' if c in ('Core activity (Ci)', 'Released (Ci)') else str(record[c]))
+                    for c in detail_columns))
+            content = '<div class="scroll"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (
+                ''.join('<th>%s</th>' % escape(c) for c in detail_columns), ''.join(detail_rows))
+            content += '<p class="note">Core activities are recorded for this run. Released activities allocate the nominal group release proportionally to core isotope activities. They are before nbt_calibrate and downstream removal/transport, not environmental release histories.</p>'
+        dialogs.append('<dialog id="g%d" aria-labelledby="title%d"><div class="heading"><h3 id="title%d">%s — radionuclide activities</h3><button class="close" aria-label="Close isotope activities">×</button></div>%s</dialog>' %
+                       (i, i, i, escape(group), content))
+    return '''<!doctype html><html><head><meta charset="utf-8"><style>
+    :root{font-family:system-ui,sans-serif;color:#263445;background:#f5f7fa;font-size:14px}
+    body{margin:0;padding:2px} .scroll{overflow:auto}table{width:100%%;border-collapse:separate;border-spacing:0;background:white;border:1px solid #d8dee7;border-radius:9px;overflow:hidden}
+    th,td{padding:12px 10px;border-bottom:1px solid #e6e9ef;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}th{background:#edf1f6;color:#566579;font-weight:500}th:first-child,td:first-child{text-align:left}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:#f1f6fc}
+    .group{font:inherit;color:#0969da;background:none;border:0;padding:0;cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:3px}.group:focus-visible,.close:focus-visible{outline:2px solid #0969da;outline-offset:3px}
+    .hint,.note{color:#566579;font-size:12px;line-height:1.5}.toolbar{display:flex;justify-content:space-between;gap:15px;align-items:center;margin-bottom:9px}.toolbar a{color:#0969da;font-size:12px}
+    dialog{border:1px solid #cbd4df;border-radius:12px;padding:18px;width:calc(100%% - 50px);max-width:1100px;max-height:calc(100vh - 60px);box-shadow:0 12px 48px #16233350;overflow:auto;color:#263445;background:white}dialog::backdrop{background:#172b4d55}.heading{display:flex;align-items:center;justify-content:space-between;gap:15px}h3{font-size:17px;margin:0 0 16px}.close{font-size:26px;line-height:1;border:0;background:none;color:#566579;cursor:pointer;align-self:flex-start}
+    </style></head><body><div class="toolbar"><span class="hint">Click a group name for individual radionuclide activities.</span><a download="group_contributions.csv" href="data:text/csv;charset=utf-8,%s">Download CSV</a></div><div class="scroll"><table><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>%s
+    <script>
+    document.querySelectorAll('[data-popup]').forEach(b=>b.addEventListener('click',()=>document.getElementById(b.dataset.popup).showModal()));
+    document.querySelectorAll('dialog').forEach(d=>{d.querySelector('.close').addEventListener('click',()=>d.close());d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}});});
+    </script></body></html>''' % (quote(csv_buffer.getvalue(), safe=''), ''.join('<th>%s</th>' % escape(c) for c in columns), ''.join(body), ''.join(dialogs))
+
+
+def _nbt_group_contributions(grp_df, case_name, run_dir=None):
+    from streamlit.components.v1 import html as component_html
+    output_path = Path(run_dir if run_dir is not None else WORK_DIR) / f"{case_name}_out.xlsx"
+    try:
+        stat = output_path.stat()
+        version = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        version = None
+    groups, message = _nbt_preload_isotopes(str(output_path.resolve()), version)
+    markup = _nbt_group_popup_html(grp_df.reset_index(drop=True), groups, message)
+    component_html(markup, height=max(520, 78 + 45 * len(grp_df)), scrolling=True)
+
 
 def load_dose(case_name, run_dir=None):
     """Load Dose sheet from output workbook if it exists."""
@@ -3947,9 +4078,9 @@ with tab_results:
         if dose_rows:
             with st.expander("☢️  NOTBADTRAD Dose Screening", expanded=True):
                 try:
-                    # ── Summary table (EAB / LPZ / Control Room) ──────────
+                    # Fixed-interval results plus the limiting two-hour EAB result.
                     summary = [r[:5] for r in dose_rows
-                               if r[0] in ("EAB", "LPZ", "Control Room")]
+                               if r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room")]
                     if summary:
                         sum_df = pd.DataFrame(summary,
                             columns=["Location", "TEDE (rem)", "Limit (rem)",
@@ -3966,6 +4097,20 @@ with tab_results:
                                          "Margin (rem)": "{:.4e}"}),
                             width="stretch", hide_index=True,
                         )
+                        window_caption = _dose_window_caption(dose_rows)
+                        if window_caption:
+                            st.caption(window_caption)
+
+                    cr_parts = [[r[0].removeprefix("CR ").removesuffix(" (rem)").replace("_", " "), r[1]]
+                                for r in dose_rows if r and r[0] in
+                                ("CR inhalation (rem)", "CR plume_shine (rem)",
+                                 "CR containment_shine (rem)", "CR room_shine (rem)")]
+                    if cr_parts:
+                        st.markdown("**Control room dose components:**")
+                        st.dataframe(pd.DataFrame(cr_parts, columns=["Component", "Dose (rem)"])
+                                     .style.format({"Dose (rem)": "{:.4e}"}),
+                                     width="stretch", hide_index=True)
+                        st.caption("Shine uses a screening point-kernel/slab model; geometry and data provenance are recorded in the Dose worksheet.")
 
                     # ── Group contributions ────────────────────────────────
                     grp_hdr = next((i for i, r in enumerate(dose_rows)
@@ -3982,13 +4127,7 @@ with tab_results:
                                              "CR (rem)","Release frac"])
                             grp_df = _clean_dose_display_df(grp_df)
                             st.markdown("**Group contributions:**")
-                            st.dataframe(
-                                grp_df.style.format(
-                                    {"Released (Ci)": "{:.4e}",
-                                     "EAB (rem)": "{:.4e}", "LPZ (rem)": "{:.4e}",
-                                     "CR (rem)":  "{:.4e}", "Release frac": "{:.4e}"}),
-                                width="stretch", hide_index=True,
-                            )
+                            _nbt_group_contributions(grp_df, run_case, run_dir=_run_dir)
 
                     # ── Runtime ────────────────────────────────────────────
                     rt = next((r[1] for r in dose_rows
@@ -4112,7 +4251,7 @@ with tab_results:
 
                     # Summary TEDE table
                     summary = [r[:5] for r in isp_rows
-                               if r[0] in ("EAB","LPZ","Control Room")]
+                               if r[0] in ("EAB","EAB (worst 2 hr)","LPZ","Control Room")]
                     if summary:
                         sum_df = pd.DataFrame(summary,
                             columns=["Location","TEDE (rem)","Limit (rem)",
@@ -4126,6 +4265,10 @@ with tab_results:
                                   .format({"TEDE (rem)":"{:.4e}",
                                            "Margin (rem)":"{:.4e}"}),
                             width="stretch", hide_index=True)
+
+                        window_caption = _dose_window_caption(isp_rows)
+                        if window_caption:
+                            st.caption(window_caption)
 
                     # Group contributions
                     grp_hdr = next((i for i,r in enumerate(isp_rows)

@@ -497,7 +497,7 @@ def _source_term_lines_for_report(case_run_dir: Path, case: str, max_groups: int
             if rows:
                 bits=[]
                 for r in rows:
-                    if r and r[0] in ("EAB", "LPZ", "Control Room") and len(r) >= 5:
+                    if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room") and len(r) >= 5:
                         bits.append(f"{r[0]} TEDE {r[1]} rem vs limit {r[2]}: {r[4]}")
                 if bits:
                     lines.append(prefix + ": " + "; ".join(bits))
@@ -601,7 +601,7 @@ def _source_term_dose_tables_for_report(case_run_dir: Path, case: str):
             rows = _read_workbook_rows(case_run_dir, case, sheet_name)
             if not rows:
                 return
-            summary = [r[:5] for r in rows if r and r[0] in ("EAB", "LPZ", "Control Room")]
+            summary = [r[:5] for r in rows if r and r[0] in ("EAB", "EAB (worst 2 hr)", "LPZ", "Control Room")]
             if summary:
                 df = pd.DataFrame(summary, columns=["Location", "TEDE (rem)", "Limit (rem)", "Margin (rem)", "Result"])
                 tables.append({"section": section_title, "title":"Summary", "df": _stringify_df_for_report(df, {"TEDE (rem)":"{:.4e}", "Margin (rem)":"{:.4e}"}, text_cols=["Location", "Limit (rem)", "Result"])})

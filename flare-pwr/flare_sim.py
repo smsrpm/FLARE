@@ -1201,6 +1201,8 @@ def post_processing(time, Pressure, Temperature, massflow_break,
                 _dose_ws.append([_row["Location"], round(_row["TEDE (rem)"], 12),
                                   _row["Limit (rem)"], round(_row["Margin"], 12),
                                   _row["Result"]])
+            if dose_out.get("worst_2h_eab"):
+                _dose_ws.append(_nbt_worst_summary_row(dose_out["worst_2h_eab"]))
             _dose_ws.append([])
             # Group contributions
             _dose_ws.append(["Group", "Released (Ci)", "EAB (rem)", "LPZ (rem)", "CR (rem)", "Release frac"])
@@ -1217,11 +1219,45 @@ def post_processing(time, Pressure, Temperature, massflow_break,
             _dose_ws.append(["chi/Q EAB (s/m3)", _xq.get("eab", "")])
             _dose_ws.append(["chi/Q LPZ (s/m3)", _xq.get("lpz", "")])
             _dose_ws.append(["chi/Q CR  (s/m3)", _xq.get("cr",  "")])
+            _cr_inputs = dose_out.get("inputs", {})
+            for _label, _key in (("CR model", "cr_model"),
+                                  ("CR dispersion basis", "cr_dispersion_basis"),
+                                  ("CR integration (hr)", "cr_integration_hr"),
+                                  ("CR makeup flow (cfm)", "cr_makeup_cfm"),
+                                  ("CR volume (ft3)", "cr_volume_ft3"),
+                                  ("CR filtered recirculation (cfm)", "cr_recirc_cfm"),
+                                  ("CR unfiltered inleakage (cfm)", "cr_unfiltered_inleak_cfm"),
+                                  ("CR filter enabled", "cr_filter_on")):
+                if _key in _cr_inputs:
+                    _dose_ws.append([_label, _cr_inputs[_key]])
+            if _cr_inputs.get("cr_chi_q_profile"):
+                _dose_ws.append(["CR chi/Q start (hr)", "chi/Q (s/m3); held until next start"])
+                for _t_hr, _q in _cr_inputs["cr_chi_q_profile"]:
+                    _dose_ws.append([_t_hr, _q])
+            _shine_meta = _cr_inputs.get("cr_shine")
+            if _shine_meta:
+                _dose_ws.append(["CR dose component", "Dose (rem)"])
+                for _name, _value in dose_out.get("cr_dose_components_rem", {}).items():
+                    _dose_ws.append(["CR "+_name+" (rem)", _value])
+                for _name, _value in _shine_meta.get("geometry", {}).items():
+                    _dose_ws.append([_name, _value])
+                for _name in ("method", "photon_dose_basis", "assumptions", "room_geometry_factor", "path", "sha256",
+                              "photon_reference_group_sha256", "current_group_sha256", "group_file_matches_photon_reference", "mixture_basis", "inventory_data_sha256"):
+                    _dose_ws.append(["Shine "+_name, _shine_meta.get(_name, "")])
+                _dose_ws.append(["Shine group", "Containment response (rem/Ci/s)", "Plume transmission"])
+                for _name, _response in _shine_meta["group_responses"].items():
+                    _dose_ws.append([_name, _response["containment_rem_per_Ci_s"], _response["plume_transmission"]])
             _dose_ws.append(["Runtime (ms)", round(dose_out.get("runtime_ms", 0), 2)])
             _inv_meta = dose_out.get("inputs", {}).get("inventory", {})
             if _inv_meta:
+                _nbt_write_isotope_inventory(writer.book, _inv_meta)
                 _dose_ws.append(["Inventory model", _inv_meta.get("model", "")])
                 _dose_ws.append(["Estimated fissions", _inv_meta.get("n_fissions", "")])
+            _nbt_write_worst_2h_eab(_dose_ws, dose_out.get("worst_2h_eab"))
+            _group_data = dose_out.get("inputs", {}).get("group_data", {})
+            if _group_data:
+                _dose_ws.append(["NBT group data file", _group_data.get("path", "")])
+                _dose_ws.append(["NBT group data SHA256", _group_data.get("sha256", "")])
             # Iodine spike summary
             _isp = dose_out.get("iodine_spike", {})
             if _isp:
@@ -1302,6 +1338,10 @@ def post_processing(time, Pressure, Temperature, massflow_break,
             _isp_ws.append(["chi/Q LPZ (s/m3)", _xq.get("lpz", "")])
             _isp_ws.append(["chi/Q CR  (s/m3)", _xq.get("cr",  "")])
             _isp_ws.append(["Runtime (ms)", round(_isp_out.get("runtime_ms", 0), 2)])
+            if _isp_out.get("worst_2h_eab"):
+                _isp_ws.append(_nbt_worst_summary_row(_isp_out["worst_2h_eab"]))
+                _nbt_write_worst_2h_eab(_isp_ws, _isp_out["worst_2h_eab"])
+
             _fit = _isp_out.get("dist_fit")
             if _fit:
                 _isp_ws.append([])
@@ -2503,6 +2543,25 @@ _input_echo_log = []
 def pwr_sim(wkstbase, minimum_output=0):
     global _input_echo_log
     _input_echo_log = []   # reset for this run
+    _nbt_refresh_group_data()
+    _input_echo_log.extend([
+        {"Variable": "nbt_group_data_file", "Value": _NBT_GROUP_DATA_META["path"],
+         "Default": "Runtime/nbt_groups.json", "Source": "runtime_json"},
+        {"Variable": "nbt_group_data_sha256", "Value": _NBT_GROUP_DATA_META["sha256"],
+         "Default": "", "Source": "runtime_json"},
+    ])
+    # Prescribed NBT benchmark workbooks bypass the thermal-hydraulic transient.
+    try:
+        from flare_nbt_benchmarks import run_workbook_if_benchmark
+    except ModuleNotFoundError as _import_error:
+        if _import_error.name != "flare_nbt_benchmarks":
+            raise
+        # Ordinary FLARE inputs remain usable without the benchmark companion.
+        run_workbook_if_benchmark = None
+    if run_workbook_if_benchmark is not None:
+        _benchmark = run_workbook_if_benchmark(wkstbase, globals())
+        if _benchmark is not None:
+            return _benchmark
     # ── Validate input file before touching anything else ─────────────────
     fn_in  = f"{wkstbase}_in.xlsx"
     sheet  = wkstbase + '_in'
@@ -2729,7 +2788,10 @@ def pwr_sim(wkstbase, minimum_output=0):
 
         return cmd.rstrip()
 
-    local_namespace = {}
+    # Workbook command blocks may use the documented ``math`` namespace (for
+    # example, plant vessel areas expressed from an inside diameter).  Keep the
+    # namespace deliberately narrow while allowing those deterministic formulas.
+    local_namespace = {"math": _math}
     for command in comdata:
         if isinstance(command, str) and "=" in command:
             try:
@@ -3328,6 +3390,19 @@ def pwr_sim(wkstbase, minimum_output=0):
     lpsi_delay_s        = float(get_variable(local_namespace, "lpsi_delay_s",       30.0))
     si_ramp_time_s      = float(get_variable(local_namespace, "si_ramp_time_s",     5.0))
     rwst_mass_initial   = float(get_variable(local_namespace, "rwst_mass_initial",  1.5e6))
+    # Functional RWST-to-sump recirculation model.  The PRA/system model resolves
+    # whether switchover succeeds; FLARE then evaluates the thermal-hydraulic
+    # response given that state.  Detailed sump/strainer/NPSH hydraulics are not
+    # resolved here.  Defaults preserve the historical behavior (no recirculation).
+    si_recirc_available       = bool(get_variable(local_namespace, "si_recirc_available", False))
+    rwst_recirc_trigger_frac  = float(get_variable(local_namespace, "rwst_recirc_trigger_frac", 0.05))
+    rwst_recirc_trigger_frac  = float(np.clip(rwst_recirc_trigger_frac, 0.0, 1.0))
+    si_recirc_flow_fraction   = float(get_variable(local_namespace, "si_recirc_flow_fraction", 1.0))
+    si_recirc_flow_fraction   = max(0.0, si_recirc_flow_fraction)
+    si_recirc_delay_s         = max(0.0, float(get_variable(local_namespace, "si_recirc_delay_s", 0.0)))
+    # Recirculated sump water is hotter than RWST water; keep this as an explicit
+    # screening parameter rather than silently retaining the cold-RWST enthalpy.
+    si_recirc_temp_C          = float(get_variable(local_namespace, "si_recirc_temp_C", 90.0))
     # Injection temperature: default to accumulator temperature
     t_inj_K             = float(get_variable(local_namespace, "t_inj_K",
                                              inflow_info.get("temp", 49.85) + 273.15))
@@ -3796,13 +3871,22 @@ def pwr_sim(wkstbase, minimum_output=0):
     hpsi_mdot_arr    = np.zeros(number_timesteps)  # HPSI flow [kg/s]
     lpsi_mdot_arr    = np.zeros(number_timesteps)  # LPSI flow [kg/s]
     si_pumped_mdot   = np.zeros(number_timesteps)  # HPSI + LPSI total [kg/s]
-    # SI signal and RWST state
+    # SI signal, RWST, and functional recirculation state
     _si_signal      = False    # True once RCS pressure < p_si_setpoint_Pa
     _si_signal_t    = None     # time of SI signal
     _rwst_mass      = rwst_mass_initial  # remaining RWST inventory [kg]
-    # Pre-compute injection enthalpy (constant T_inj approximation)
-    _h_inj          = 1000.0 * XSteam.h_pT(p_si_setpoint_Pa * 1e-3,
+    _rwst_recirc_trigger_mass = rwst_mass_initial * rwst_recirc_trigger_frac
+    _si_recirc_attempted = False
+    _si_recirc_active    = False
+    _si_recirc_failed    = False
+    _si_recirc_switch_t  = None
+    # Pre-compute RWST and sump injection enthalpies.  The active value changes
+    # at the recirculation switchover.
+    _h_inj_rwst     = 1000.0 * XSteam.h_pT(p_si_setpoint_Pa * 1e-3,
                                              t_inj_K - 273.15)
+    _h_inj_recirc   = 1000.0 * XSteam.h_pT(p_si_setpoint_Pa * 1e-3,
+                                             si_recirc_temp_C)
+    _h_inj_t        = _h_inj_rwst
     inflow_info['method']    = 'use_avg'
     inflow_info['mdot_avg']  = inflow_avg
     inflow_info['enthalpy']  = 1000*XSteam.h_pT(inflow_info['pressure'], inflow_info['temp'])
@@ -4912,9 +4996,40 @@ def pwr_sim(wkstbase, minimum_output=0):
                 print(f"SI signal at t={time[t]:.2f} s: P={Pressure[t]/1e6:.3f} MPa"
                       f" < setpoint {p_si_setpoint_Pa/1e6:.3f} MPa")
 
+            # Attempt the RWST-to-sump switchover once inventory reaches the
+            # prescribed low-inventory trigger.  The PRA supplies the binary
+            # availability state; FLARE does not model the component-level cause.
+            if (_si_signal and not _si_recirc_attempted
+                    and _rwst_mass <= _rwst_recirc_trigger_mass + 1e-9):
+                _si_recirc_attempted = True
+                _si_recirc_switch_t = time[t]
+                if si_recirc_available:
+                    if si_recirc_delay_s <= 0.0:
+                        _si_recirc_active = True
+                        print(f"SI recirculation established at t={time[t]:.1f} s "
+                              f"(RWST={_rwst_mass:.0f} kg).")
+                    else:
+                        print(f"SI recirculation switchover initiated at t={time[t]:.1f} s; "
+                              f"alignment delay={si_recirc_delay_s:.1f} s.")
+                else:
+                    _si_recirc_failed = True
+                    print(f"SI recirculation unavailable at t={time[t]:.1f} s — "
+                          "pumped SI terminates at RWST switchover.")
+
+            if (_si_recirc_attempted and si_recirc_available and not _si_recirc_active
+                    and _si_recirc_switch_t is not None
+                    and time[t] >= _si_recirc_switch_t + si_recirc_delay_s):
+                _si_recirc_active = True
+                print(f"SI recirculation established at t={time[t]:.1f} s after alignment delay.")
+
+            _h_inj_t = _h_inj_recirc if _si_recirc_active else _h_inj_rwst
             _m_hpsi = 0.0
             _m_lpsi = 0.0
-            if _si_signal and _si_signal_t is not None and _rwst_mass > 0.0:
+            _rwst_source_available = _rwst_mass > _rwst_recirc_trigger_mass + 1e-9
+            _flow_source_available = _si_recirc_active or _rwst_source_available
+
+            if (_si_signal and _si_signal_t is not None and _flow_source_available
+                    and not _si_recirc_failed):
                 _elapsed = time[t] - _si_signal_t
 
                 # HPSI
@@ -4941,21 +5056,27 @@ def pwr_sim(wkstbase, minimum_output=0):
                             _a_L * lpsi_mdot_rated * (_dp_L / _den_L),
                             lpsi_mdot_rated)
 
-                # RWST depletion
-                _dt_si     = time[t] - time[t - 1]
-                _rwst_draw = (_m_hpsi + _m_lpsi) * _dt_si
-                if _rwst_draw > _rwst_mass:
-                    _scale  = _rwst_mass / max(_rwst_draw, 1e-9)
-                    _m_hpsi *= _scale
-                    _m_lpsi *= _scale
-                    _rwst_mass = 0.0
-                    print(f"RWST depleted at t={time[t]:.1f} s — SI flow stops.")
+                if _si_recirc_active:
+                    _m_hpsi *= si_recirc_flow_fraction
+                    _m_lpsi *= si_recirc_flow_fraction
                 else:
-                    _rwst_mass -= _rwst_draw
+                    # Draw only down to the recirculation trigger inventory.
+                    # If this timestep reaches the trigger, scale the final RWST
+                    # delivery to the remaining usable inventory and attempt
+                    # switchover on the next integration step.
+                    _dt_si = time[t] - time[t - 1]
+                    _rwst_draw = (_m_hpsi + _m_lpsi) * _dt_si
+                    _rwst_usable = max(0.0, _rwst_mass - _rwst_recirc_trigger_mass)
+                    if _rwst_draw > _rwst_usable:
+                        _scale = _rwst_usable / max(_rwst_draw, 1e-9)
+                        _m_hpsi *= _scale
+                        _m_lpsi *= _scale
+                        _rwst_mass = _rwst_recirc_trigger_mass
+                    else:
+                        _rwst_mass -= _rwst_draw
 
                 # Overfill guard: suppress SI injection when RCS mass exceeds
-                # si_mass_ceiling * initial inventory.  Prevents unbounded mass
-                # accumulation when break flow cannot keep pace with injection.
+                # si_mass_ceiling * initial inventory.
                 if Total_Mass > si_mass_ceiling * Total_Mass_init:
                     _m_hpsi = 0.0
                     _m_lpsi = 0.0
@@ -5328,7 +5449,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                 # treated as diagnostic only — not fed back into mass/energy balance.
                 return np.array([
                     _m_inj*(enthalpy_in - _e) +
-                    si_pumped_mdot[t]*(_h_inj - enthalpy_in) -
+                    si_pumped_mdot[t]*(_h_inj_t - enthalpy_in) -
                     massflow_break[t]*(stagnation_enthalpy_break - _e) -
                     m_porv*(h_porv - _e) +
                     net_heat_total[t] - Q_sg[t],
@@ -5788,7 +5909,27 @@ def pwr_sim(wkstbase, minimum_output=0):
                 pass
 
         if core_flag and _dry_core_ht_latched:
-            alpha[t+1] = dry_core_htc_W_m2K
+            # Dry-core cooling consists of the user-specified gas/steam
+            # convection coefficient plus thermal radiation.  Radiation is
+            # represented as an exactly equivalent heat-transfer coefficient
+            # so it can be carried by the existing wall-to-coolant conduction
+            # solve:
+            #
+            #   h_rad = eps*sigma*(T_clad^4 - T_gas^4)/(T_clad - T_gas)
+            #         = eps*sigma*(T_clad + T_gas)*(T_clad^2 + T_gas^2)
+            #
+            # The factored form is algebraically identical and remains well
+            # behaved when T_clad approaches T_gas.  Temperatures are absolute
+            # (K).  The same emissivity and Stefan-Boltzmann treatment are used
+            # by the later BDB dry-core continuation.
+            _sigma_sb = 5.670374419e-8
+            _T_clad_rad_K = max(float(TT[N,t]) if np.isfinite(TT[N,t]) else 300.0, 1.0)
+            _T_gas_rad_K = max(float(Temperature[t+1]) if np.isfinite(Temperature[t+1]) else 300.0, 1.0)
+            _eps_dry = min(max(float(dry_core_emissivity), 0.0), 1.0)
+            _h_rad_dry = (_eps_dry * _sigma_sb
+                          * (_T_clad_rad_K + _T_gas_rad_K)
+                          * (_T_clad_rad_K**2 + _T_gas_rad_K**2))
+            alpha[t+1] = max(float(dry_core_htc_W_m2K), 0.0) + _h_rad_dry
             _cc_dominant = False
             _sg_nat_active = False
 
@@ -6200,8 +6341,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                                            if get_variable(local_namespace, "nbt_chi_q_eab", None) is not None else None),
                 chi_q_lpz_override      = (float(get_variable(local_namespace, "nbt_chi_q_lpz", None))
                                            if get_variable(local_namespace, "nbt_chi_q_lpz", None) is not None else None),
-                chi_q_cr_override       = (float(get_variable(local_namespace, "nbt_chi_q_cr", None))
-                                           if get_variable(local_namespace, "nbt_chi_q_cr", None) is not None else None),
+                chi_q_cr_override       = get_variable(local_namespace, "nbt_chi_q_cr", None),
                 cr_flow_cfm             = float(get_variable(local_namespace, "nbt_cr_flow_cfm", 100.0)),
                 cr_volume_ft3           = float(get_variable(local_namespace, "nbt_cr_volume_ft3", 20000.0)),
                 cr_filter_on            = bool( get_variable(local_namespace, "nbt_cr_filter_on", True)),
@@ -6234,6 +6374,9 @@ def pwr_sim(wkstbase, minimum_output=0):
                     for gn, gd in _isp_d["group_doses"].items() if gd["released_ci"] > 0
                 ]),
                 "chi_q":       _isp_d.get("chi_q_used", {}),
+                "worst_2h_eab": _isp_d.get("worst_2h_eab"),
+                "inputs": _isp_d.get("inputs", {}),
+                "cr_dose_components_rem": _isp_d.get("cr_dose_components_rem", {}),
                 "runtime_ms":  _isp_d["runtime_ms"],
                 "dist_fit":    _isp_d.get("dist_fit"),
                 "dist_table":  pd.DataFrame(_isp_d.get("dist_table", [])),
@@ -6278,20 +6421,9 @@ def pwr_sim(wkstbase, minimum_output=0):
     # Do not reset _iodine_spike_dose_df here. It may already contain the
     # standalone pre-existing coolant activity / iodine-spike dose result.
     _is_loca               = (diameter_break > 0.0)
-    _rg183 = {
-        # Group                    (gap_frac, early_iv_frac)  — RG 1.183 Rev 0 Table 3, PWR LOCA
-        # gap_frac    : fraction released from ALL failed rods (gap release)
-        # early_iv_frac: ADDITIONAL fraction released from early in-vessel rods only
-        "Noble gases (Kr, Xe)":    (0.05, 0.95),   # gap: 5%; early IV additional: 95% (total 100%)
-        "Halogens (I, Br)":        (0.05, 0.35),   # gap: 5%; early IV additional: 35%
-        "Alkali metals (Cs, Rb)":  (0.05, 0.25),   # gap: 5%; early IV additional: 25%
-        "Te group (Te, Sb, Se)":   (0.00, 0.05),   # gap: 0%; early IV additional: 5%
-        "Ba / Sr":                 (0.00, 0.02),    # gap: 0%; early IV additional: 2%
-        "Ru group (Ru, Mo, Tc)":   (0.00, 0.025),  # gap: 0%; early IV additional: 2.5%
-        "Lanthanides (La, Zr, Nd)":(0.00, 0.002),  # gap: 0%; early IV additional: 0.2%
-        "Ce group (Ce, Pu, Np)":   (0.00, 0.0005), # gap: 0%; early IV additional: 0.05%
-        "U / Actinides":           (0.00, 0.0000), # no RG 1.183 base release; severe-ECR only
-    }
+    _rg183 = {label: (_NBT_GROUPS[key]["gap_release_fraction"],
+                       _NBT_GROUPS[key]["early_iv_release_fraction"])
+              for label, key in _NBT_SOURCE_GROUP_MAP.items()}
 
     # Group-specific severe-event release targets.  If the mean oxidizing-rod
     # ECR threshold is exceeded, the severe-event total release fraction is
@@ -6299,17 +6431,8 @@ def pwr_sim(wkstbase, minimum_output=0):
     # fraction toward the BDBE group target:
     #     Total_severe = Total_base + ECR_fraction * (F_BDBE - Total_base)
     # where ECR_fraction = peak_mean_oxidizing_rod_ECR_percent / 100.
-    _bdbE_F = {
-        "Noble gases (Kr, Xe)":     1.0,
-        "Halogens (I, Br)":         0.75,
-        "Alkali metals (Cs, Rb)":   0.75,
-        "Te group (Te, Sb, Se)":    0.30,
-        "Ba / Sr":                  0.12,
-        "Ru group (Ru, Mo, Tc)":    0.005,
-        "Lanthanides (La, Zr, Nd)": 0.005,
-        "Ce group (Ce, Pu, Np)":    0.005,
-        "U / Actinides":            0.001,
-    }
+    _bdbE_F = {label: _NBT_GROUPS[key]["severe_release_target"]
+               for label, key in _NBT_SOURCE_GROUP_MAP.items()}
 
     def _estimate_mean_oxidizing_rod_ecr_pct_for_source_term():
         """Return peak mean-oxidizing-rod ECR [%] using the same Baker-Just
@@ -6467,17 +6590,7 @@ def pwr_sim(wkstbase, minimum_output=0):
             _st_inv_groups, _st_inv_meta = _nbt_apply_inventory_model(
                 _copy_st.deepcopy(_NBT_GROUPS), local_namespace)
 
-            _grp_map_st = {
-                "Noble gases (Kr, Xe)":    "NG",
-                "Halogens (I, Br)":        "Halogens",
-                "Alkali metals (Cs, Rb)":  "Alkali_metals",
-                "Te group (Te, Sb, Se)":   "Te_group",
-                "Ba / Sr":                 "Ba_Sr",
-                "Ru group (Ru, Mo, Tc)":   "Noble_metals",
-                "Lanthanides (La, Zr, Nd)":"Lanthanides",
-                "Ce group (Ce, Pu, Np)":   "Ce_group",
-                "U / Actinides":           "U_actinides",
-            }
+            _grp_map_st = dict(_NBT_SOURCE_GROUP_MAP)
 
             _st_rows = []
             _st_total_inventory_ci = 0.0
@@ -6619,17 +6732,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                 # itself accepts one uniform release duration per call, so FLARE
                 # calls it once for the gap phase and once for the early-IV phase,
                 # then linearly sums the resulting doses by location and group.
-                _grp_map = {
-                    "Noble gases (Kr, Xe)":    "NG",
-                    "Halogens (I, Br)":        "Halogens",
-                    "Alkali metals (Cs, Rb)":  "Alkali_metals",
-                    "Te group (Te, Sb, Se)":   "Te_group",
-                    "Ba / Sr":                 "Ba_Sr",
-                    "Ru group (Ru, Mo, Tc)":   "Noble_metals",
-                    "Lanthanides (La, Zr, Nd)":"Lanthanides",
-                    "Ce group (Ce, Pu, Np)":   "Ce_group",
-                    "U / Actinides":           "U_actinides",
-                }
+                _grp_map = dict(_NBT_SOURCE_GROUP_MAP)
 
                 _nbt_gap_releases = {}
                 _nbt_eiv_releases = {}
@@ -6674,8 +6777,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                                  if get_variable(local_namespace, "nbt_chi_q_eab", None) is not None else None)
                 _nbt_xq_lpz   = (float(get_variable(local_namespace, "nbt_chi_q_lpz", None))
                                  if get_variable(local_namespace, "nbt_chi_q_lpz", None) is not None else None)
-                _nbt_xq_cr    = (float(get_variable(local_namespace, "nbt_chi_q_cr",  None))
-                                 if get_variable(local_namespace, "nbt_chi_q_cr",  None) is not None else None)
+                _nbt_xq_cr    = get_variable(local_namespace, "nbt_chi_q_cr", None)
                 _nbt_cr_flow  = float(get_variable(local_namespace, "nbt_cr_flow_cfm",            100.0))
                 _nbt_cr_vol   = float(get_variable(local_namespace, "nbt_cr_volume_ft3",        20000.0))
                 _nbt_cr_filt  = bool( get_variable(local_namespace, "nbt_cr_filter_on",            True))
@@ -6694,7 +6796,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                 def _nbt_has_release(_rels):
                     return any(float(_v) > 0.0 for _v in _rels.values())
 
-                def _nbt_call(_rels, _duration_hr):
+                def _nbt_call(_rels, _duration_hr, _start_hr=0.0):
                     return _notbadtrad(
                         power_mwt               = _nbt_power,
                         containment_volume_ft3  = _nbt_vol,
@@ -6703,6 +6805,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                         spray_start_hr          = _nbt_spray_t0,
                         spray_stop_hr           = _nbt_spray_t1,
                         release_duration_hr     = _duration_hr,
+                        release_start_hr        = _start_hr,
                         wind_speed_m_s          = _nbt_wind,
                         stability_class         = _nbt_stab,
                         release_height_m        = _nbt_ht,
@@ -6723,10 +6826,11 @@ def pwr_sim(wkstbase, minimum_output=0):
                         credit_decay            = _nbt_credit_decay,
                         credit_deposition       = _nbt_credit_deposition,
                         local_namespace          = local_namespace,
+                        _compute_worst_eab       = False,
                     )
 
                 _dose_gap = _nbt_call(_nbt_gap_releases, _nbt_gap_dur) if _nbt_has_release(_nbt_gap_releases) else None
-                _dose_eiv = _nbt_call(_nbt_eiv_releases, _nbt_eiv_dur) if _nbt_has_release(_nbt_eiv_releases) else None
+                _dose_eiv = _nbt_call(_nbt_eiv_releases, _nbt_eiv_dur, _nbt_gap_dur) if _nbt_has_release(_nbt_eiv_releases) else None
 
                 if _dose_gap is not None and _dose_eiv is not None:
                     _dose = dict(_dose_gap)
@@ -6734,6 +6838,13 @@ def pwr_sim(wkstbase, minimum_output=0):
                     _dose["tede_lpz_rem"] = _dose_gap["tede_lpz_rem"] + _dose_eiv["tede_lpz_rem"]
                     _dose["tede_cr_rem"]  = _dose_gap["tede_cr_rem"]  + _dose_eiv["tede_cr_rem"]
                     _dose["runtime_ms"]   = _dose_gap.get("runtime_ms", 0.0) + _dose_eiv.get("runtime_ms", 0.0)
+                    _dose["cr_dose_components_rem"] = {
+                        k: _dose_gap.get("cr_dose_components_rem", {}).get(k, 0.0)
+                           + _dose_eiv.get("cr_dose_components_rem", {}).get(k, 0.0)
+                        for k in ("inhalation", "plume_shine", "containment_shine", "room_shine")}
+                    if _dose.get("inputs", {}).get("cr_shine"):
+                        print("  CR dose components (rem): " + ", ".join(
+                            f"{k}={v:.5g}" for k,v in _dose["cr_dose_components_rem"].items()))
 
                     _gd = {}
                     _all_g = set(_dose_gap.get("group_doses", {}).keys()) | set(_dose_eiv.get("group_doses", {}).keys())
@@ -6745,6 +6856,8 @@ def pwr_sim(wkstbase, minimum_output=0):
                             "tede_eab":    float(_gg.get("tede_eab",    0.0)) + float(_ee.get("tede_eab",    0.0)),
                             "tede_lpz":    float(_gg.get("tede_lpz",    0.0)) + float(_ee.get("tede_lpz",    0.0)),
                             "tede_cr":     float(_gg.get("tede_cr",     0.0)) + float(_ee.get("tede_cr",     0.0)),
+                            **{"tede_cr_"+k: float(_gg.get("tede_cr_"+k, 0.0))+float(_ee.get("tede_cr_"+k, 0.0))
+                               for k in ("inhalation", "plume_shine", "containment_shine", "room_shine")},
                         }
                     _dose["group_doses"] = _gd
 
@@ -6810,6 +6923,7 @@ def pwr_sim(wkstbase, minimum_output=0):
                     raise RuntimeError(
                         "No NOTBADTRAD release phases were generated despite nonzero source term."
                     )
+                _nbt_add_worst_2h_eab(_dose, [_dose_gap, _dose_eiv], local_namespace)
                 # Regulatory limits (10 CFR 50.67 / RG 1.183)
                 _LIMIT_EAB = 25.0  # rem TEDE at EAB
                 _LIMIT_LPZ = 25.0  # rem TEDE at LPZ
@@ -6827,6 +6941,9 @@ def pwr_sim(wkstbase, minimum_output=0):
                 print(f"  CR  TEDE : {_dose['tede_cr_rem']:.4e} rem"
                       f"  ({'PASS' if _dose['tede_cr_rem'] < _LIMIT_CR  else 'EXCEEDS LIMIT'},"
                       f" limit {_LIMIT_CR} rem)")
+                _worst = _dose["worst_2h_eab"]
+                print(f"  EAB worst 2 hr: {_worst['tede_rem']:.4e} rem "
+                      f"({_worst['start_hr']:.6f}–{_worst['end_hr']:.6f} hr)")
                 print(f"  Runtime  : {_dose['runtime_ms']:.1f} ms")
 
                 # Build dose DataFrame for output
@@ -6862,6 +6979,8 @@ def pwr_sim(wkstbase, minimum_output=0):
                     "groups":       pd.DataFrame(_dose_groups),
                     "chi_q":        _dose.get("chi_q_used", {}),
                     "inputs":       _dose.get("inputs", {}),
+                    "cr_dose_components_rem": _dose.get("cr_dose_components_rem", {}),
+                    "worst_2h_eab": _dose.get("worst_2h_eab"),
                     "runtime_ms":   _dose["runtime_ms"],
                     "dist_fit":     _dose.get("dist_fit"),
                     "dist_table":   pd.DataFrame(_dose.get("dist_table", [])),
@@ -6954,6 +7073,9 @@ def pwr_sim(wkstbase, minimum_output=0):
                             for gn, gd in _dose_isp["group_doses"].items()
                         ]),
                         "chi_q":      _dose_isp.get("chi_q_used", {}),
+                        "worst_2h_eab": _dose_isp.get("worst_2h_eab"),
+                        "inputs": _dose_isp.get("inputs", {}),
+                        "cr_dose_components_rem": _dose_isp.get("cr_dose_components_rem", {}),
                         "runtime_ms": _dose_isp["runtime_ms"],
                         "dist_fit":   _dose_isp.get("dist_fit"),
                         "dist_table": pd.DataFrame(_dose_isp.get("dist_table", [])),
@@ -7250,58 +7372,308 @@ print("\n", flush=True)
 # Called automatically from pwr_sim() when source term is non-zero.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-    # Core inventories from NUREG-1465 Table 2 (3411 MWt PWR at shutdown).
-    # Scaled to actual plant power via scale = total_power / 3411.
-    #
-    # DCF values are activity-weighted means from FGR-11 (inhalation, rem/Ci)
-    # and FGR-12 (cloudshine, rem per Ci-s/m3), weighted by NUREG-1465 Table 2
-    # inventory at 3411 MWt equilibrium full power.
-    # Reference: FGR-11 (EPA-520/1-88-020), FGR-12 (EPA-402-R-93-081)
-_NBT_GROUPS = {
-    "NG":           dict(label="Noble Gases",        elements="Kr, Xe",
-                         t_half_hr=0.78,    inv_ci=3.697e+08, ci_per_fission=1.416509e-18, release=1.00,
-                         dcf_inh=7.97e-5,   dcf_cloud=4.22e-2),   # FGR wt; Xe-138 dom. cloud
-    "Halogens":     dict(label="Halogens",           elements="I, Br",
-                         t_half_hr=2.41,    inv_ci=1.110e+08, ci_per_fission=1.437732e-18, release=0.40,
-                         dcf_inh=1.106e1,   dcf_cloud=7.65e-2),   # FGR wt; I-131 dom. inh, I-132/134 dom. cloud
-    "Alkali_metals":dict(label="Alkali Metals",      elements="Cs, Rb",
-                         t_half_hr=2080.0,  inv_ci=1.360e7, ci_per_fission=1.470166e-18, release=0.30,
-                         dcf_inh=5.47e1,    dcf_cloud=5.00e-2),   # FGR wt; Cs-134 dominant
-    "Te_group":     dict(label="Tellurium Group",    elements="Te, Sb, Se",
-                         t_half_hr=5.04,    inv_ci=1.888e+08, ci_per_fission=1.308530e-18, release=0.05,
-                         dcf_inh=9.22e0,    dcf_cloud=2.11e-2),   # FGR wt; Te-132 dominant
-    "Ba_Sr":        dict(label="Barium/Strontium",   elements="Ba, Sr",
-                         t_half_hr=3.68,    inv_ci=2.389e+08, ci_per_fission=1.955664e-18, release=0.02,
-                         dcf_inh=1.70e1,    dcf_cloud=2.59e-2),   # FGR wt; Sr-90 dom. inh
-    "Noble_metals": dict(label="Noble Metals",       elements="Ru, Rh, Pd, Mo, Tc",
-                         t_half_hr=11.24,   inv_ci=5.241e+08, ci_per_fission=3.185190e-18, release=0.0025,
-                         dcf_inh=1.258e1,   dcf_cloud=2.81e-2),   # FGR wt; Ru-106 dom. inh
-    "Ce_group":     dict(label="Cerium Group",       elements="Ce, Pu, Np",
-                         t_half_hr=59.88,   inv_ci=1.544e+09, ci_per_fission=8.014688e-19, release=0.0005,
-                         dcf_inh=9.52e0,    dcf_cloud=1.11e-2),   # FGR wt; Ce-144/Pu dom. inh
-    "Lanthanides":  dict(label="Lanthanides",        elements="La, Zr, Nd, Eu, Nb, Pm, Pr, Sm, Y",
-                         t_half_hr=6.67,    inv_ci=7.683e+08, ci_per_fission=5.970780e-18, release=0.0002,
-                         dcf_inh=3.67e0,    dcf_cloud=3.99e-2),   # FGR wt; Zr-95 dom. inh, La-140 dom. cloud
-    "U_actinides":  dict(label="Uranium/Actinides",  elements="U, Th",
-                         t_half_hr=162.0,   inv_ci=8.450e+03, ci_per_fission=0.000000e+00, release=0.0002,
-                         dcf_inh=7.50e2,    dcf_cloud=1.0e-7),    # FGR wt; Pu-241 dom. inh; cloud negligible
-}
+# NBT group data are supplied exclusively by Runtime/nbt_groups.json.
+def _nbt_load_group_data(base_dir=None):
+    """Load and validate Runtime/nbt_groups.json; never substitute embedded data."""
+    import hashlib
+    base = Path(base_dir) if base_dir is not None else SCRIPT_DIR
+    candidates = (base / "Runtime" / "nbt_groups.json",
+                  base / "runtime" / "nbt_groups.json")
+    path = next((p for p in candidates if p.is_file()), candidates[0])
+    if not path.is_file():
+        raise FileNotFoundError(f"Required NBT group data not found: {path}. "
+                                "Install Runtime/nbt_groups.json with flare_sim.py.")
 
-_NBT_SPRAY_REMOVAL = {
-    "NG": 0.0,
-    "Halogens": 0.90*1.5e-3 + 0.05*4.17e-5 + 0.05*0.0,
-    "Alkali_metals":1.5e-3, "Te_group":1.5e-3, "Ba_Sr":1.5e-3,
-    "Noble_metals":1.5e-3,  "Ce_group":1.5e-3, "Lanthanides":1.5e-3,
-    "U_actinides":1.5e-3,
-}
-_NBT_NAT_DEP = {k: (0.0 if k == "NG" else 4.17e-5) for k in _NBT_GROUPS}
-_NBT_CR_DF   = {
-    "NG": 1.0,
-    "Halogens": 0.90*100.0 + 0.05*20.0 + 0.05*20.0,
-    **{k: 100.0 for k in ["Alkali_metals","Te_group","Ba_Sr",
-                           "Noble_metals","Ce_group","Lanthanides","U_actinides"]},
-}
+    def unique_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key {key!r}")
+            result[key] = value
+        return result
 
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=unique_keys)
+        if not isinstance(payload, dict):
+            raise ValueError("the JSON document must be an object")
+        if type(payload.get("schema_version")) is not int or payload["schema_version"] != 3:
+            raise ValueError("schema_version must be 3 (spray/filter group weights required)")
+        groups = payload["groups"]
+        required = {"NG", "Halogens", "Alkali_metals", "Te_group", "Ba_Sr",
+                    "Noble_metals", "Ce_group", "Lanthanides", "U_actinides"}
+        if not isinstance(groups, dict) or set(groups) != required:
+            raise ValueError("groups must contain exactly the nine NBT group keys")
+        order = payload["source_group_order"]
+        if not isinstance(order, list) or len(order) != len(required) or set(order) != required:
+            raise ValueError("source_group_order must list each group once")
+        nonnegative = ("inv_ci", "ci_per_fission", "dcf_inh", "dcf_cloud",
+                       "spray_removal_s", "spray_removal_depleted_s", "natural_deposition_s", "spray_non_aerosol_removal_s")
+        fractions = ("release", "gap_release_fraction", "early_iv_release_fraction",
+                     "severe_release_target", "spray_aerosol_fraction", "penetration_aerosol_fraction")
+        labels = set()
+        for key, group in groups.items():
+            if not isinstance(group, dict):
+                raise ValueError(f"{key} must be an object")
+            for field in ("label", "elements", "source_label"):
+                if not isinstance(group.get(field), str) or not group[field].strip():
+                    raise ValueError(f"{key}.{field} must be a nonempty string")
+            if group["source_label"] in labels:
+                raise ValueError("source_label values must be unique")
+            labels.add(group["source_label"])
+            for field in nonnegative + fractions + ("t_half_hr", "cr_decontamination_factor", "spray_depletion_df"):
+                value = group.get(field)
+                if type(value) not in (int, float) or not _math.isfinite(value):
+                    raise ValueError(f"{key}.{field} must be a finite number")
+                if value < 0 or (field == "t_half_hr" and value <= 0):
+                    raise ValueError(f"Invalid {key}.{field}: {value}")
+                if field in fractions and value > 1:
+                    raise ValueError(f"{key}.{field} must be between 0 and 1")
+                if field == "cr_decontamination_factor" and value < 1:
+                    raise ValueError(f"{key}.{field} must be at least 1")
+                if field == "spray_depletion_df" and value <= 1:
+                    raise ValueError(f"{key}.{field} must exceed 1")
+            if group["spray_removal_depleted_s"] > group["spray_removal_s"]:
+                raise ValueError(f"{key}.spray_removal_depleted_s exceeds initial rate")
+            if group["gap_release_fraction"] + group["early_iv_release_fraction"] > 1 + 1e-12:
+                raise ValueError(f"{key} gap plus early-IV release exceeds 1")
+    except (KeyError, TypeError, ValueError, UnicodeError) as exc:
+        raise ValueError(f"Invalid NBT group data in {path}: {exc}") from exc
+    metadata = {"path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(),
+                "schema_version": 3, "dataset": payload.get("dataset", "")}
+    return groups, order, metadata
+
+
+def _nbt_refresh_group_data(base_dir=None):
+    """Read again at the start of each run, including runs in a persistent GUI."""
+    global _NBT_GROUPS, _NBT_SPRAY_REMOVAL, _NBT_NAT_DEP, _NBT_CR_DF
+    global _NBT_SOURCE_GROUP_MAP, _NBT_GROUP_DATA_META
+    groups, order, metadata = _nbt_load_group_data(base_dir)
+    _NBT_GROUPS = groups
+    _NBT_SPRAY_REMOVAL = {k: v["spray_removal_s"] for k, v in groups.items()}
+    _NBT_NAT_DEP = {k: v["natural_deposition_s"] for k, v in groups.items()}
+    _NBT_CR_DF = {k: v["cr_decontamination_factor"] for k, v in groups.items()}
+    _NBT_SOURCE_GROUP_MAP = {groups[k]["source_label"]: k for k in order}
+    _NBT_GROUP_DATA_META = metadata
+
+
+_nbt_refresh_group_data()
+
+
+def _nbt_spray_transition_hr(initial_s, depletion_df, start_hr):
+    """Common spray-exposure clock; never reset it for another release phase.
+
+    DF = exp(integral(k_spray dt)); radioactive decay, leakage and natural
+    deposition do not advance this clock. This is a reduced-group exposure
+    approximation, not a particle-size-resolved aerosol mass calculation.
+    """
+    return start_hr + _math.log(depletion_df) / (initial_s * 3600.) if initial_s > 0 else float("inf")
+
+
+def _nbt_propagate(n0, source, loss, duration, source_decay=0.0):
+    """Exact first-order balance with source S(t)=source*exp(-source_decay*t).
+
+    All rates use the inverse of the supplied duration unit. The source is its
+    value at the start of this segment, avoiding any reset of shutdown decay.
+    """
+    def phi1(x):
+        return (1-x/2+x*x/6-x**3/24+x**4/120-x**5/720
+                if abs(x)<1e-4 else -_math.expm1(-x)/x)
+    a, b = loss*duration, source_decay*duration
+    if source_decay == 0.:
+        p2 = (.5-a/6+a*a/24-a**3/120+a**4/720 if abs(a)<1e-4
+              else (a+_math.expm1(-a))/(a*a))
+        return (n0*_math.exp(-a)+source*duration*phi1(a),
+                n0*duration*phi1(a)+source*duration*duration*p2)
+    p = _math.exp(-b)*phi1(a-b)
+    if max(abs(a),abs(b)) < .01:
+        # Stable double-series integral on the triangular convolution domain.
+        q = sum((-1.)**n*sum(a**j*b**(n-j) for j in range(n+1))/_math.factorial(n+2)
+                for n in range(9))
+    else:
+        q = (phi1(b)-p)/a
+    return (n0*_math.exp(-a)+source*duration*p,
+            n0*duration*phi1(a)+source*duration*duration*q)
+
+
+def _nbt_worst_2h_eab(models, search_end_hr=24.0, search_step_hr=0.01):
+    """Maximize total EAB dose over one common two-hour exposure window.
+
+    Integrates the same prescribed source and first-order containment balance as
+    NBT, with optional source decay from shutdown and actual spray switches. No dose outside
+    an optional exposure cutoff is counted. No time-series interpolation is used.
+    """
+    from bisect import bisect_right
+    from scipy.optimize import brentq
+    width = 2.0
+    if not _math.isfinite(search_end_hr) or search_end_hr < width:
+        raise ValueError("nbt_eab_search_end_hr must be finite and at least 2 hours")
+    if not _math.isfinite(search_step_hr) or search_step_hr <= 0:
+        raise ValueError("nbt_eab_search_step_hr must be finite and positive")
+    prepared = []
+    knots = {0.0}
+    source_end = 0.0
+
+    propagate = _nbt_propagate
+
+    for model in models:
+        start = model["start_hr"]
+        if (not _math.isfinite(start) or start < 0
+                or not _math.isfinite(model["duration_hr"]) or model["duration_hr"] <= 0
+                or not _math.isfinite(model["leak_per_hr"]) or model["leak_per_hr"] < 0):
+            raise ValueError("NBT window models require nonnegative source times/leakage and positive durations")
+        stop = start + model["duration_hr"]
+        cutoff = model.get("exposure_stop_hr")
+        if cutoff is not None and (not _math.isfinite(cutoff) or cutoff < 0):
+            raise ValueError("EAB exposure cutoff must be finite and nonnegative")
+        for key, group in model["groups"].items():
+            if any(not _math.isfinite(group[field]) or group[field] < 0
+                   for field in ("released_ci", "dose_per_ci", "decay_s", "deposition_s", "spray_s")):
+                raise ValueError(f"Invalid nonnegative NBT window data for {key}")
+            released = group["released_ci"]
+            if released == 0:
+                continue
+            source_end = max(source_end, stop)
+            edges = {0.0, start, stop}
+            if model["sprays_on"] and group["spray_s"] > 0:
+                edges.update((model["spray_start_hr"], model["spray_stop_hr"]))
+                if "spray_depleted_s" in group:
+                    transition = _nbt_spray_transition_hr(group["spray_s"], group["spray_depletion_df"], model["spray_start_hr"])
+                    edges.add(transition)
+                else:
+                    transition = float("inf")
+            else:
+                transition = float("inf")
+            edges = sorted(t for t in edges if 0 <= t <= search_end_hr)
+            if search_end_hr not in edges:
+                edges.append(search_end_hr)
+            states = [0.0]
+            source_decay = group.get("source_decay_s", 0.) * 3600.
+            sources, losses = [], []
+            for a, b in zip(edges, edges[1:]):
+                mid = (a + b) / 2
+                source = released / model["duration_hr"] * _math.exp(-source_decay*a) if start <= mid < stop else 0.0
+                spray_rate = group.get("spray_depleted_s", group["spray_s"]) if mid >= transition else group["spray_s"]
+                spray = (spray_rate * 3600 if model["sprays_on"]
+                         and model["spray_start_hr"] <= mid < model["spray_stop_hr"] else 0.0)
+                loss = model["leak_per_hr"] + group["decay_s"] * 3600 + group["deposition_s"] * 3600 + spray
+                sources.append(source)
+                losses.append(loss)
+                states.append(propagate(states[-1], source, loss, b-a, source_decay)[0])
+            prepared.append({"key": key, "edges": edges, "states": states,
+                             "sources": sources, "losses": losses, "source_decay": source_decay,
+                             "factor": group["dose_per_ci"] * model["leak_per_hr"],
+                             "cutoff": cutoff})
+            for edge in edges:
+                knots.update((edge, edge-width))
+            if cutoff is not None:
+                knots.update((cutoff, cutoff-width))
+
+    # After the final source stops, every group's airborne inventory decreases.
+    # With constant chi/Q and breathing rate, a later start cannot be worse.
+    max_start = min(source_end, search_end_hr-width)
+
+    def group_state(item, time):
+        i = min(max(bisect_right(item["edges"], time)-1, 0), len(item["sources"])-1)
+        n = propagate(item["states"][i], item["sources"][i], item["losses"][i],
+                      time-item["edges"][i], item["source_decay"])[0]
+        return i, n
+
+    def dose_rate(time):
+        return sum(group_state(item, time)[1] * item["factor"] for item in prepared
+                   if item["cutoff"] is None or time < item["cutoff"])
+
+    def window(start, with_groups=False):
+        doses = {}
+        for item in prepared:
+            stop = min(start+width, item["cutoff"]) if item["cutoff"] is not None else start+width
+            amount = 0.0
+            if stop > start:
+                i, n = group_state(item, start)
+                t = start
+                while t < stop:
+                    end = min(stop, item["edges"][i+1])
+                    source = item["sources"][i] * _math.exp(-item["source_decay"]*(t-item["edges"][i]))
+                    n, integral = propagate(n, source, item["losses"][i], end-t, item["source_decay"])
+                    amount += item["factor"] * integral
+                    t = end
+                    if t < stop:
+                        i += 1
+            doses[item["key"]] = doses.get(item["key"], 0.0) + amount
+        return doses if with_groups else sum(doses.values())
+
+    # Include all source/removal/cutoff knots and locate stationary windows
+    # between them. The step bounds the derivative-bracketing grid, not the
+    # final timing precision of the root search.
+    grid = sorted({min(max(t, 0.0), max_start) for t in knots} | {max_start})
+    fine = []
+    for a, b in zip(grid, grid[1:]):
+        count = max(1, int(_math.ceil((b-a)/search_step_hr)))
+        fine.extend(a + (b-a)*i/count for i in range(count))
+    fine.append(max_start)
+    candidates = set(fine)
+    derivative = lambda t: dose_rate(t+width)-dose_rate(t)
+    for a, b in zip(fine, fine[1:]):
+        # Evaluate inside a smooth interval; cutoffs may have one-sided jumps.
+        eps = min(1e-10, (b-a)/10)
+        left, right = a+eps, b-eps
+        if left >= right:
+            continue
+        da, db = derivative(left), derivative(right)
+        if da > 0 and db < 0:
+            candidates.add(float(brentq(derivative, left, right, xtol=1e-11)))
+        elif da == 0:
+            candidates.add(left)
+    best_start, best_dose = 0.0, window(0.0)
+    for start in sorted(candidates):
+        dose = window(start)
+        if dose > best_dose + 1e-12 * max(1.0, abs(best_dose)):
+            best_start, best_dose = start, dose
+    group_doses = window(best_start, with_groups=True)
+    return {"tede_rem": best_dose, "start_hr": best_start, "end_hr": best_start+width,
+            "window_hr": width, "search_end_hr": search_end_hr,
+            "search_step_hr": search_step_hr, "source_end_hr": source_end,
+            "search_covers_release": search_end_hr >= source_end+width,
+            "group_doses_rem": group_doses,
+            "method": "piecewise analytic containment balance; combined-window derivative search"}
+
+
+def _nbt_add_worst_2h_eab(result, phases=None, local_namespace=None):
+    """Search the SUM of phase dose histories, never sum separate maxima."""
+    import time
+    started = time.perf_counter()
+    phases = [result] if phases is None else [p for p in phases if p is not None]
+    models = [model for phase in phases for model in phase.get("_eab_window_models", [])]
+    source_end = max((m["start_hr"]+m["duration_hr"] for m in models), default=0.0)
+    ns = local_namespace or {}
+    horizon = float(get_variable(ns, "nbt_eab_search_end_hr", max(24.0, source_end+2.0)))
+    step = float(get_variable(ns, "nbt_eab_search_step_hr", 0.01))
+    result["_eab_window_models"] = models
+    result["worst_2h_eab"] = _nbt_worst_2h_eab(models, horizon, step)
+    result["runtime_ms"] = result.get("runtime_ms", 0.0) + (time.perf_counter()-started)*1000.0
+    return result
+
+
+def _nbt_write_worst_2h_eab(worksheet, worst):
+    """Append labeled timing, provenance and group contributions to Excel."""
+    if not worst:
+        return
+    worksheet.append([])
+    worksheet.append(["Worst two-hour EAB exposure"])
+    worksheet.append(["Window start (hr)", worst["start_hr"]])
+    worksheet.append(["Window end (hr)", worst["end_hr"]])
+    worksheet.append(["Search end (hr)", worst["search_end_hr"]])
+    worksheet.append(["Search bracket step (hr)", worst["search_step_hr"]])
+    worksheet.append(["Search covers release plus two hours", worst["search_covers_release"]])
+    worksheet.append(["Worst-window group", "Worst-window EAB TEDE (rem)"])
+    for key, dose in worst["group_doses_rem"].items():
+        worksheet.append(["Worst-window group: " + key, dose])
+
+
+def _nbt_worst_summary_row(worst):
+    dose = worst["tede_rem"]
+    return ["EAB (worst 2 hr)", round(dose, 12), "25 rem (worst 2 hr)",
+            round(25.0-dose, 12), "PASS" if dose < 25.0 else "EXCEEDS"]
 
 
 def _nbt_estimate_core_fissions_from_geometry(
@@ -7327,12 +7699,207 @@ def _nbt_estimate_core_fissions_from_geometry(
     return (_m_u235_fissioned_kg / 0.235) * _NA
 
 
+def _nbt_load_inventory_data(base_dir=None):
+    """Read isotope data on every call; cache validation by file bytes, not path."""
+    import hashlib
+    base = Path(base_dir) if base_dir is not None else SCRIPT_DIR
+    candidates = [base/'Runtime/nbt_inventory.json', base/'runtime/nbt_inventory.json']
+    path = next((p for p in candidates if p.is_file()), candidates[0])
+    raw = path.read_bytes()
+    data = _nbt_validate_inventory_data(raw)
+    return data, {'path': str(path.resolve()), 'sha256': hashlib.sha256(raw).hexdigest(),
+                  'schema_version': data['schema_version']}
+
+
+@functools.lru_cache(maxsize=8)
+def _nbt_validate_inventory_data(raw):
+    def unique(pairs):
+        d = {}
+        for key, value in pairs:
+            if key in d:
+                raise ValueError('Duplicate inventory JSON key: ' + key)
+            d[key] = value
+        return d
+    data = json.loads(raw, object_pairs_hook=unique)
+    if data.get('schema_version') != 1:
+        raise ValueError('nbt_inventory.json schema_version must be 1')
+    def positive(value, name, zero=False):
+        if type(value) not in (int, float) or not _math.isfinite(value) or (value < 0 if zero else value <= 0):
+            raise ValueError('Invalid inventory data: ' + name)
+    for name in ('reference_power_MWt', 'reference_specific_power_MW_MTU',
+                 'reference_empirical_burnup_GWd_MTU', 'energy_per_fission_MeV'):
+        positive(data[name], name)
+    ref = data['reference_batch_burnups_GWd_MTU']
+    if not isinstance(ref, list) or not ref:
+        raise ValueError('Inventory reference batch burnups must be a nonempty list')
+    for b in ref:
+        positive(b, 'reference batch burnup')
+    grid = np.asarray(data['photon_energy_MeV'], dtype=float)
+    if grid.ndim != 1 or len(grid) < 2 or not np.all(np.isfinite(grid)) or np.any(grid <= 0) or np.any(np.diff(grid) <= 0):
+        raise ValueError('Invalid inventory photon energy grid')
+    rows = data['nuclides']
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('Inventory nuclides must be a nonempty list')
+    names = set()
+    for r in rows:
+        name = r['nuclide']
+        if not isinstance(name, str) or not name or name in names:
+            raise ValueError('Duplicate/invalid inventory nuclide: ' + str(name))
+        names.add(name)
+        if r['group'] not in _NBT_GROUPS:
+            raise ValueError('Unknown inventory group: ' + r['group'])
+        positive(r['half_life_hr'], name + ' half-life')
+        for field in ('reference_activity_Ci', 'dcf_inh', 'dcf_cloud'):
+            positive(r[field], name + ' ' + field, zero=True)
+        if type(r['reference_fallback']) is not bool:
+            raise ValueError('reference_fallback must be Boolean: ' + name)
+        if not r['reference_fallback'] and name != 'Y-90':
+            positive(r['u235_thermal_cumulative_yield'], name + ' yield', zero=True)
+        spectrum = np.asarray(r['photons_per_decay'], dtype=float)
+        if spectrum.shape != grid.shape or not np.all(np.isfinite(spectrum)) or np.any(spectrum < 0):
+            raise ValueError('Invalid inventory photon spectrum: ' + name)
+    if 'Y-90' in names and 'Sr-90' not in names:
+        raise ValueError('Y-90 requires Sr-90 in inventory data')
+    return data
+
+
+def _nbt_production_decay_inventory(groups, namespace, model):
+    """Analytical irradiation buildup followed by the existing nine-group model.
+
+    yield_uniform: one population at input burnup.
+    yield_buildup: equal batches at B/3,2B/3,B (B is oldest-batch burnup).
+    reference_buildup: same batches, effective reference production rates.
+    No full depletion, capture calculation, or general decay-chain solution.
+    """
+    data, provenance = _nbt_load_inventory_data()
+    get = lambda key, default: get_variable(namespace, key, default)
+    n = float(get('nbt_n_fuel_rods', get('N_pins', namespace.get('_plant_design_N_pins', 18200.))))
+    radius = float(get('nbt_fuel_radius_m', namespace.get('_plant_design_r_fuel_m', .00418)))
+    length = float(get('nbt_fuel_active_length_m', namespace.get('_plant_design_L_heated', 3.66)))
+    density = float(get('nbt_rho_uo2_kg_m3', 10400.))
+    power = float(get('total_power', 3411.))
+    burnup = float(get('nbt_burnup_gwdmtu', 33.))
+    for name, value in [('rod count', n), ('fuel radius', radius), ('fuel length', length),
+                        ('UO2 density', density), ('power', power)]:
+        if not _math.isfinite(value) or value <= 0:
+            raise ValueError('Production-decay inventory requires positive finite ' + name)
+    if not _math.isfinite(burnup) or burnup < 0:
+        raise ValueError('Production-decay inventory requires nonnegative finite burnup')
+    mass = n * _math.pi * radius**2 * length * density * 238./270./1000.
+    ages = [1.] if model == 'yield_uniform' else [1./3., 2./3., 1.]
+    times = [burnup * mass / (power/1000.) * 86400. * a for a in ages]
+    ref_times = [b*1000./data['reference_specific_power_MW_MTU']*86400.
+                 for b in data['reference_batch_burnups_GWd_MTU']]
+    rate = power*1e6/(data['energy_per_fission_MeV'] * 1.602176634e-13)
+    ref_rate = data['reference_power_MWt']*1e6/(data['energy_per_fission_MeV'] * 1.602176634e-13)
+    records = []
+    for r in data['nuclides']:
+        name = r['nuclide']
+        lam = _math.log(2.)/(r['half_life_hr']*3600.)
+        sat = sum(-_math.expm1(-lam*t) for t in times)/len(times)
+        ref_sat = sum(-_math.expm1(-lam*t) for t in ref_times)/len(ref_times)
+        old = r['reference_activity_Ci']*power/data['reference_power_MWt']*burnup/data['reference_empirical_burnup_GWd_MTU']
+        if r['reference_fallback']:
+            activity = old
+            basis = 'reference fallback: capture/activation/actinide'
+            production_yield = None
+        elif name == 'Y-90':
+            activity = 0.
+            basis = 'Sr-90 parent-controlled approximation'
+            production_yield = None
+        elif model == 'reference_buildup':
+            activity = r['reference_activity_Ci']*power/data['reference_power_MWt']*sat/ref_sat
+            basis = 'reference-derived effective production rate'
+            production_yield = r['reference_activity_Ci']*3.7e10/ref_rate/ref_sat
+        else:
+            production_yield = r['u235_thermal_cumulative_yield']
+            activity = production_yield*rate*sat/3.7e10
+            basis = 'IAEA U235 thermal cumulative yield'
+        records.append({'nuclide': name, 'group': r['group'], 'half_life_hr': r['half_life_hr'],
+                        'new_activity_Ci': activity, 'reference_activity_Ci': r['reference_activity_Ci'],
+                        'old_activity_Ci': old, 'basis': basis, 'yield_per_fission': production_yield,
+                        'saturation_fraction': sat, 'dcf_inh': r['dcf_inh'], 'dcf_cloud': r['dcf_cloud']})
+    by_name = {r['nuclide']: r for r in records}
+    if 'Y-90' in by_name:
+        ratio = (by_name['Y-90']['reference_activity_Ci']/by_name['Sr-90']['reference_activity_Ci']
+                 if model == 'reference_buildup' else 1.)
+        by_name['Y-90']['new_activity_Ci'] = by_name['Sr-90']['new_activity_Ci']*ratio
+    data_by_name = {r['nuclide']: r for r in data['nuclides']}
+    overrides = {}
+    for key, g in groups.items():
+        rows = [r for r in records if r['group'] == key]
+        total = sum(r['new_activity_Ci'] for r in rows)
+        override = get('nbt_inv_' + key + '_Ci', None)
+        if override is not None:
+            override = float(override)
+            if not _math.isfinite(override) or override < 0:
+                raise ValueError('Invalid inventory override for ' + key)
+            if total == 0 and override > 0:
+                raise ValueError('No isotope composition for positive inventory override: ' + key)
+            factor = override/total if total else 0.
+            for r in rows:
+                r['new_activity_Ci'] *= factor
+                r['basis'] += '; group override preserving calculated mixture'
+            total = override
+            overrides[key] = override
+        g['inv_ci'] = total
+        if total > 0:
+            g['dcf_inh'] = sum(r['new_activity_Ci']*r['dcf_inh'] for r in rows)/total
+            g['dcf_cloud'] = sum(r['new_activity_Ci']*r['dcf_cloud'] for r in rows)/total
+            g['t_half_hr'] = total/sum(r['new_activity_Ci']/r['half_life_hr'] for r in rows)
+            spectra = np.zeros(len(data['photon_energy_MeV']))
+            for r in rows:
+                spectra += r['new_activity_Ci']/total*np.asarray(data_by_name[r['nuclide']]['photons_per_decay'])
+            g['_inventory_photons_per_decay'] = spectra.tolist()
+        else:
+            g['_inventory_photons_per_decay'] = [0.]*len(data['photon_energy_MeV'])
+        g['_inventory_photon_energy_MeV'] = data['photon_energy_MeV']
+        g['_inventory_data_sha256'] = provenance['sha256']
+    return groups, {
+        'model': model, 'fuel_mass_MTU': mass, 'power_MWt': power,
+        'burnup_gwdmtu': burnup, 'burnup_input_GWd_MTU': burnup,
+        'burnup_interpretation': 'uniform whole-core' if model == 'yield_uniform' else 'oldest of three equal batches',
+        'batch_age_factors': ages, 'batch_irradiation_EFPY': [t/(365.25*86400.) for t in times],
+        'mean_burnup_GWd_MTU': burnup*sum(ages)/len(ages),
+        'n_fissions': rate*sum(times)/len(times), 'burnup_correction': 1.,
+        'n_fuel_rods': n, 'fuel_radius_m': radius, 'fuel_active_length_m': length,
+        'rho_uo2_kg_m3': density, 'inventory_data': provenance,
+        'nuclides': records, 'group_overrides_Ci': overrides,
+        'fallback_nuclides': [r['nuclide'] for r in data['nuclides'] if r['reference_fallback']],
+        'limitations': data['limitations'],
+    }
+
+
+def _nbt_write_isotope_inventory(book, metadata):
+    """Expose the inventory actually used, including overridden activities."""
+    if not metadata.get('nuclides'):
+        return
+    ws = book.create_sheet('Isotope Inventory')
+    ws.append(['NBT isotope inventory at accident initiation'])
+    ws.append(['Model', metadata['model']])
+    ws.append(['Uranium mass (MTU)', metadata['fuel_mass_MTU']])
+    ws.append(['Burnup input (GWd/MTU)', metadata['burnup_gwdmtu']])
+    ws.append(['Burnup interpretation', metadata['burnup_interpretation']])
+    ws.append(['Batch irradiation (EFPY)', ', '.join(f'{t:.9g}' for t in metadata['batch_irradiation_EFPY'])])
+    ws.append(['Inventory data SHA256', metadata['inventory_data']['sha256']])
+    ws.append(['Nuclide', 'Group', 'Core activity (Ci)', 'Half-life (h)',
+               'Inhalation DCF (rem/Ci)', 'Cloud DCF (rem m3/Ci/s)', 'Inventory basis'])
+    for r in metadata['nuclides']:
+        ws.append([r['nuclide'], r['group'], r['new_activity_Ci'], r['half_life_hr'],
+                   r['dcf_inh'], r['dcf_cloud'], r['basis']])
+    ws.freeze_panes = 'A9'
+    for col, width in [('A', 27), ('B', 30), ('C', 23), ('D', 20), ('E', 28), ('F', 28), ('G', 65)]:
+        ws.column_dimensions[col].width = width
+
+
 def _nbt_apply_inventory_model(groups, local_namespace=None):
     """Set NBT group inventories from geometry/fission-fraction defaults.
 
-    Defaults are calibrated to the typPWR Table 12 EOC fission-product inventory
-    using Ci/fission coefficients for each RG 1.183/NBT group.  Users may
-    override either all default geometry inputs or each group inventory directly.
+    Reference60 CR4467 activities are reproduced at3411 MWt and B/33=1.
+    Effective fissioned fraction is determined internally from power and initial
+    U235 mass. Group inventory scales with power and empirical B/33. Geometry
+    cancels from normalized activity. Legacy user fissile fraction is ignored.
+    Explicit per-group activity overrides remain supported.
 
     Per-group override names:
         nbt_inv_NG_Ci
@@ -7350,6 +7917,9 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
 
     _model = str(get_variable(local_namespace, "nbt_inventory_model",
                               "geometry_typpwr_table12")).strip("'\"").lower()
+
+    if _model in ("yield_uniform", "yield_buildup", "reference_buildup"):
+        return _nbt_production_decay_inventory(groups, local_namespace, _model)
 
     if _model in ("fixed", "legacy", "static"):
         return groups, {"model": _model, "n_fissions": None}
@@ -7372,7 +7942,20 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
     _l_fuel = float(get_variable(local_namespace, "nbt_fuel_active_length_m", _design_l_fuel))
     _rho    = float(get_variable(local_namespace, "nbt_rho_uo2_kg_m3", 10400.0))
     _enr    = float(get_variable(local_namespace, "nbt_u235_enrichment", 0.05))
-    _burn   = float(get_variable(local_namespace, "nbt_fissile_burned_fraction", 0.05))
+    # Effective fraction normalized to the previous 3411-MWt reference proxy.
+    # Reference 5% is a fixed calibration anchor, not a user depletion input.
+    _ref_proxy = _nbt_estimate_core_fissions_from_geometry(
+        n_fuel_rods=50952,
+        fuel_radius_m=0.004096,
+        fuel_active_length_m=3.96,
+        rho_uo2_kg_m3=10400.0, u235_enrichment=0.05,
+        fissile_burned_fraction=0.05)
+    _all_u235_atoms = _nbt_estimate_core_fissions_from_geometry(
+        _n_rods, _r_fuel, _l_fuel, _rho, _enr, 1.0)
+    _power = float(get_variable(local_namespace, "total_power", 3411.0))
+    if _power < 0 or _all_u235_atoms <= 0:
+        raise ValueError("Power must be nonnegative and initial U235 inventory positive")
+    _burn = (_ref_proxy * _power / 3411.0) / _all_u235_atoms
 
     _n_fiss = _nbt_estimate_core_fissions_from_geometry(
         n_fuel_rods=_n_rods,
@@ -7382,20 +7965,14 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
         u235_enrichment=_enr,
         fissile_burned_fraction=_burn)
 
-    # Burnup scaling via nbt_burnup_gwdmtu [GWd/MTU].
-    # Inventory is scaled by (plant_burnup / 33 GWd/MTU), where 33 GWd/MTU
-    # is the NUREG-1465 reference burnup (NUREG-1465 Section 1).
-    # For large PWRs with low-leakage core loading, use peak assembly burnup
-    # rather than core average — e.g. 62 GWd/MTU for a 5-cycle peripheral
-    # assembly vs ~47 GWd/MTU core average.
-    # For the CRN SMR: nbt_burnup_gwdmtu = 51  (CRN ESPA SSAR Section 15.2)
-    # Default: 33 GWd/MTU (no correction — NUREG-1465 basis as-is).
+    # Empirical activity calibration B/33; independent of effective fission proxy.
+    # This is not a fuel-depletion or isotope-specific burnup calculation.
     _NUREG1465_REF_BURNUP = 33.0
     _burnup_gwdmtu = get_variable(local_namespace, "nbt_burnup_gwdmtu", None)
     if _burnup_gwdmtu is not None:
         _burnup_corr = float(_burnup_gwdmtu) / _NUREG1465_REF_BURNUP
         print(f"[NBT inventory] Burnup: {float(_burnup_gwdmtu):.1f} GWd/MTU "
-              f"/ {_NUREG1465_REF_BURNUP:.0f} GWd/MTU (NUREG-1465 ref) "
+              f"/ {_NUREG1465_REF_BURNUP:.0f} GWd/MTU (empirical reference) "
               f"= {_burnup_corr:.4f}x", flush=True)
     else:
         _burnup_corr = 1.0
@@ -7408,6 +7985,10 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
     _meta = {
         "model":              _model,
         "n_fissions":         _n_fiss,
+        "power_MWt": _power,
+        "reference_power_MWt": 3411.0,
+        "reference_n_fissions_proxy": _ref_proxy,
+        "power_scale": _power / 3411.0,
         "burnup_gwdmtu":      float(_burnup_gwdmtu) if _burnup_gwdmtu is not None
                               else _NUREG1465_REF_BURNUP,
         "burnup_correction":  _burnup_corr,
@@ -7423,19 +8004,25 @@ def _nbt_apply_inventory_model(groups, local_namespace=None):
 def _nbt_solve_group(inv_ci, release_frac, release_duration_hr,
                      containment_volume_ft3, leak_rate_frac_per_day,
                      lam_decay_s, lam_removal_s, end_time_hr, dt_hr=0.05,
-                     credit_decay=False, credit_deposition=False):
+                     credit_decay=False, credit_deposition=False, release_start_hr=0.0,
+                     lam_spray_s=0.0, spray_start_hr=0.0, spray_stop_hr=float("inf"),
+                     spray_depletion_df=None, lam_spray_depleted_s=None):
     """Analytical single-group containment→environment solver.
-    credit_decay=False       : conservative — no radioactive decay credited
-    credit_deposition=False  : conservative — no spray/natural deposition credited
+    credit_decay=True        : decay from shutdown, before and after release
+    credit_deposition=False  : no natural deposition credited
+    lam_spray_s              : independently selected spray removal rate [1/s]
     """
     _lam_d   = lam_decay_s   if credit_decay       else 0.0
-    _lam_rem = lam_removal_s if credit_deposition  else 0.0
+    _lam_rem = lam_removal_s if credit_deposition else 0.0
+    transition_hr = (_nbt_spray_transition_hr(lam_spray_s, spray_depletion_df, spray_start_hr)
+                     if lam_spray_depleted_s is not None else float("inf"))
     V_m3     = containment_volume_ft3 * 0.0283168
     lam_leak = leak_rate_frac_per_day / 86400.0
     released = inv_ci * release_frac
     rel_s    = release_duration_hr * 3600.0
     src_rate = released / rel_s if rel_s > 0 else 0.0
-    lam_c    = _lam_d + _lam_rem + lam_leak
+    source_start_s = max(0.0, float(release_start_hr)) * 3600.0
+    source_stop_s = source_start_s + rel_s
     lam_e    = _lam_d
     end_s    = end_time_hr * 3600.0
     N_c = cum_leaked = 0.0
@@ -7446,26 +8033,347 @@ def _nbt_solve_group(inv_ci, release_frac, release_duration_hr,
     dt = max(dt, 1.0)   # floor at 1 s
     while t < end_s:
         dt_a = min(dt, end_s - t)
-        S    = src_rate if t < rel_s else 0.0
-        x    = lam_c * dt_a
-        if x > 1e-6:
-            ex = _math.exp(-x)
-            if S > 0:
-                ss_c    = S / lam_c
-                N_c_new = (N_c - ss_c) * ex + ss_c
-                avg_Nc  = ss_c + (N_c - ss_c) * (1.0 - ex) / x
-            else:
-                N_c_new = N_c * ex
-                avg_Nc  = N_c * (1.0 - ex) / x
-        else:
-            # lam_c*dt_a << 1: linear approximation avoids cancellation
-            N_c_new = N_c + (S - lam_c * N_c) * dt_a
-            avg_Nc  = N_c + (S - lam_c * N_c) * dt_a / 2.0
-        # Accumulate Ci leaked to environment.
-        # TEDE = cum_leaked [Ci] x chi_q [s/m3] x DCF [rem*m3/(Ci*s)] = rem
-        cum_leaked += lam_leak * avg_Nc * dt_a
+        # End a step exactly at a source transition.
+        boundaries = [source_start_s, source_stop_s]
+        if lam_spray_s > 0:
+            boundaries.extend((spray_start_hr*3600., spray_stop_hr*3600., transition_hr*3600.))
+        for boundary in boundaries:
+            if t < boundary < t + dt_a:
+                dt_a = boundary - t
+        S = src_rate if source_start_s <= t < source_stop_s else 0.0
+        mid_hr = (t + dt_a/2.) / 3600.
+        spray = (lam_spray_depleted_s if mid_hr >= transition_hr else lam_spray_s)
+        if not spray_start_hr <= mid_hr < spray_stop_hr:
+            spray = 0.0
+        lam_c = _lam_d + _lam_rem + lam_leak + spray
+        # Decay the unreleased activity from shutdown to this absolute time;
+        # the containment loss term then accounts for decay after entry.
+        S *= _math.exp(-_lam_d*t)
+        N_c_new, integral = _nbt_propagate(N_c, S, lam_c, dt_a, _lam_d)
+        cum_leaked += lam_leak * integral
         N_c, t = N_c_new, t + dt_a
     return cum_leaked
+
+
+# Control-room photon screening responses. Data remain in Runtime/nbt_shine.json.
+# No runtime downloads or separate shine Python module are required.
+import hashlib as _nbt_shine_hashlib
+
+_NBT_SHINE_GEOMETRY_KEYS = (
+    'nbt_cr_containment_distance_m', 'nbt_cr_shield_thickness_m',
+    'nbt_containment_shield_thickness_m', 'nbt_containment_radius_m',
+    'nbt_containment_height_m',
+)
+
+
+def _nbt_shine_geometry(namespace):
+    """Absent geometry retains legacy behavior; partial geometry is an error."""
+    present = [k for k in _NBT_SHINE_GEOMETRY_KEYS if namespace.get(k) is not None]
+    if not present:
+        return None
+    missing = [k for k in _NBT_SHINE_GEOMETRY_KEYS if namespace.get(k) is None]
+    if missing:
+        raise ValueError('NBT shine geometry incomplete: ' + ', '.join(missing))
+    values = tuple(float(namespace[k]) for k in _NBT_SHINE_GEOMETRY_KEYS)
+    for key, value in zip(_NBT_SHINE_GEOMETRY_KEYS, values):
+        if not _math.isfinite(value) or value < 0:
+            raise ValueError(key + ' must be finite and nonnegative')
+    distance, cr_wall, wall, radius, height = values
+    if radius <= 0 or height <= 0 or distance <= cr_wall:
+        raise ValueError('Shine radius/height must be positive; wall-to-receptor '
+                         'distance must exceed the CR wall thickness')
+    return values
+
+
+def _nbt_shine_positive_grid(values, name):
+    a = np.asarray(values, dtype=float)
+    if a.ndim != 1 or len(a) < 2 or not np.all(np.isfinite(a)) or np.any(a <= 0) or np.any(np.diff(a) <= 0):
+        raise ValueError('Invalid shine energy grid: ' + name)
+    return a
+
+
+def _nbt_load_shine_data(base_dir):
+    base = Path(base_dir)
+    candidates = [base/'Runtime/nbt_shine.json', base/'runtime/nbt_shine.json']
+    path = next((p for p in candidates if p.is_file()), candidates[0])
+    raw = path.read_bytes()  # Missing data must not silently disable a requested model.
+    def unique(pairs):
+        d = {}
+        for k, v in pairs:
+            if k in d:
+                raise ValueError('Duplicate shine JSON key: ' + k)
+            d[k] = v
+        return d
+    data = json.loads(raw, object_pairs_hook=unique)
+    if data.get('schema_version') != 1:
+        raise ValueError('nbt_shine.json schema_version must be 1')
+    energies = _nbt_shine_positive_grid(data['photon_energy_MeV'], 'photons')
+    required = {'NG','Halogens','Alkali_metals','Te_group','Ba_Sr','Noble_metals','Ce_group','Lanthanides','U_actinides'}
+    if set(data['group_photons_per_decay']) != required:
+        raise ValueError('Shine spectra must contain exactly the nine NBT groups')
+    for key, values in data['group_photons_per_decay'].items():
+        a = np.asarray(values, dtype=float)
+        if a.shape != energies.shape or not np.all(np.isfinite(a)) or np.any(a < 0):
+            raise ValueError('Invalid shine photon spectrum: ' + key)
+    for key, material in data['material'].items():
+        grid = _nbt_shine_positive_grid(material['mass-atten-coff-energy'], key)
+        coeff = np.asarray(material['mass-atten-coff'], dtype=float)
+        if coeff.shape != grid.shape or not np.all(np.isfinite(coeff)) or np.any(coeff <= 0):
+            raise ValueError('Invalid shine attenuation data: ' + key)
+        if not _math.isfinite(material['density']) or material['density'] <= 0:
+            raise ValueError('Invalid shine material density: ' + key)
+        if grid[0] > energies[0] or grid[-1] < energies[-1]:
+            raise ValueError('Shine attenuation grid does not cover photon energies')
+    c = data['material']['concrete']
+    grid = _nbt_shine_positive_grid(c['gp-coff-energy'], 'concrete GP')
+    gp = np.asarray(c['gp-coeff'], dtype=float)
+    if gp.shape != (len(grid),5) or not np.all(np.isfinite(gp)) or np.any(gp[:,0] < 1) or np.any(gp[:,1] <= 0) or np.any(gp[:,3] <= 0):
+        raise ValueError('Invalid shine GP coefficients [b,c,a,X,d]')
+    if grid[0] > energies[0] or grid[-1] < energies[-1]:
+        raise ValueError('Shine GP grid does not cover photon energies')
+    grid = _nbt_shine_positive_grid(data['fluence_energy_MeV'], 'fluence')
+    coeff = np.asarray(data['fluence_effective_ROT_pSv_cm2'], dtype=float)
+    if coeff.shape != grid.shape or not np.all(np.isfinite(coeff)) or np.any(coeff <= 0):
+        raise ValueError('Invalid shine fluence-to-effective-dose data')
+    if grid[0] > energies[0] or grid[-1] < energies[-1]:
+        raise ValueError('Shine fluence grid does not cover photon energies')
+    air = data['material']['air']
+    grid = _nbt_shine_positive_grid(air['mass-en-abs-coff-energy'], 'air energy absorption')
+    coeff = np.asarray(air['mass-en-abs-coff'], dtype=float)
+    if coeff.shape != grid.shape or not np.all(np.isfinite(coeff)) or np.any(coeff <= 0) or grid[0] > energies[0] or grid[-1] < energies[-1]:
+        raise ValueError('Invalid shine air energy-absorption data')
+    for key in ('radial_nodes','axial_nodes','azimuth_nodes'):
+        n = data['numerics'][key]
+        if type(n) is not int or not 4 <= n <= 256:
+            raise ValueError('Invalid shine quadrature size: ' + key)
+    if data['numerics']['gp_max_mfp'] != 40.:
+        raise ValueError('Shine GP tabulation is limited to 40 mean free paths')
+    indoor = data['indoor_geometry']
+    if not all(_math.isfinite(indoor[k]) and indoor[k] > 0 for k in ('exponent','denominator')):
+        raise ValueError('Invalid finite-room geometry correction')
+    return data, {'path':str(path.resolve()), 'sha256':_nbt_shine_hashlib.sha256(raw).hexdigest(),
+                  'dataset':data.get('dataset','')}
+
+
+def _nbt_shine_log_interp(energies, grid, values):
+    return np.exp(np.interp(np.log(energies), np.log(grid), np.log(values)))
+
+
+def _nbt_shine_gp_parameters(data, energies):
+    material = data['material']['concrete']
+    coefficients = np.asarray(material['gp-coeff'])
+    return np.array([np.interp(np.log(energies), np.log(material['gp-coff-energy']), coefficients[:,j])
+                     for j in range(5)]).T
+
+
+def _nbt_shine_transmission(optical_depth, parameters, max_mfp=40.):
+    """ANS geometric-progression buildup times Beer attenuation.
+
+    GP is evaluated to 40mfp; beyond that B is held while exp(-actual depth)
+    continues to attenuate. This low-energy/deep-ray tail is an approximation.
+    """
+    depth = np.asarray(optical_depth, dtype=float)
+    if not np.all(np.isfinite(depth)) or np.any(depth < 0):
+        raise ValueError('Photon optical depth must be finite and nonnegative')
+    b, c, a, X, d = parameters
+    x = np.minimum(depth, max_mfp)
+    safe = np.maximum(x, 1e-100)
+    K = c*safe**a + d*(np.tanh(safe/X-2)-_math.tanh(-2))/(1-_math.tanh(-2))
+    K = np.maximum(K, 1e-100)
+    logK = np.log(K)
+    ratio = np.divide(np.expm1(x*logK), np.expm1(logK),
+                      out=np.array(x, copy=True), where=np.abs(logK)>1e-10)
+    buildup = 1+(b-1)*ratio
+    return np.minimum(1., buildup*np.exp(-depth))
+
+
+def _nbt_shine_cylinder_rays(g, nr=16, nz=24, nt=64):
+    """Unit-volume weighted rays to a receptor at cylinder mid-height.
+
+    Radius describes the inner shielding surface. Distance runs from the outer
+    containment wall to the receptor. CR front wall is normal to the x axis.
+    Ray-specific cylindrical and planar concrete path lengths are retained.
+    """
+    distance, cr_wall, wall, radius, height = g
+    xr = radius+wall+distance
+    ur, wr = np.polynomial.legendre.leggauss(nr); uz, wz = np.polynomial.legendre.leggauss(nz)
+    r = (ur+1)*radius/2; z = (uz+1)*height/2
+    theta = (np.arange(nt)+.5)*2*_math.pi/nt
+    rr, zz, tt = np.meshgrid(r,z,theta,indexing='ij')
+    xs = rr*np.cos(tt); ys = rr*np.sin(tt)
+    dx = xr-xs; dy = -ys; dz = height/2-zz
+    length = np.sqrt(dx*dx+dy*dy+dz*dz)
+    ux = dx/length; uy = dy/length
+    A = ux*ux+uy*uy; B = 2*(xs*ux+ys*uy)
+    def exit_distance(rad):
+        C = xs*xs+ys*ys-rad*rad
+        return (-B+np.sqrt(np.maximum(0.,B*B-4*A*C)))/(2*A)
+    concrete = exit_distance(radius+wall)-exit_distance(radius)+cr_wall/ux
+    air = np.maximum(0.,length-concrete)
+    weight = (wr[:,None,None]*radius/2 * wz[None,:,None]*height/2
+              *rr*(2*_math.pi/nt)/(_math.pi*radius**2*height))
+    return (length.ravel(),concrete.ravel(),air.ravel(),weight.ravel())
+
+
+def _nbt_shine_calculate_responses(data, g, volume_ft3):
+    e = np.asarray(data['photon_energy_MeV'])
+    concrete = data['material']['concrete']; air = data['material']['air']
+    mu_c = _nbt_shine_log_interp(e,concrete['mass-atten-coff-energy'],concrete['mass-atten-coff'])*concrete['density']*100
+    mu_a = _nbt_shine_log_interp(e,air['mass-atten-coff-energy'],air['mass-atten-coff'])*air['density']*100
+    mu_en = _nbt_shine_log_interp(e,air['mass-en-abs-coff-energy'],air['mass-en-abs-coff'])
+    effective = _nbt_shine_log_interp(e,data['fluence_energy_MeV'],data['fluence_effective_ROT_pSv_cm2'])
+    gp = _nbt_shine_gp_parameters(data,e)
+    numerics = data['numerics']
+    L, concrete_path, air_path, weight = _nbt_shine_cylinder_rays(g,numerics['radial_nodes'],numerics['axial_nodes'],numerics['azimuth_nodes'])
+    source_response = np.empty(len(e)); slab = np.empty(len(e))
+    for i in range(len(e)):
+        t = _nbt_shine_transmission(mu_c[i]*concrete_path,gp[i])
+        # 1pSv cm2 =1e-14 rem m2; 1Ci=3.7e10 decays/s.
+        source_response[i] = 3.7e-4*effective[i]*np.sum(weight*t*np.exp(-mu_a[i]*air_path)/(4*_math.pi*L*L))
+        slab[i] = float(_nbt_shine_transmission(mu_c[i]*g[1],gp[i]))
+    response = {}
+    for key, spectrum in data['group_photons_per_decay'].items():
+        spectrum = np.asarray(spectrum)
+        # Approximate photon contribution to uniform-cloud effective dose.
+        cloud_weights = spectrum*effective/mu_en
+        total = np.sum(cloud_weights)
+        response[key] = {'containment_rem_per_Ci_s':float(spectrum@source_response),
+                        'plume_transmission':float(cloud_weights@slab/total) if total>0 else 0.}
+    indoor = data['indoor_geometry']
+    finite = min(1.,volume_ft3**indoor['exponent']/indoor['denominator'])
+    return {'groups':response,'room_geometry_factor':finite}
+
+
+@functools.lru_cache(maxsize=16)
+def _nbt_shine_cached(raw, g, volume):
+    return _nbt_shine_calculate_responses(json.loads(raw),g,volume)
+
+
+def _nbt_shine_responses(namespace, groups, volume_ft3, base_dir):
+    g = _nbt_shine_geometry(namespace)
+    if g is None:
+        return None
+    data, metadata = _nbt_load_shine_data(base_dir)
+    # New inventory mixtures also determine shine photon spectra.
+    if any("_inventory_photons_per_decay" in group for group in groups.values()):
+        for key, group in groups.items():
+            if group.get("_inventory_photon_energy_MeV") != data["photon_energy_MeV"]:
+                raise ValueError("Inventory/shine photon energy grids differ")
+            data["group_photons_per_decay"][key] = group["_inventory_photons_per_decay"]
+        metadata = {**metadata, "mixture_basis": "current calculated isotope inventory",
+                    "inventory_data_sha256": next(iter(groups.values()))["_inventory_data_sha256"]}
+    # Record provenance without blocking independent edits to DCFs, filters or
+    # removal constants in the existing group JSON. New inventory methods reweight photon mixtures below.
+    expected = data.get('group_data_sha256')
+    group_file = next((Path(base_dir)/p for p in ('Runtime/nbt_groups.json','runtime/nbt_groups.json')
+                       if (Path(base_dir)/p).is_file()),None)
+    current = _nbt_shine_hashlib.sha256(group_file.read_bytes()).hexdigest() if group_file else None
+    result = _nbt_shine_cached(json.dumps(data,sort_keys=True),g,float(volume_ft3))
+    return {**result,'metadata':{**metadata,'geometry':dict(zip(_NBT_SHINE_GEOMETRY_KEYS,g)),
+            'method':'screening: photon point kernel + normal-slab plume + finite indoor cloud',
+            'photon_dose_basis':'ICRP74 ROT effective dose; FGR12 cloud dose',
+            'assumptions':'uniform airborne cylinder; mid-height receptor; ordinary concrete; GP exposure buildup approximates dose buildup; no removed-source shine, streaming or skyshine',
+            'room_geometry_factor':result['room_geometry_factor'],
+            'photon_reference_group_sha256':expected,
+            'current_group_sha256':current,
+            'group_file_matches_photon_reference':current==expected,
+            'group_responses':result['groups']}}
+
+
+def _nbt_cr_chi_q_profile(value):
+    """Normalize scalar or [[accident time hr, chi/Q s/m3], ...].
+
+    Steps apply from each start time until the next; hold the last value.
+    A profile must start at shutdown time zero, independent of release phase.
+    """
+    try:
+        if np.isscalar(value):
+            rows = [(0.0, float(value))]
+        else:
+            rows = []
+            for row in value:
+                if len(row) != 2:
+                    raise ValueError("each row needs time and chi/Q")
+                rows.append((float(row[0]), float(row[1])))
+        if not rows or rows[0][0] != 0.0:
+            raise ValueError("profile must start at zero")
+        if any(not _math.isfinite(t) or not _math.isfinite(q) or t < 0 or q < 0
+               for t, q in rows):
+            raise ValueError("times and chi/Q must be finite and nonnegative")
+        if any(b[0] <= a[0] for a, b in zip(rows, rows[1:])):
+            raise ValueError("times must strictly increase")
+        return rows
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("nbt_chi_q_cr requires a nonnegative scalar or "
+                         "[[start_hr, chi/Q_s_m3], ...]: " + str(exc)) from exc
+
+
+def _nbt_solve_cr_group(inv_ci, release_frac, release_duration_hr,
+                       leak_rate_frac_per_day, lam_decay_s, lam_removal_s,
+                       end_time_hr, chi_q, transmission, makeup_cfm,
+                       volume_ft3, intake_df, recirc_cfm=0.0, inleak_cfm=0.0,
+                       credit_decay=False, credit_deposition=False,
+                       release_start_hr=0.0, lam_spray_s=0.0,
+                       spray_start_hr=0.0, spray_stop_hr=float("inf"),
+                       spray_depletion_df=50.0, lam_spray_depleted_s=0.0,
+                       return_integrals=False):
+    """Integral of indoor concentration [Ci s/m3], initially clean mixed room.
+
+    Existing cr_flow_cfm is filtered outdoor makeup, balanced by exhaust.
+    Optional unfiltered inleakage also displaces room air; recirculation only
+    removes contamination through the filter. The existing group DF defines
+    filter penetration once at makeup and efficiency 1-1/DF at recirculation.
+    This is a constant-flow screening balance, not a ventilation-isolation
+    sequence or a building shielding model. Independent source phases may be
+    superposed because both containment and room balances are linear.
+    """
+    from scipy.linalg import expm
+    profile = _nbt_cr_chi_q_profile(chi_q)
+    decay = lam_decay_s if credit_decay else 0.0
+    deposition = lam_removal_s if credit_deposition else 0.0
+    leak = leak_rate_frac_per_day / 86400.0
+    start = max(0.0, float(release_start_hr)) * 3600.0
+    stop = start + release_duration_hr * 3600.0
+    end = end_time_hr * 3600.0
+    transition = _nbt_spray_transition_hr(
+        lam_spray_s, spray_depletion_df, spray_start_hr) * 3600.0
+    edges = sorted({0.0, end, *[b for b in
+        (start, stop, spray_start_hr*3600.0, spray_stop_hr*3600.0, transition,
+         *[t*3600.0 for t, q in profile])
+        if 0.0 < b < end]})
+    # cfm/ft3 gives inverse minutes; convert to inverse seconds.
+    makeup = makeup_cfm / volume_ft3 / 60.0
+    inleak = inleak_cfm / volume_ft3 / 60.0
+    recirc = recirc_cfm / volume_ft3 / 60.0
+    room_loss = decay + makeup + inleak + recirc * (1.0 - 1.0/intake_df)
+    nominal_source = inv_ci * release_frac / (release_duration_hr * 3600.0)
+    # States: containment Ci, indoor Ci/m3, current source Ci/s,
+    # and accumulated indoor concentration Ci s/m3.
+    size = 6 if return_integrals else 4
+    state = np.zeros(size)
+    for a, b in zip(edges, edges[1:]):
+        mid_hr = (a+b) / 7200.0
+        spray = lam_spray_depleted_s if (a+b)/2.0 >= transition else lam_spray_s
+        if not spray_start_hr <= mid_hr < spray_stop_hr:
+            spray = 0.0
+        state[2] = nominal_source * _math.exp(-decay*a) if start <= a < stop else 0.0
+        matrix = np.zeros((size, size))
+        matrix[0, 0] = -(decay + deposition + leak + spray)
+        matrix[0, 2] = 1.0
+        active_chi_q = next(q for t, q in reversed(profile) if t <= mid_hr)
+        matrix[1, 0] = leak * active_chi_q * transmission * (makeup/intake_df + inleak)
+        matrix[1, 1] = -room_loss
+        matrix[2, 2] = -decay
+        matrix[3, 1] = 1.0
+        if return_integrals:
+            matrix[4, 0] = 1.0  # Containment airborne activity integral, Ci s.
+            matrix[5, 0] = leak * active_chi_q * transmission  # Outdoor Ci s/m3.
+        state = expm(matrix * (b-a)) @ state
+    if return_integrals:
+        return {"room_Ci_s_m3": float(state[3]),
+                "containment_Ci_s": float(state[4]),
+                "outdoor_Ci_s_m3": float(state[5])}
+    return float(state[3])
 
 
 def _nbt_chi_q(distance_m, release_height_m=0.0,
@@ -7498,7 +8406,8 @@ def _notbadtrad(
         credit_decay=False,
         credit_deposition=False,
         chi_q_eab_override=None, chi_q_lpz_override=None, chi_q_cr_override=None,
-        local_namespace=None):
+        local_namespace=None, release_start_hr=0.0,
+        eab_exposure_stop_hr=None, _compute_worst_eab=True):
     """
     NOTBADTRAD screening calculation.
     release_overrides: dict {group_key: total_release_fraction} from FLARE.
@@ -7506,6 +8415,25 @@ def _notbadtrad(
     """
     import copy as _copy
     import time as _time
+
+    if local_namespace is None:
+        local_namespace = {}
+
+    # Keep the room model small: existing makeup and volume controls, with
+    # separate optional flows where a case has a documented ventilation basis.
+    _cr_recirc = float(get_variable(local_namespace, "nbt_cr_recirc_cfm", 0.0))
+    _cr_inleak = float(get_variable(local_namespace, "nbt_cr_unfiltered_inleak_cfm", 0.0))
+    for _name, _value in (("nbt_cr_flow_cfm", cr_flow_cfm),
+                           ("nbt_cr_recirc_cfm", _cr_recirc),
+                           ("nbt_cr_unfiltered_inleak_cfm", _cr_inleak)):
+        if not _math.isfinite(_value) or _value < 0.0:
+            raise ValueError(f"{_name} must be finite and nonnegative")
+    if not _math.isfinite(cr_volume_ft3) or cr_volume_ft3 <= 0.0:
+        raise ValueError("nbt_cr_volume_ft3 must be finite and positive")
+    if not _math.isfinite(end_time_hr) or end_time_hr < 0.0:
+        raise ValueError("nbt_end_time_hr must be finite and nonnegative")
+    if not _math.isfinite(release_duration_hr) or release_duration_hr <= 0.0:
+        raise ValueError("NBT release_duration_hr must be finite and positive")
 
     # nbt_calibrate: explicit dose output multiplier.
     # Applied to all dose results (EAB, LPZ, CR, group doses, dist_table)
@@ -7519,18 +8447,44 @@ def _notbadtrad(
     t0 = _time.perf_counter()
 
     groups = _copy.deepcopy(_NBT_GROUPS)
-    groups, _inventory_meta = _nbt_apply_inventory_model(groups, local_namespace)
+    _inventory_namespace = dict(local_namespace or {})
+    _inventory_namespace.setdefault("total_power", power_mwt)
+    groups, _inventory_meta = _nbt_apply_inventory_model(groups, _inventory_namespace)
+    # Case-specific aerosol spray override; the Runtime JSON remains the default.
+    aerosol_hr = get_variable(local_namespace, "nbt_aerosol_spray_removal_hr", None)
+    if aerosol_hr is not None:
+        aerosol_hr = float(aerosol_hr)
+        if not _math.isfinite(aerosol_hr) or aerosol_hr < 0:
+            raise ValueError("nbt_aerosol_spray_removal_hr must be finite and nonnegative")
+        for data in groups.values():
+            initial = data["spray_removal_s"]
+            ratio = data["spray_removal_depleted_s"] / initial if initial > 0 else 0.
+            data["spray_removal_s"] = data["spray_aerosol_fraction"]*aerosol_hr/3600. + data["spray_non_aerosol_removal_s"]
+            data["spray_removal_depleted_s"] = ratio*data["spray_removal_s"]
+    def fraction_input(name):
+        value = float(get_variable(local_namespace, name, 0.))
+        if not _math.isfinite(value) or not 0. <= value <= 1.:
+            raise ValueError(f"{name} must be finite and between 0 and 1")
+        return value
+    filtered_fraction = fraction_input("nbt_filtered_leak_fraction")
+    aerosol_eff = fraction_input("nbt_penetration_aerosol_efficiency")
+    iodine_eff = fraction_input("nbt_penetration_iodine_efficiency")
+    transmission = {key: (1. if key == "NG" else
+        1. - filtered_fraction*(data["penetration_aerosol_fraction"]*aerosol_eff
+                               +(1.-data["penetration_aerosol_fraction"])*iodine_eff))
+        for key, data in groups.items()}
     if release_overrides is not None:
         for k in groups:
             groups[k]["release"] = release_overrides.get(k, 0.0)
 
-    scale   = power_mwt / 3411.0
     xq_eab  = chi_q_eab_override if chi_q_eab_override is not None \
                else _nbt_chi_q(distance_eab_m,  release_height_m, stability_class, wind_speed_m_s)
     xq_lpz  = chi_q_lpz_override if chi_q_lpz_override is not None \
                else _nbt_chi_q(distance_lpz_m,  release_height_m, stability_class, wind_speed_m_s)
     xq_cr   = chi_q_cr_override  if chi_q_cr_override  is not None \
                else _nbt_chi_q(distance_cr_intake_m, release_height_m, stability_class, wind_speed_m_s)
+
+    _cr_profile = _nbt_cr_chi_q_profile(xq_cr)
 
     # Licensing acceptance intervals are location-specific:
     #   EAB: 0–2 hr by default
@@ -7540,20 +8494,30 @@ def _notbadtrad(
     _lpz_time_hr = float(lpz_integration_hr if lpz_integration_hr is not None else end_time_hr)
     _cr_time_hr  = float(end_time_hr)
 
+    _shine = None
+    _shine_keys = ("nbt_cr_containment_distance_m", "nbt_cr_shield_thickness_m",
+                   "nbt_containment_shield_thickness_m", "nbt_containment_radius_m",
+                   "nbt_containment_height_m")
+    if any(local_namespace.get(k) is not None for k in _shine_keys):
+        _shine = _nbt_shine_responses(local_namespace, groups, cr_volume_ft3, SCRIPT_DIR)
     tede_eab = tede_lpz = tede_cr = 0.0
+    _cr_components = {"inhalation": 0.0, "plume_shine": 0.0,
+                      "containment_shine": 0.0, "room_shine": 0.0}
     group_doses = {}
 
     def _cum_chi_for_time(inv_ci, rel_frac, gname, gdata, _time_hr):
         lam_d = _math.log(2) / (gdata["t_half_hr"] * 3600.0)
-        if sprays_on and spray_start_hr < _time_hr:
-            sp_frac = max(0.0, min(spray_stop_hr, _time_hr) - spray_start_hr) / max(_time_hr, 1e-12)
-        else:
-            sp_frac = 0.0
-        lam_rem = sp_frac * _NBT_SPRAY_REMOVAL[gname] + _NBT_NAT_DEP[gname]
+        # Integrate actual spray switches and the depletion transition. Both
+        # fixed and worst-window doses now use this same piecewise balance.
+        lam_spray = gdata["spray_removal_s"] if sprays_on else 0.0
         return _nbt_solve_group(
             inv_ci, rel_frac, release_duration_hr, containment_volume_ft3,
-            leak_rate_frac_per_day, lam_d, lam_rem, _time_hr, dt_hr,
-            credit_decay=credit_decay, credit_deposition=credit_deposition)
+            leak_rate_frac_per_day, lam_d, _NBT_NAT_DEP[gname], _time_hr, dt_hr,
+            credit_decay=credit_decay, credit_deposition=credit_deposition,
+            release_start_hr=release_start_hr, lam_spray_s=lam_spray,
+            spray_start_hr=max(0., spray_start_hr), spray_stop_hr=max(0., spray_stop_hr),
+            spray_depletion_df=gdata["spray_depletion_df"],
+            lam_spray_depleted_s=gdata["spray_removal_depleted_s"] if sprays_on else 0.)
 
     for gname, gdata in groups.items():
         inv_ci   = gdata["inv_ci"]
@@ -7561,20 +8525,73 @@ def _notbadtrad(
 
         cum_chi_eab = _cum_chi_for_time(inv_ci, rel_frac, gname, gdata, _eab_time_hr)
         cum_chi_lpz = _cum_chi_for_time(inv_ci, rel_frac, gname, gdata, _lpz_time_hr)
-        cum_chi_cr  = _cum_chi_for_time(inv_ci, rel_frac, gname, gdata, _cr_time_hr)
 
+        # Filtration acts on the escaping activity, not containment removal or
+        # the reference inventory. CR intake filtration remains a separate DF.
+        cum_chi_eab *= transmission[gname]
+        cum_chi_lpz *= transmission[gname]
         d_eab = cum_chi_eab * xq_eab * (breathing_rate_m3_s * gdata["dcf_inh"] + gdata["dcf_cloud"])
         d_lpz = cum_chi_lpz * xq_lpz * (breathing_rate_m3_s * gdata["dcf_inh"] + gdata["dcf_cloud"])
         df_cr = _NBT_CR_DF[gname] if cr_filter_on else 1.0
-        d_cr  = cum_chi_cr * xq_cr / df_cr * breathing_rate_m3_s * gdata["dcf_inh"]
+        room_integral = _nbt_solve_cr_group(
+            inv_ci, rel_frac, release_duration_hr, leak_rate_frac_per_day,
+            _math.log(2)/(gdata["t_half_hr"]*3600.0), _NBT_NAT_DEP[gname],
+            _cr_time_hr, xq_cr, transmission[gname], cr_flow_cfm,
+            cr_volume_ft3, df_cr, _cr_recirc, _cr_inleak,
+            credit_decay=credit_decay, credit_deposition=credit_deposition,
+            release_start_hr=release_start_hr,
+            lam_spray_s=gdata["spray_removal_s"] if sprays_on else 0.0,
+            spray_start_hr=max(0.0, spray_start_hr),
+            spray_stop_hr=max(0.0, spray_stop_hr),
+            spray_depletion_df=gdata["spray_depletion_df"],
+            lam_spray_depleted_s=gdata["spray_removal_depleted_s"] if sprays_on else 0.0,
+            return_integrals=bool(_shine))
+        _components = {k: 0.0 for k in _cr_components}
+        if _shine:
+            _exposure = room_integral
+            room_integral = _exposure["room_Ci_s_m3"]
+            _response = _shine["groups"][gname]
+            _components["plume_shine"] = (_exposure["outdoor_Ci_s_m3"]
+                * gdata["dcf_cloud"] * _response["plume_transmission"])
+            _components["containment_shine"] = (_exposure["containment_Ci_s"]
+                * _response["containment_rem_per_Ci_s"])
+            _components["room_shine"] = (room_integral * gdata["dcf_cloud"]
+                * _shine["room_geometry_factor"])
+        _components["inhalation"] = room_integral * breathing_rate_m3_s * gdata["dcf_inh"]
+        d_cr = sum(_components.values())
+        for _key, _value in _components.items():
+            _cr_components[_key] += _value
 
         tede_eab += d_eab; tede_lpz += d_lpz; tede_cr += d_cr
         group_doses[gname] = {"tede_eab": d_eab, "tede_lpz": d_lpz,
                                "tede_cr": d_cr,
+                               **{"tede_cr_"+k: v for k, v in _components.items()},
                                "cum_chi_eab": cum_chi_eab,
                                "cum_chi_lpz": cum_chi_lpz,
-                               "cum_chi_cr":  cum_chi_cr,
+                               "integrated_cr_concentration_Ci_s_m3": room_integral,
                                "released_ci": inv_ci * rel_frac}
+
+    if not _math.isfinite(release_duration_hr) or release_duration_hr <= 0:
+        raise ValueError("NBT release_duration_hr must be finite and positive")
+    _window_model = {
+        "start_hr": max(0.0, float(release_start_hr)),
+        "duration_hr": float(release_duration_hr),
+        "leak_per_hr": float(leak_rate_frac_per_day) / 24.0,
+        "sprays_on": bool(sprays_on),
+        "spray_start_hr": max(0.0, float(spray_start_hr)),
+        "spray_stop_hr": max(0.0, float(spray_stop_hr)),
+        "exposure_stop_hr": eab_exposure_stop_hr,
+        "groups": {key: {
+            "released_ci": data["inv_ci"] * data["release"],
+            "dose_per_ci": xq_eab * (breathing_rate_m3_s * data["dcf_inh"] + data["dcf_cloud"]) * _nbt_calibrate * transmission[key],
+            "decay_s": _math.log(2) / (data["t_half_hr"] * 3600.0) if credit_decay else 0.0,
+            "source_decay_s": _math.log(2) / (data["t_half_hr"] * 3600.0) if credit_decay else 0.0,
+            "deposition_s": _NBT_NAT_DEP[key] if credit_deposition else 0.0,
+            "spray_s": data["spray_removal_s"] if sprays_on else 0.0,
+            "spray_depleted_s": data["spray_removal_depleted_s"] if sprays_on else 0.0,
+            "spray_depletion_df": data["spray_depletion_df"],
+        } for key, data in groups.items()},
+    }
 
     # ── TEDE vs distance table ───────────────────────────────────────────────
     # Provide both EAB-integration and LPZ-integration doses at each distance.
@@ -7603,25 +8620,52 @@ def _notbadtrad(
                                "eab_integration_tede_rem": _eab_d,
                                "lpz_integration_tede_rem": _lpz_d})
 
-    return {"tede_eab_rem": tede_eab * _nbt_calibrate,
+    _result = {"tede_eab_rem": tede_eab * _nbt_calibrate,
             "tede_lpz_rem": tede_lpz * _nbt_calibrate,
             "tede_cr_rem":  tede_cr  * _nbt_calibrate,
+            "cr_dose_components_rem": {k:v*_nbt_calibrate for k,v in _cr_components.items()},
             "group_doses":  {g: {k: v * _nbt_calibrate if k.startswith("tede") else v
                                  for k, v in d.items()}
                              for g, d in group_doses.items()},
             "runtime_ms":   (_time.perf_counter() - t0) * 1000.0,
-            "chi_q_used":   {"eab": xq_eab, "lpz": xq_lpz, "cr": xq_cr},
+            "chi_q_used":   {"eab": xq_eab, "lpz": xq_lpz, "cr": _cr_profile[0][1]},
             "integration_times_hr": {"eab": _eab_time_hr, "lpz": _lpz_time_hr, "cr": _cr_time_hr},
             "inputs":       {"eab_integration_hr": _eab_time_hr,
                              "lpz_integration_hr": _lpz_time_hr,
                              "cr_integration_hr":  _cr_time_hr,
+                             "cr_model": ("single well-mixed room; inhalation + screening shine" if _shine
+                                          else "single well-mixed room; inhalation only"),
+                             "cr_shine": _shine["metadata"] if _shine else None,
+                             "cr_chi_q_profile": [list(row) for row in _cr_profile],
+                             "cr_dispersion_basis": ("case time profile" if len(_cr_profile) > 1 else
+                                                     "case override" if chi_q_cr_override is not None
+                                                     else "generic Pasquill-Gifford"),
+                             "cr_makeup_cfm": float(cr_flow_cfm),
+                             "cr_volume_ft3": float(cr_volume_ft3),
+                             "cr_recirc_cfm": _cr_recirc,
+                             "cr_unfiltered_inleak_cfm": _cr_inleak,
+                             "cr_filter_on": bool(cr_filter_on),
                              "inventory": _inventory_meta,
-                             "nbt_calibrate": _nbt_calibrate},
+                             "nbt_calibrate": _nbt_calibrate,
+                             "sprays_on": bool(sprays_on),
+                             "credit_deposition": bool(credit_deposition),
+                             "credit_decay": bool(credit_decay),
+                             "decay_reference": "shutdown" if credit_decay else "no decay credit",
+                             "filtered_leak_fraction": filtered_fraction,
+                             "penetration_transmission": transmission,
+                             "aerosol_spray_removal_hr_override": aerosol_hr,
+                             "group_data": dict(_NBT_GROUP_DATA_META)},
+            "_eab_window_models": [_window_model],
             "dist_fit":     dist_fit,
             "dist_table":   [{**row,
                               "eab_integration_tede_rem": row["eab_integration_tede_rem"] * _nbt_calibrate,
                               "lpz_integration_tede_rem": row["lpz_integration_tede_rem"] * _nbt_calibrate}
                              for row in dist_table]}
+
+    if _compute_worst_eab:
+        _nbt_add_worst_2h_eab(_result, local_namespace=local_namespace)
+    _result["runtime_ms"] = (_time.perf_counter() - t0) * 1000.0
+    return _result
 
 # ── end NOTBADTRAD ────────────────────────────────────────────────────────────
 
