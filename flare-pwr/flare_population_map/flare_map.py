@@ -509,6 +509,8 @@ if isinstance(radius_commit_event, dict):
         pending_radius_commit = (commit_minimum, commit_maximum)
         st.session_state["last_radius_commit_id"] = commit_id
         st.session_state["map_revision"] = int(st.session_state.get("map_revision", 0)) + 1
+        if radius_commit_event.get("fitView") is True:
+            st.session_state.pending_fit_view_to_radius = True
 
 saved_site_location = load_saved_site_location()
 
@@ -1173,11 +1175,31 @@ else:
 # Python can build the larger consequence and population extent.
 reset_button_column, map_controls_column = st.columns([1.55, 8.45], gap="medium")
 with reset_button_column:
-    fit_view_clicked = st.button(
-        "Reset View",
-        key="fit_view_to_analysis_radius",
-        help="Adjust the map view so the current analysis radius fits the opening.",
-        use_container_width=True,
+    # Keep reset in the browser with the fast radius controls. A Streamlit
+    # button rerun can only see the older server-side radius, not a local edit.
+    st.iframe(
+        """
+        <style>
+          html,body {margin:0;font:14px system-ui,sans-serif;}
+          button {width:100%;min-height:38px;background:white;color:#222;
+            border:1px solid #aaa;border-radius:8px;cursor:pointer;}
+          button:hover {border-color:#d16b3d;color:#a44320;}
+          button:focus-visible {outline:2px solid #d16b3d;outline-offset:-3px;}
+        </style>
+        <button id="flare-reset-view" type="button"
+          title="Center the release site and fit the selected maximum analysis radius to the opening.">
+          Reset View
+        </button>
+        <script>
+          document.getElementById('flare-reset-view').addEventListener('click', function() {
+            window.parent.document.querySelectorAll('iframe').forEach(function(frame) {
+              if (frame.contentWindow) frame.contentWindow.postMessage(
+                {type:'flare-reset-view-request'}, '*');
+            });
+          });
+        </script>
+        """,
+        height=44,
     )
 with map_controls_column:
     dose_options_json = json.dumps(DOSE_OPTIONS, separators=(",", ":"))
@@ -1330,7 +1352,7 @@ with map_controls_column:
                 radiusStatus.textContent = 'Release to load expanded extent';
               }}
             }}
-            function commitRadiusExpansion() {{
+            function commitRadiusExpansion(fitView) {{
               clearTimeout(radiusTimer);
               const pair = constrainPair(radiusMin, radiusMax);
               const minimum = radiusOptions[pair[0]], maximum = radiusOptions[pair[1]];
@@ -1338,6 +1360,7 @@ with map_controls_column:
                 radiusExpansionRequestId = null;
                 if (radiusExpansionTimeout) clearTimeout(radiusExpansionTimeout);
                 updateRadius(true, true);
+                if (fitView === true) post({{type:'flare-reset-view', maximum:maximum}});
                 return;
               }}
               const requestId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
@@ -1348,7 +1371,8 @@ with map_controls_column:
                 type:'flare-radius-expansion-request',
                 requestId:requestId,
                 minimum:minimum,
-                maximum:maximum
+                maximum:maximum,
+                fitView:fitView === true
               }};
               // Send a few identical requests because the zero-height bridge iframe
               // may still be completing its first render.  The bridge de-duplicates
@@ -1385,7 +1409,12 @@ with map_controls_column:
             radiusMin.addEventListener('change', commitRadiusExpansion);
             radiusMax.addEventListener('change', commitRadiusExpansion);
             window.addEventListener('message', function(event) {{
-              if (!event || !event.data || event.data.type !== 'flare-radius-expansion-accepted') return;
+              if (!event || !event.data) return;
+              if (event.data.type === 'flare-reset-view-request') {{
+                commitRadiusExpansion(true);
+                return;
+              }}
+              if (event.data.type !== 'flare-radius-expansion-accepted') return;
               if (event.data.requestId !== radiusExpansionRequestId) return;
               if (radiusExpansionTimeout) clearTimeout(radiusExpansionTimeout);
               radiusStatus.textContent = 'Recalculating expanded extent…';
@@ -1415,13 +1444,6 @@ map_state = st_folium(
     returned_objects=["last_clicked"],
     key=f"flare_population_map_{st.session_state.get('map_revision', 0)}",
 )
-
-if fit_view_clicked:
-    # Preserve the user's radius setting.  The next map build uses fractional
-    # zoom to match that existing radius to the circular viewport.
-    st.session_state.pending_fit_view_to_radius = True
-    st.session_state.map_revision = st.session_state.get("map_revision", 0) + 1
-    st.rerun()
 
 # Keep ordinary map interaction in pan mode.  A click is consumed only after the
 # user explicitly arms location selection in the sidebar.  Coordinates are staged
