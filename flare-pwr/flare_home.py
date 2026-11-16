@@ -192,7 +192,8 @@ def load_model():
 _ANTHROPIC_MODEL = load_model()
 
 st.set_page_config(
-    page_title="FLARE", page_icon="🔥",
+    page_title="FLARE",
+    page_icon=str(Path(__file__).parent / "Icons" / "FLAREBUDDY.png"),
     layout="wide", initial_sidebar_state="expanded",
 )
 

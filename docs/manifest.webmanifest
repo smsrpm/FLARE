@@ -1,0 +1,14 @@
+{
+  "name": "FLARE",
+  "short_name": "FLARE",
+  "description": "Fast Licensing Accident Response Engine",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#26262A",
+  "theme_color": "#26262A",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
